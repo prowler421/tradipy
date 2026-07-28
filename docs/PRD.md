@@ -1,6 +1,6 @@
 # Ross Cameron Momentum Trading System — Product Requirements Document
 
-**Version:** 1.1  
+**Version:** 1.2  
 **Status:** Phase 1 draft — **pending independent verification** (PLAN Workstream 11)  
 **Date:** 2026-07-28  
 **Market:** US Equities  
@@ -37,13 +37,13 @@ Every threshold below includes: proposed default, confidence rating, Ross source
 | Parameter | Proposed Default | Confidence | Ross Source | Sensitivity | User-Configurable |
 |-----------|------------------|------------|-------------|-------------|-------------------|
 | **Minimum Gap %** | ≥ 4% premarket gap from prior close; OR ≥ 10% daily change | High (10% daily); Medium (4% premarket) | Stock Selection PDF: "up at least 10% on the day"; book mentions 4–5% premarket gaps | High — lowering gap threshold increases candidate count but dilutes quality | Yes |
-| **Relative Volume (RVOL)** | ≥ 5× 30-day average daily volume | Medium | Warrior "Stock Selection" PDF cites "at least a Relative Volume Ratio of 5," but the governing architect prompt, its §7.4 states Ross rarely gives an exact multiple and treats 5× as a community proxy — hence Medium, not High. Source example uses a **50-day** ADV lookback; see A8 / D2 for the 30-day divergence | High — 3× captures more names; 10× misses early movers | Yes |
+| **Relative Volume (RVOL)** | ≥ 5× 30-day average daily volume | Medium | Warrior "Stock Selection" PDF cites "at least a Relative Volume Ratio of 5," but the governing architect prompt's §7.4 states Ross rarely gives an exact multiple and treats 5× as a community proxy — hence Medium, not High. Source example uses a **50-day** ADV lookback; see A8 / D2 for the 30-day divergence | High — 3× captures more names; 10× misses early movers | Yes |
 | **Float** | ≤ 20M shares (prefer ≤ 10M) | High | Stock Selection PDF + "20-20 rule" ($20 price, 20M float) | Medium — lower float = more volatility but less liquidity | Yes |
 | **Price Range** | $1.00 – $20.00 (ideal $2 – $10) | High | Stock Selection PDF: "$1.00 and $20.00" | Medium — exceptions allowed for "obvious" leading gainer | Yes |
 | **Average Daily Volume** | ≥ 500,000 shares/day (30-day) | Medium | Community/education material; not explicitly stated by Ross | Medium — ensures exit liquidity on low-float names | Yes |
 | **Premarket Volume** | ≥ 100,000 shares premarket AND/OR ≥ 2× prior day premarket volume | Medium | Implied by premarket scanning workflow; no exact number in source | Medium — filters illiquid premarket gappers | Yes |
 | **Max Extension from VWAP** | No entry if price > 3% above VWAP (regular session) OR > 5% above VWAP (first 30 min) | Low | Ross avoids chasing; no exact % in source — community proxy | High — tighter = fewer entries; looser = more chase risk | Yes |
-| **Max Extension from HOD** | No entry if within 0.5% of HOD without consolidation (≥ 3 candles, ≥ 50% retrace) | Medium | Implied by bull flag / pullback entry logic | Medium | Yes |
+| **Max Extension from HOD** | No entry within 0.5% of HOD unless the setup's own consolidation requirement is satisfied — Bull Flag §3.2 crit. 3 (2–5 flag candles, retrace ≤ 50% of flagpole) or HOD Breakout §3.3 crit. 3 (≥ 2 candles, high ≤ prior HOD, low ≥ VWAP). **This row defines only the 0.5% proximity trigger; the consolidation test is owned by the setup** | Medium | Implied by bull flag / pullback entry logic | Medium | Yes (proximity % only) |
 | **Stop Distance** | Pattern-derived level (setup-specific), then **widened** to a $0.10 minimum distance if narrower. If the resulting distance exceeds 5% of entry, **skip the trade** (do not tighten — tightening puts the stop inside the pattern) | High | Bull flag: "max loss at low of pullback"; book uses $0.10–$0.50 typical | High — directly affects position size | Yes |
 | **Profit Target / R-Multiple** | Target 1: 2R (minimum); Target 2: measured move (flagpole height); Target 3: HOD retest + extension | High | Stock Selection PDF: "2:1 Profit to Loss ratio" | High — 1.5R reduces expectancy; 3R reduces win rate | Yes |
 | **Max Risk Per Trade** | 1% of account equity (default); hard cap 2% | High | Book: 1–2% depending on experience level | Critical — linear impact on drawdown | Yes (within 0.25%–2% bounds) |
@@ -118,7 +118,9 @@ compound position size within the same session.
 - Position value = 1,500 × $4.50 = **$6,750** (within 50% BP cap)
 - Max loss if stopped = 1,500 × $0.20 = **$300** = 1.0% of start-of-day equity ✓
 
-**Commissions are not included in R.** IBKR per-share pricing plus regulatory fees typically runs ~$0.005–$0.01/share round-trip. On the example above that is ~$15–30 against a $300 risk unit — a 5–10% drag on every R. Backtest and journal metrics must be reported **net** (§8.3, §18.2).
+**Commissions are not included in R.** IBKR per-share pricing plus regulatory fees typically runs **~$0.005–$0.01 per share per side**, i.e. **$0.01–$0.02 round-trip**. On the example above (1,500 shares) that is ~$15–30 against a $300 risk unit — a 5–10% drag on every R. Backtest and journal metrics must be reported **net** (§8.3, §18.2).
+
+*(Corrected: an earlier revision labelled $0.005–$0.01 as the round-trip figure while quoting the $15–30 that only follows from the per-side reading. The per-side reading is the correct one, and it is the basis for `est_round_trip_cost_per_share` = $0.015 in §3.1.2.)*
 
 ---
 
@@ -159,7 +161,7 @@ Earlier drafts specified different partial-exit schedules per setup (50/25/25 in
 |-----|------|-------|
 | **T1** | 50% | Exactly **2R** from entry (R = entry − stop) |
 | **T2** | 25% | Nearest **structural** target above T1 (setup-specific: measured move, HOD, or next whole dollar) |
-| **T3** | 25% | Trail 9 EMA (1-min); exit on close below the EMA |
+| **T3** | 25% | Trail 9 EMA (1-min); exit on close below the EMA. The ratcheted level rests as a broker-side stop, amended each bar close (§20.5, §21.2) |
 
 **Ordering constraint (hard):** `entry < T1 < T2`. This is guaranteed by the pre-entry room gate below rather than checked afterwards.
 
@@ -178,6 +180,35 @@ The default of **2.5** rather than 2.0 exists so T1 (at 2R) and T2 (at the struc
 
 ---
 
+### 3.1.2 T2−T1 Separation Floor (absolute, cost-denominated)
+
+The `room_gate_multiple` of 2.5 was introduced (A15) so that T1 and T2 would not "collapse into one exit after costs." **It does not achieve that**, and the failure is structural rather than a tuning error: T1 is fixed at 2R, so a 2.5R gate buys exactly 0.5R of separation — and R itself shrinks on cheap stocks, which is precisely where costs bite hardest. The §3.4 worked example cleared the 2.5R gate with T1 and T2 **$0.06 apart on a $3.83 stock**, which is roughly one spread plus round-trip commission. Two exits, one economic event.
+
+Separation must therefore be constrained in **absolute, cost-denominated terms**, not as a multiple of R:
+
+```
+round_trip_cost_per_share = spread_at_signal + est_round_trip_cost_per_share
+
+min_separation = max(
+    min_sep_r × R,                                    # 0.5R — already implied by the room gate
+    sep_cost_multiple × round_trip_cost_per_share     # the binding constraint on cheap stocks
+)
+
+require:  (T2 − T1) ≥ ceil_to_tick(min_separation)
+```
+
+| Parameter | Default | Bounds | Note |
+|-----------|---------|--------|------|
+| `sep_cost_multiple` | 3.0 | 1.0–10.0 | T2 must clear T1 by 3× the cost of taking the extra exit |
+| `est_round_trip_cost_per_share` | $0.015 | $0.001–$0.10 | IBKR per-share + SEC/TAF, both sides (§2.2). **Calibrate from real fills in Phase 4b** — this is an estimate, not a measurement |
+| `min_sep_r` | 0.5 | 0.0–2.0 | Redundant with a 2.5 room gate; retained so the constraint is self-contained |
+
+**Enforcement:** pre-entry, alongside the room gate. A setup that passes the room gate but fails the separation floor is rejected with `TARGETS_TOO_CLOSE` — it is not silently collapsed into a single target, because a 50/50 ladder has different expectancy than the specified 50/25/25 and would quietly change the strategy being measured.
+
+**Why not simply raise `room_gate_multiple`?** Because the required multiple is price-dependent. On the §3.4 example, forcing $0.075 of separation would need a gate of ~2.75R; on a $15 stock with a $0.40 stop the same dollar separation is 0.19R and the 2.5R gate is already generous. One multiplier cannot serve both. Recorded as **A18**.
+
+---
+
 ### 3.2 MVP Setup 1: Bull Flag
 
 **Description:** Continuation pattern after strong upward move (flagpole), brief low-volume consolidation (flag), then breakout to new high.
@@ -190,7 +221,7 @@ The default of **2.5** rather than 2.0 exists so T1 (at 2R) and T2 (at the struc
 5. Flag volume: average volume of flag candles **≤ 70%** of flagpole average volume — the flag must show volume *contraction*. (Corrected: an earlier draft required ≥ 70%, which contradicted this setup's own "low-volume consolidation" description. See A13)
 6. **Trigger:** first 1-min candle that **closes above the highest high of the flag** (not merely above the prior red candle's high — that earlier wording allowed a trigger inside the flag range, which collided with the "closes back inside flag range" invalidation)
 7. Breakout candle volume ≥ 2× average flag candle volume
-8. **Room gate:** nearest overhead resistance ≥ 2 × stop_distance above entry (§3.1.1). Ordering `entry < T1 < T2` must hold
+8. **Room gate:** nearest overhead resistance ≥ `room_gate_multiple` × stop_distance above entry (§3.1.1; default 2.5). Ordering `entry < T1 < T2` must hold, and the T2−T1 separation floor (§3.1.2) must be satisfied
 
 #### Optional Confirmations
 - Daily chart shows stock near/at all-time low (turnaround story — lower risk)
@@ -246,6 +277,8 @@ Per the canonical ladder (§3.1.1):
 | T1 (50%) | entry + 2R | **$5.40** |
 | T2 (25%) | entry + flagpole height | **$5.51** |
 | Ordering | $5.16 < $5.40 < $5.51 | ✓ |
+| Separation floor (§3.1.2) | spread $0.01 → max(0.5 × $0.12, 3 × ($0.01 + $0.015)) = $0.075 → $0.08 | required **$0.08** |
+| T2 − T1 | $5.51 − $5.40 | **$0.11** ≥ $0.08 ✓ |
 | Shares | floor(risk $300 / $0.12), risk = 1% × $30,000 | **2,500** |
 | Position value | 2,500 × $5.16 | $12,900 (within 50% BP cap ✓) |
 | Max loss if stopped | 2,500 × $0.12 | **$300** = 1.0% of equity ✓ |
@@ -263,7 +296,7 @@ Per the canonical ladder (§3.1.1):
 4. **Trigger:** 1-min candle closes above prior HOD (close-based, not wick — see §20.3)
 5. Breakout volume ≥ 1.5× average volume of consolidation candles
 6. Price ≤ 3% above VWAP at entry
-7. **Room gate:** nearest overhead resistance ≥ 2 × stop_distance above entry (§3.1.1)
+7. **Room gate:** nearest overhead resistance ≥ `room_gate_multiple` × stop_distance above entry (§3.1.1; default 2.5), plus the T2−T1 separation floor (§3.1.2)
 
 #### Stop Placement
 - Low of consolidation range OR low of breakout candle (**whichever is lower**), minus 1 tick
@@ -299,6 +332,8 @@ Per the canonical ladder (§3.1.1):
 | T1 (50%) | entry + 2R | **$6.78** |
 | T2 (25%) | whole dollar $7.00 (> T1 ✓) | **$7.00** |
 | Ordering | $6.48 < $6.78 < $7.00 | ✓ |
+| Separation floor (§3.1.2) | spread $0.01 → max(0.5 × $0.15, 3 × ($0.01 + $0.015)) = $0.075 → $0.08 | required **$0.08** |
+| T2 − T1 | $7.00 − $6.78 | **$0.22** ≥ $0.08 ✓ |
 | Shares | floor($300 / $0.15) | **2,000** |
 | Position value | 2,000 × $6.48 | $12,960 (within BP cap ✓) |
 | Max loss if stopped | 2,000 × $0.15 | **$300** = 1.0% of equity ✓ |
@@ -318,10 +353,10 @@ Per the canonical ladder (§3.1.1):
 4. **Trigger:** 1-min candle closes above VWAP after dip
 5. Reclaim candle volume ≥ 2× average volume of dip candles
 6. Price still below HOD (not chasing extended move)
-7. **Room gate:** HOD (or nearest resistance) ≥ 2 × stop_distance above entry (§3.1.1)
+7. **Room gate:** HOD (or nearest resistance) ≥ `room_gate_multiple` × stop_distance above entry (§3.1.1; default 2.5), plus the T2−T1 separation floor (§3.1.2)
 
 #### Stop Placement
-- `raw_stop = max(dip_low, VWAP × 0.99) − 1 tick` — for a long, "tighter" means the **higher** of the two candidate levels, i.e. the smaller stop distance (§20.6 defines tighter/wider explicitly; §2's "whichever is wider" refers to a different comparison and is clarified there)
+- `raw_stop = round_down_to_tick(max(dip_low, VWAP × 0.99)) − 1 tick` — for a long, "tighter" means the **higher** of the two candidate levels, i.e. the smaller stop distance (§20.6). Tick rounding per §20.13
 - Then apply the **$0.10 minimum stop distance**, which widens the stop if `entry − raw_stop < $0.10`
 - Maximum 5% of entry; if exceeded, skip
 
@@ -333,8 +368,8 @@ Per the canonical ladder (§3.1.1). *Earlier drafts labelled T1 = HOD and T2 = 2
 - Exit remainder immediately on a close back below VWAP
 
 #### Invalidation
-- Dip lasts > 5 candles or exceeds 2% below VWAP
-- Reclaim on volume < 1.5× dip average
+- Dip lasts > 5 candles or exceeds 2% below VWAP — the setup is abandoned; no entry
+- *(Removed: "reclaim on volume < 1.5× dip average" was unreachable. Entry criterion 5 already requires ≥ 2× dip average, so no trade could ever be entered and then invalidated by a 1.5× test. Same dead-branch class as the VWAP stop clause removed from §3.2.)*
 
 #### Worked Example (recomputed)
 
@@ -351,16 +386,26 @@ Per the canonical ladder (§3.1.1). *Earlier drafts labelled T1 = HOD and T2 = 2
 | raw_stop | max($3.74, $3.80 × 0.99 = $3.762) − 1 tick = $3.76 − 0.01 | $3.75 |
 | Min-stop check | 3.83 − 3.75 = $0.08 **< $0.10 floor** → widen | **stop = $3.73** |
 | R | 3.83 − 3.73 | **$0.10** |
-| HOD | nearest overhead resistance | $4.09 |
-| Room gate | (4.09 − 3.83) = $0.26 ≥ 2.5 × $0.10 = $0.25 | **PASS** ✓ |
+| HOD | nearest overhead resistance | $4.15 |
+| Room gate | (4.15 − 3.83) = $0.32 ≥ 2.5 × $0.10 = $0.25 | **PASS** ✓ |
 | T1 (50%) | entry + 2R | **$4.03** |
-| T2 (25%) | HOD retest (> T1 ✓) | **$4.09** |
-| Ordering | $3.83 < $4.03 < $4.09 | ✓ (T1→T2 separation $0.06) |
+| T2 (25%) | HOD retest (> T1 ✓) | **$4.15** |
+| Ordering | $3.83 < $4.03 < $4.15 | ✓ |
+| Separation floor (§3.1.2) | spread $0.01 → max(0.5 × $0.10, 3 × ($0.01 + $0.015)) = $0.075 → $0.08 | required **$0.08** |
+| T2 − T1 | $4.15 − $4.03 | **$0.12** ≥ $0.08 ✓ |
 | Shares | floor($300 / $0.10) | **3,000** |
 | Position value | 3,000 × $3.83 | $11,490 (within BP cap ✓) |
 | Max loss if stopped | 3,000 × $0.10 | **$300** = 1.0% of equity ✓ |
 
-> With the earlier HOD of $4.05 this setup cleared a 2.0R gate by just $0.02, leaving T1 and T2 two cents apart — a single exit wearing two labels once costs are applied. That observation is what motivated the 2.5R default gate (A15); at HOD $4.05 this trade is now correctly **rejected**.
+> **This example is the reason §3.1.2 exists**, and its history is worth keeping because it shows two gates catching two different failures:
+>
+> | HOD | Room gate (≥ $0.25) | Separation floor (≥ $0.08) | Outcome |
+> |-----|--------------------|---------------------------|---------|
+> | $4.05 | $0.22 ✗ | — | Rejected — insufficient room (this is what A15 fixed) |
+> | $4.09 | $0.26 ✓ | $0.06 ✗ | Rejected — T1 and T2 collapse into one economic exit |
+> | $4.15 | $0.32 ✓ | $0.12 ✓ | **Traded** |
+>
+> The v1.1 revision claimed the 2.5R gate solved the collapse problem. It did not: at HOD $4.09 the trade passed the gate and still produced a six-cent ladder on a $3.83 stock, and the example table recorded that separation with a ✓. Only the absolute, cost-denominated floor rejects it.
 
 ---
 
@@ -418,10 +463,14 @@ Per the canonical ladder (§3.1.1). *Earlier drafts labelled T1 = HOD and T2 = 2
 
 ## 4. Scanner Specification
 
+> **§20 (Computation Semantics) governs this section too.** RVOL and its as-of semantics (§20.7), corporate-action adjustment (§20.9), and the composite score (§20.10) are defined there normatively. Where the prose below and §20 disagree, §20 wins.
+
 ### 4.1 Scanner Pipeline
 
+**Universe sourcing (see §5.5):** full-market screening is *not* performed through IBKR. The candidate list is produced by an external screening provider; IBKR market-data subscriptions are taken only on the narrowed watchlist, within the line budget in §21.7. "Universe" below means the provider's screenable universe, not a set of IBKR-subscribed symbols.
+
 ```
-Universe (US equities, common stock)
+Universe (US equities, common stock — external screening provider)
   → Hard Filters (reject immediately)
   → Soft Filters (score/rank)
   → Catalyst Check (manual or NLP-assisted)
@@ -449,15 +498,9 @@ Universe (US equities, common stock)
 
 ### 4.3 Composite Scoring (Soft Filter Ranking)
 
-```
-score = (pct_change × 0.30) + (rvol × 0.30) + (float_inverse × 0.20) + (premarket_vol × 0.10) + (catalyst_confirmed × 0.10)
+**The normative formula is §20.10.** It is not restated here, deliberately: an earlier revision carried an unnormalized version in this section that summed raw quantities of wildly different magnitude (premarket volume in shares, ~10⁵, against `float_inverse` in 0–1), making the score effectively "premarket volume, ranked" and incapable of satisfying the `score ≥ 0.7` conviction gate in §14.2. Duplicating the formula is what allowed the two copies to diverge.
 
-Where:
-  float_inverse = max(0, (20M - float) / 20M)
-  catalyst_confirmed = 1.0 if manual/NLP confirmed, 0.5 if headline only, 0.0 if none
-```
-
-Return top 5 by score for watchlist. User reviews top 2–3 "most obvious."
+Return top 5 by §20.10 score for the watchlist. User reviews top 2–3 "most obvious."
 
 ### 4.4 Scan Schedule
 
@@ -527,7 +570,7 @@ The scanner design (Section 4) assumes real-time, full-universe screening on gap
 - **Float and short-interest data are not reliably available from IBKR.** Assumption A10 (Finviz scrape or IBKR fundamentals) means the single most important scanner filter may run on stale, missing, or inconsistent data for exactly the small-cap names the strategy targets. Split/reverse-split events (common in this universe) corrupt float and historical-volume figures if not adjusted.
 - **Premarket volume is inconsistent** across feeds; the fallback estimate in §5.2 is a crutch, not a solution, and directly affects the premarket RVOL used for early entries.
 
-**Recommended action — Phase 2 data spike (V7).** Before building the execution engine, run a short, focused spike that answers concretely: (1) can we obtain a real-time candidate list matching Section 4 filters within budget, and from which provider; (2) how fresh and accurate is float/short-interest data on a sample of recent gappers; (3) what is the *measured* data-to-signal and signal-to-order latency on paper. Treat unresolved answers here as a gate on Phase 5, not a detail to discover mid-build.
+**Recommended action — Phase 2a data spike (V7).** Before building the execution engine, run a short, focused spike that answers concretely: (1) can we obtain a real-time candidate list matching Section 4 filters within budget, and from which provider; (2) how fresh and accurate is float/short-interest data on a sample of recent gappers; (3) what is the *measured* data-to-signal and signal-to-order latency on paper. Treat unresolved answers here as a gate on Phase 5, not a detail to discover mid-build.
 
 ---
 
@@ -671,14 +714,16 @@ The non-bypassable limits are meaningless if they reset on restart. `daily_state
 ### 8.1 Design Principles
 
 - **No look-ahead:** RVOL, VWAP, indicators computed on data available at signal bar close only
-- **Realistic fills:** Simulate partial fills on bars where volume < order size × 10
+- **Realistic fills:** a single participation model governs, defined in §8.2. *(Removed: an earlier "simulate partial fills on bars where volume < order size × 10" was a second, incompatible rule — it triggers only above 10% of bar volume while §8.2 caps fills at 5%, leaving orders between 5% and 10% of bar volume in a gap where one rule says "fill fully" and the other says "cap it.")*
+- **Backtest sizing must match live sizing:** the simulator applies the full §2.2 constraint set, including the 1%-of-ADV liquidity guard. Sizing (position-level, vs 30-day ADV) and fills (bar-level, vs bar volume) are distinct constraints and both apply. Omitting the sizing cap would let the backtest take positions the live system would refuse, biasing results optimistic in exactly the direction §18.2 warns about
 - **Conservative bias:** When uncertain, assume worse fill (higher buy, lower sell)
 
 ### 8.2 Realism Requirements
 
 | Requirement | Implementation Design |
 |-------------|----------------------|
-| Partial fills | Fill qty = min(order_qty, bar_volume × participation_rate); default participation_rate = 5% |
+| Partial fills | **Sole fill model.** Fill qty = min(order_qty, bar_volume × `participation_rate`); default `participation_rate` = 5%. Any order exceeding 5% of the signal bar's volume is partially filled by construction — no separate trigger threshold exists |
+| Order sizing in backtest | Identical to live: §2.2 formula plus BP, `max_shares_per_order`, and `max_pct_of_adv` (1% of 30-day ADV) caps |
 | Slippage | Per Section 6.5 model applied to every simulated fill |
 | Halt/LULD simulation | Use historical halt timestamps; no entries 5 min before known halts; resumption at next trade price + slippage |
 | Look-ahead bias | Enforce `as_of_time` on all feature queries; unit test with shifted data |
@@ -725,7 +770,9 @@ The non-bypassable limits are meaningless if they reset on restart. `daily_state
 | **ExecutionEngine** | Order management via IBKR | Approved signals | Orders, fills |
 | **PortfolioManager** | Position tracking, P&L | Fills, market prices | Positions, equity |
 | **TradeJournal** | Record signals, trades, notes | All events | Journal entries |
+| **Analytics** | Performance statistics, equity curve, per-setup expectancy, cost-drag attribution (§8.3) | Closed trades, executions, daily state | Metrics, `performance_snapshots`, viability-gate report (§18.7) |
 | **Backtester** | Historical simulation | Historical data, config | Performance report |
+| **Database** | Persistence and migrations for all §10 tables; enforces the uniqueness constraints the risk and idempotency rules depend on | All component writes | Durable state, query interface |
 | **Configuration** | Strategy params, risk limits | YAML/DB | Config objects |
 | **LoggingAudit** | Structured logs, audit trail | All events | Log streams, DB |
 | **Monitoring** | Health checks, alerts | Component heartbeats | Alerts |
@@ -836,6 +883,8 @@ IBKR → MarketDataIngestion → FeatureStore → Scanner → StrategyEngine
 | target_prices | JSONB | Ordered ladder [T1, T2] |
 | shares | INT | |
 | room_gate_multiple | DECIMAL | Value at signal time |
+| min_separation | DECIMAL | §3.1.2 floor the signal was judged against, in dollars |
+| spread_at_signal | DECIMAL | Input to `min_separation`; also the calibration record for `est_round_trip_cost_per_share` (A18) |
 | features | JSONB | RVOL, VWAP, HOD, flagpole height as-of signal |
 | created_at | TIMESTAMPTZ | |
 | **UNIQUE** | (symbol, setup_type, trigger_bar_ts) | Prevents duplicate signals per bar |
@@ -974,16 +1023,46 @@ IBKR → MarketDataIngestion → FeatureStore → Scanner → StrategyEngine
 
 ## 11. User Interface
 
-### 11.1 Framework Recommendation
+### 11.1 User Journeys (Functional Flow)
+
+The interface exists to serve these flows; the layouts in §11.3 follow from them.
+
+**Primary journey — scanner to journal (one trade, MVP path):**
+
+| # | Step | Actor | System behaviour | Artifacts |
+|---|------|-------|-----------------|-----------|
+| 1 | Session start | System | 09:30 broker sync → `start_of_day_equity` snapshot (§20.8). No trading until it succeeds | `daily_state` row |
+| 2 | Scan | System | External provider screens the universe; hard filters reject with codes, soft filters score (§20.10); top 5 to watchlist | `watchlists` rows |
+| 3 | Catalyst confirmation | **User** | Reviews top 2–3 headlines and confirms or rejects each. **The one required manual step in the MVP** (§12.2 item 6); unconfirmed symbols score 0.5 or 0.0 and typically fall out of the top ranks | `watchlists.catalyst` |
+| 4 | Setup identification | System | Strategy engine evaluates the 3 MVP setups on closed 1-min bars; arbitrates collisions by §20.11 priority | `signals` row (`GENERATED` / `SUPERSEDED`) |
+| 5 | Pre-trade gating | System | Room gate (§3.1.1), separation floor (§3.1.2), then all §7 risk rules. Rejections carry a reason code | `signals.status`, `signals.reject_reason` |
+| 6 | Entry | System | Limit order + native bracket (stop, T1, T2) submitted atomically; idempotency key written **before** submission (§6.7) | `orders`, `idempotency_keys`, `executions` |
+| 7 | Management | System | T1 fill → stop to breakeven; T2 fill → `TRAILING` with broker-mirrored 9 EMA stop (§21.2); breakout-or-bailout timer runs from entry | `positions.state` transitions |
+| 8 | Exit | System | Ladder completes, stop fills, or invalidation fires | `closed_trades` with `r_multiple` |
+| 9 | Journal | **User** | Reviews auto-logged trade; optionally adds a note | `journal_entries` |
+| 10 | Session end | System | 15:55 flat-all (§21.4); daily snapshot written | `performance_snapshots` |
+
+**Secondary journeys:**
+
+| Journey | Trigger | Flow |
+|---------|---------|------|
+| Risk lockout | Daily loss limit, loss streak, or drawdown breach | System flattens and locks → user sees reason in risk panel → lock persists across restart (§7.1.2) and cannot be cleared by relaunching |
+| Emergency stop | User pulls the kill switch | Cancel orders → market-close all → `trading_halted` → manual reset requires a confirmation phrase (§7.2) |
+| Crash recovery | Process restart, mid-session | Load `daily_state` → reconcile against broker (§21.3) → adopt untracked positions for review → ensure every position has a live protective stop → only then resume signals |
+| Backtest / validation | User runs Phase 4b validation | Select range and setups → run → review net expectancy, win rate, drawdown, cost drag → compare against the §18.7 viability gate |
+| Parameter change | User edits a threshold | Bounds-validated at load (§21.5); non-bypassable limits rejected outside legal range; change hashed into `audit_log` so any trade traces to the exact config that produced it |
+| Post-session review | End of day | Statistics screen: equity curve, per-setup expectancy, cost drag, rejection-reason histogram |
+
+### 11.2 Framework Recommendation
 
 **PySide6 (Qt for Python)** — native desktop, excellent table/widget support, embeds pyqtgraph for charts. Alternative: Tauri + Python backend (more complex setup).
 
-### 11.2 Screen Layouts
+### 11.3 Screen Layouts
 
 #### Trading Dashboard (Primary)
 ```
 +-------------------------------------------------------------+
-| [Account: $25,000] [Daily P&L: +$120] [Risk: 1%/3%] [KILL]  |
+| [Account: $30,000] [Daily P&L: +$120] [Risk: 1%/3%] [KILL]  |
 +-------------------------------------------------------------+
 |  WATCHLIST (Top 5)    |  CHART (1-min + VWAP + 9 EMA)        |
 |  Symbol | Chg | RVOL   |                                     |
@@ -991,11 +1070,25 @@ IBKR → MarketDataIngestion → FeatureStore → Scanner → StrategyEngine
 |  ABC    | +18%|  8x    |                                     |
 +-------------------------------------------------------------+
 |  ACTIVE SIGNALS       |  ORDERS & POSITIONS                  |
-|  Bull Flag XYZ $5.20  |  Pos | Symbol | P&L | Stop | Target  |
+|  Bull Flag XYZ $5.16  |  Pos | Symbol | P&L | Stop | Target  |
 +-------------------------------------------------------------+
 |  RISK PANEL: Daily loss used 40% | Streak: 0 | Positions: 1  |
 +-------------------------------------------------------------+
 ```
+
+*(Account figure matches A5/D10; the signal price matches the corrected §3.2 worked example.)*
+
+#### Statistics / Equity Curve
+- Equity curve with drawdown shading; per-setup breakdown
+- Metrics table per §8.3, reported **net** of commissions, fees and slippage, with the gross figure shown alongside
+- Cost-drag panel: total frictions as a % of gross P&L and as a fraction of average R
+- Holding-time histogram; trade-count sufficiency warning below 100 trades per setup
+- Viability-gate status (§18.7): pass/fail per criterion, not a single aggregate number
+
+#### Notifications / Alerts
+- Live alert feed with severity; Sev-1 items (unprotected position, kill switch, risk breach) pinned until acknowledged
+- Per-channel routing (desktop, email, push) configurable by severity
+- Alert inventory per §21.6, each showing last-fired time so a silent channel is visibly silent rather than assumed healthy
 
 #### Scanner View
 - Filter configuration panel (all Section 4 thresholds)
@@ -1017,7 +1110,7 @@ IBKR → MarketDataIngestion → FeatureStore → Scanner → StrategyEngine
 - Risk limits (non-bypassable limits shown as locked)
 - IBKR connection settings
 
-### 11.3 MVP UI
+### 11.4 MVP UI
 
 CLI-only for MVP:
 - `tradipy scan` — run scanner, print watchlist
@@ -1110,6 +1203,9 @@ Desktop GUI deferred to Phase 8.
 | A15 | Room gate requires resistance ≥ **2.5R** (2R plus a 25% margin) so T1 and T2 are meaningfully separated | Tighter margin produces ladders where T1 and T2 collapse into one exit after costs; looser margin rejects more setups |
 | A16 | Adds are legal only after T1 fills and the stop moves to breakeven | Stricter than Ross, who may add before the first target. Reduces both risk and upside participation |
 | A17 | Premarket trading disabled by default in MVP (D11) | Forgoes premarket gap continuation entries; removes the contradiction between premarket setups and the 09:30 trading-hours lockout |
+| A18 | T2 must clear T1 by an **absolute, cost-denominated** floor (§3.1.2), not by a multiple of R | A multiple of R cannot serve both cheap and expensive stocks, because R shrinks exactly where costs bite hardest. If `est_round_trip_cost_per_share` ($0.015) is set too high the gate rejects viable trades; too low and the 50/25/25 ladder degrades to an effective 75/25 after costs. **Calibrate against real fills in Phase 4b** |
+| A19 | A resting broker-side stop is always present, including during `TRAILING`, amended upward each bar close rather than recomputed locally-only (§21.2) | If amendment fails repeatedly the position is protected at a stale level, giving back more than the live EMA would have. The alternative — a purely local trail — voids the §21.2 guarantee entirely whenever the client dies, which is strictly worse |
+| A20 | Tick size is $0.01 for the entire tradeable universe, and all rounding is conservative (§20.13) | Holds while the §2 price floor stays at $1.00. If the floor is ever lowered below $1.00, sub-penny increments apply and §20.13 must be revised before any level is computed |
 
 ---
 
@@ -1153,7 +1249,7 @@ Desktop GUI deferred to Phase 8.
 
 | Strategy Concept | Ross Teaching | Deterministic Rule | Conf. | Assumptions | Alternatives |
 |------------------|---------------|-------------------|-------|-------------|--------------|
-| Relative Volume | ≥ 5× average volume | RVOL ≥ 5× 30-day ADV at signal time on 1-min bars | Medium | 5× is a community proxy (Ross rarely states an exact multiple, per the architect prompt, its §7.4); source example uses **50-day** ADV, PRD assumes 30-day (A8) | 3× or 10×; z-score; 50-day lookback |
+| Relative Volume | ≥ 5× average volume | RVOL ≥ 5× 30-day ADV at signal time on 1-min bars | Medium | 5× is a community proxy (Ross rarely states an exact multiple, per the architect prompt's §7.4); source example uses **50-day** ADV, PRD assumes 30-day (A8) | 3× or 10×; z-score; 50-day lookback |
 | Daily % Change | Already up 10% | daily_change ≥ 10% OR premarket_gap ≥ 4% | High | Continuation exception for prior-day movers | 8% threshold |
 | Price Range | $1–$20 | $1.00 ≤ price ≤ $20.00 | High | Exceptions for obvious leaders | $2–$50 |
 | Float | Low float preferred | float ≤ 20M shares (prefer ≤ 10M) | High | 20-20 rule | ≤ 50M |
@@ -1168,12 +1264,12 @@ Desktop GUI deferred to Phase 8.
 | Micro Pullback | 1 red in uptrend | 1 red candle; entry on next new high; stop at red low | Medium | Single candle only | 2 red candles |
 | 1-Min New High | First candle new high | First 1-min bar new HOD with RVOL ≥ 5× | Medium | Open volatility | Skip first 5 min |
 | 5-Min Breakout | Higher TF breakout | 5-min close > 20-bar high on 2× vol | Medium | — | 15-min TF |
-| Scaling In | Add to winners | Add 25–50% at new HOD after T1; total risk ≤ 1.5× | High | Never add to losers | Fixed add size |
-| Scaling Out | Partial profits | 50% at 2R, 25% at measured move, 25% trail | High | — | All-out at 2R |
-| Stop Loss | Low of pattern | Pattern low or VWAP (tighter); min $0.10 | High | — | ATR-based stop |
-| Profit Target | 2:1 minimum | T1 = 2R; T2 = measured move; T3 = trail 9 EMA | High | — | Fixed $ targets |
-| Position Sizing | Risk-based | shares = floor(equity × risk% / stop_distance) | High | — | Fixed share count |
-| Daily Loss Limit | Stop when max loss hit | Flatten all at −3% equity; lock account | High | Beginner 2% | Fixed $ amount |
+| Scaling In | Add to winners | Add 25–50% of original size on first new high **after T1 fills and the stop is at breakeven**; total open risk from live stops must stay ≤ `start_of_day_equity × max_risk_pct` (§7.1.1) | High | Adds are illegal while the initial tranche is at full risk (A16) | Fixed add size |
+| Scaling Out | Partial profits | Canonical ladder §3.1.1: 50% at T1 (2R), 25% at T2 (structural), 25% trailed on 9 EMA — subject to the §3.1.2 separation floor | High | One ladder for all setups (D12) | All-out at 2R |
+| Stop Loss | Low of pattern | Setup-specific pattern level (§3.2–3.4), then widened to the $0.10 floor; sizing uses `effective_stop` = whichever level triggers first (§2.2, A14); skip the trade if distance > 5% of entry | High | Bull Flag has no VWAP stop branch — its flag low is above VWAP by construction (§3.2) | ATR-based stop |
+| Profit Target | 2:1 minimum | T1 = 2R; T2 = nearest structural level above T1; T3 = trail 9 EMA (§3.1.1) | High | Separation floor §3.1.2 applies | Fixed $ targets |
+| Position Sizing | Risk-based | `shares = floor(start_of_day_equity × risk% / effective_stop_distance)`, capped by BP, `max_shares_per_order`, and 1% of 30-day ADV (§2.2) | High | Frozen start-of-day denominator, not live equity (D16) | Fixed share count |
+| Daily Loss Limit | Stop when max loss hit | Flatten all when realized + unrealized ≤ −`start_of_day_equity` × `daily_loss_pct`; lock account (§7.1) | High | Beginner 2% / experienced 3%; frozen denominator (D16) | Fixed $ amount |
 | Max Losses | Three strikes | Lock entries after 3 consecutive losses | High | — | 2 or 5 losses |
 | Risk Management | Cap losses | All Section 7 rules enforced pre-order | High | — | — |
 | Trade Journal | Record trades | Auto-log all signals/fills; manual notes | High | — | — |
@@ -1286,7 +1382,7 @@ The methodology's public performance claims originate substantially from a tradi
 | V4 | Regime dependence | Backtest over-fit to hot periods | Walk-forward across boom and quiet tapes; out-of-sample gate |
 | V5 | Discretion proxies underperform | Automated ≠ discretionary edge | Compare proxy signals to manually-tagged setups on a sample |
 | V6 | Catalyst/pump false positives | Cluster of avoidable losses | Track loss attribution to catalyst quality; tighten filter |
-| V7 | Data/scan feasibility (see §5.5) | Signals miss or arrive late | Phase 2 data spike before committing to execution build |
+| V7 | Data/scan feasibility (see §5.5) | Signals miss or arrive late | Phase 2a data spike before committing to execution build |
 
 ### 18.7 Viability gate (go / no-go before real capital)
 
@@ -1302,10 +1398,14 @@ No real money should be committed until, at minimum: backtest and paper trading 
 |---|---|
 | Author self-assessment | ✓ complete (below) |
 | Independent review | ☐ **outstanding** |
-| Worked examples recomputed | ✓ v1.1 (four errors fixed) |
+| Worked examples recomputed | ✓ v1.1 (four arithmetic errors fixed) |
+| Cross-section consistency sweep | ✓ v1.2 (see note below) |
 | Machine-checkable example fixtures | ☐ outstanding (§21.1 — the durable fix) |
+| Parameter registry check | ☐ outstanding (PLAN WS11 — the durable fix for the v1.2 class) |
 
-- [x] Every setup in Section 4 has fully specified entry, exit, stop, target, and invalidation rules with numeric parameters where applicable
+**What v1.2 corrected, and why the class matters.** v1.1 fixed the trading rules but left superseded copies of them in downstream sections. The room-gate multiple was raised to 2.5 in §2.0 and §3.1.1 while all three setup criteria still read `≥ 2 ×`; §15 still carried a scaling-in rule that §7.1.1 had explicitly overturned; §4.3 still carried the composite score that §20.10 documents as broken. **Every one of these is the same failure mode:** a threshold was restated as a literal in more than one place, and only one copy was updated. The durable fix is not another sweep — it is the parameter registry (every threshold defined once, referenced by name, never re-stated), which is why it appears above as an outstanding item rather than a completed one.
+
+- [x] ~~Every setup in Section 4 has fully specified entry, exit, stop, target, and invalidation rules~~ — **met for the three MVP setups; deliberate deviation for the remaining ~24.** Post-MVP setups in §3.5 carry entry, stop and target but no invalidation rules, worked examples, or false-signal patterns. This is a considered choice, not an oversight: see PROMPT-REVIEW §3.6 on why the prompt's demand for full depth across 27 setups produces uniform shallowness. Ticking this box unqualified would be exactly the presence-over-correctness failure that §19's preamble warns about
 - [x] Section 3 thresholds populated with proposed defaults, confidence ratings, and source notes
 - [x] Every identified discretionary element has at least one recommended deterministic implementation and a documented alternative
 - [x] Validation Matrix covers all major components and contains no empty "Deterministic Rule" cells
@@ -1380,6 +1480,7 @@ EMA_9(t) = close_t × k + EMA_9(t−1) × (1 − k),  k = 2/(9+1) = 0.2
 - Premarket bars are **excluded** from the regular-session EMA.
 - Trail evaluation is **close-only** — an intrabar dip below the EMA does not trigger.
 - The trailing stop **ratchets**: it only ever moves up, never down.
+- The ratcheted level is **mirrored to a resting broker-side stop order** and amended on each bar close (§21.2). The EMA is computed locally; the protection is not. A position in `TRAILING` with no live broker stop is a Sev-1 (§21.6), identical to any other unprotected position.
 
 ### 20.6 "Tighter" and "Wider"
 
@@ -1451,9 +1552,25 @@ IDLE → ARMED → PENDING_ENTRY → OPEN_FULL → T1_FILLED → T2_FILLED → T
 | `OPEN_FULL` | Position open, stop at pattern level, full R at risk | → `T1_FILLED`, `STOPPED_OUT`, `INVALIDATED`, `BAILED_OUT` |
 | `T1_FILLED` | 50% out; stop moved to breakeven; scale-in now legal | → `T2_FILLED`, `STOPPED_OUT` |
 | `T2_FILLED` | 75% out | → `TRAILING` |
-| `TRAILING` | Final 25% on ratcheting 9 EMA stop | → `CLOSED` |
+| `TRAILING` | Final 25% on ratcheting 9 EMA stop, mirrored to a resting broker-side stop amended each bar close (§21.2) | → `CLOSED`, `STOPPED_OUT` |
 
 Every transition is persisted (`positions.state`) and emitted to the audit log, so a restart can resume mid-position (§21.3) rather than discovering an untracked broker position.
+
+### 20.13 Tick Size and Price Rounding
+
+Several rules compute price levels that are not whole ticks — `VWAP × 0.99`, `entry + 2R` on an odd R, measured moves, and the §3.1.2 separation floor. Without a rounding convention these are ambiguous, and the direction of rounding is not cosmetic: rounding a stop the wrong way tightens it into noise, and rounding a target the wrong way flatters backtested R.
+
+| Rule | Specification |
+|------|--------------|
+| Tick size | **$0.01** for all tradeable symbols. SEC Rule 612 mandates $0.01 increments at or above $1.00, and the §2 price filter floors the universe at $1.00, so sub-penny increments never arise. Sub-$1.00 names are excluded by `PRICE_OUT_OF_RANGE` before any level is computed |
+| Universal requirement | Every price submitted to the broker or compared against a bar must be a whole tick. Rounding happens **once**, at level computation, never at comparison time |
+| **Stops (long)** | Round **down** (away from the position) → `floor_to_tick`. A wider stop reduces share count at fixed dollar risk, so this never increases risk and never creates a noise stop-out that the unrounded level would have survived |
+| **Targets (long)** | Round **up** (away from entry) → `ceil_to_tick`. Makes targets marginally harder to reach, so backtests are not flattered by rounding |
+| **Gate thresholds** | Round **up** → `ceil_to_tick`, so a requirement is never weakened by rounding. Applies to the §3.1.1 room gate and the §3.1.2 separation floor |
+| Ordering | Tick rounding is applied **before** the $0.10 minimum-stop floor and before the 5% maximum-stop skip test, so both tests operate on the level that will actually be sent |
+| Worked reference | §3.4: `VWAP × 0.99 = $3.762` → `floor_to_tick` → `$3.76` → `− 1 tick` → `$3.75`. The $0.10 floor then widens it to `$3.73` |
+
+Rounding is deliberately **asymmetric and conservative in every case** — it can only widen stops, raise targets, and raise gate thresholds. No rounding decision anywhere in the system can make a trade look better than it is.
 
 ---
 
@@ -1478,6 +1595,7 @@ The earlier §6.6 policy ("cancel all open orders if reconnect not established w
 | Principle | Specification |
 |-----------|--------------|
 | **Protection lives at the broker** | Stops and targets are submitted as native IBKR **bracket/OCA** orders immediately on entry fill, so they survive client crash, network loss, and machine reboot. The local process is never the only thing standing between a position and its stop |
+| **Trailing stops are mirrored, never local-only** | The T3 leg trails a locally-computed 9 EMA (§20.5), which cannot be expressed as a static broker order — so a naive implementation would silently void the guarantee above the moment a position reached `TRAILING`. **Required behaviour:** a static stop order always rests at the broker at the *last ratcheted* trail level. On each bar close the client computes the new EMA and, if it is higher, **amends** the resting broker stop upward. If the client dies, the last amended level stands and the position remains protected — merely at a staler level than the live EMA, never at none. Amendment failures retry per §6.8 and raise `TRAIL_AMEND_FAILED`; the stale stop is left in place, never cancelled |
 | On disconnect | Stop generating new signals; do **not** attempt cancels; preserve broker-side brackets; surface a `DISCONNECTED` alert |
 | On reconnect | Enter `RECONCILING`; no new signals until reconciliation completes |
 | Queued signals | Expire after 60s; a signal whose trigger bar is stale is discarded, never replayed |
@@ -1523,7 +1641,10 @@ On every startup and after every reconnect:
 - Single supervised process group (`systemd` or equivalent) with automatic restart and start-up reconciliation; a crash must never leave a position unprotected (guaranteed by §21.2 broker-side brackets).
 - Schema migrations via `alembic`; no manual DDL.
 - Nightly DB backup with a tested restore path; bar data reproducible from vendor on loss.
-- Non-functional targets: support a 200-symbol scan universe and 10 concurrent watchlist subscriptions within the IBKR market-data line cap (§5.5); RTO ≤ 5 min during market hours.
+- Non-functional targets, stated against the **two-tier data topology** of §5.5 so they are not mistaken for a scope reduction of §4:
+  - **Screening tier (external provider):** full-market coverage at the §4.4 scan cadence. Symbol count is bounded by the provider, not by this system.
+  - **Execution tier (IBKR):** ≤ 200 symbols under any form of IBKR subscription and ≤ 10 concurrent streaming watchlist lines, within the market-data line cap (§5.5). This is a *budget for execution-grade quotes on the narrowed watchlist*, not the screening universe.
+  - RTO ≤ 5 min during market hours.
 
 ---
 
@@ -1541,6 +1662,7 @@ On every startup and after every reconnect:
 | 6 | Simplest Day Trading Strategy | https://www.warriortrading.com/simplest-day-trading-strategy/ |
 | 7 | IBKR Market Data Pricing | https://www.interactivebrokers.com/en/pricing/market-data-pricing.php |
 | 8 | Architect Prompt (Revised) | prompts/ross_cameron_trading_system.pdf |
+| 9 | Critique of the architect prompt | [docs/PROMPT-REVIEW.md](PROMPT-REVIEW.md) — where PRD structure deliberately diverges from the prompt, the reasoning is recorded there |
 
 ### Appendix B: Glossary
 
@@ -1570,6 +1692,21 @@ On every startup and after every reconnect:
 
 *Verify current pricing at IBKR subscription portal before implementation.*
 
+### Appendix D: Reserved Future-Phase Extension Points
+
+Per the architect prompt §6.14, these are **reserved names only — deliberately not designed in this phase.** They are listed so the architecture leaves room for them, and so that the "AI Candidate" columns in §14.2 and §17 have a defined destination.
+
+| Extension point | Consumes | Nearest current limitation (§17) |
+|-----------------|----------|----------------------------------|
+| AI-assisted trade review | `closed_trades`, `journal_entries`, bar context | Pattern quality scoring |
+| News summarization | Headline feed, `watchlists.catalyst` | Catalyst quality assessment |
+| Natural-language trade explanations | `signals.features`, `audit_log` | — |
+| Pattern ranking | `signals`, realized outcomes per setup | "Obvious" stock selection; clean-chart assessment |
+| Strategy optimization assistance | Backtest and walk-forward output | Parameter overfitting risk (Phase 9) |
+| Journal insights | `journal_entries`, `performance_snapshots` | — |
+
+No schema, interface, or model choice is specified for any of these, and none is in MVP scope.
+
 ---
 
-*End of PRD v1.0*
+*End of PRD v1.2*

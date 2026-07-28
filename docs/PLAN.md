@@ -6,11 +6,13 @@ This document is the **work plan** for producing the Phase 1 Product Requirement
 
 **In scope:** Specification, architecture design, trading rules, thresholds, discretion analysis, and implementation roadmap.
 
-**Out of scope:** Python code, IBKR integration, backtester implementation, GUI implementation, git initialization.
+**Out of scope:** Python code, IBKR integration, backtester implementation, GUI implementation.
 
 **Source of truth:** [prompts/ross_cameron_trading_system.pdf](../prompts/ross_cameron_trading_system.pdf)
 
 **Primary deliverable:** [docs/PRD.md](PRD.md) — the complete Phase 1 specification.
+
+**Companion:** [docs/PROMPT-REVIEW.md](PROMPT-REVIEW.md) — a critique of the source prompt. Several PRD structural choices deliberately depart from the prompt (backtesting moved before the MVP gate; three setups specified to depth rather than 27 shallowly; a viability section the prompt never asked for). The reasoning for each departure lives there, so this plan does not repeat it.
 
 ---
 
@@ -150,6 +152,23 @@ Every workstream above was self-authored and self-certified, so the acceptance c
 - [ ] Sanity-check the worked numeric examples in Section 3 (position sizing, R:R) by recomputation
 - [ ] Confirm the "engineer could start with no clarifying questions" claim by having someone unfamiliar with Ross Cameron read the MVP sections and list every question they still have
 - [ ] Pressure-test Section 18 (Strategy Viability): are the open risks complete, and is the viability gate strict enough?
+- [ ] **Parameter registry check** — build the registry described below and verify it is clean
+
+#### The parameter registry (added after the v1.2 sweep)
+
+Two review rounds found two *different* defect classes, and the second was not caught by the fix for the first:
+
+| Round | Class | Example | What would have caught it |
+|-------|-------|---------|--------------------------|
+| v1.1 | Arithmetic — examples violating their own rules | Stop at $6.22 where the rule required $6.20; T2 below T1 | Machine-checkable example fixtures (PRD §21.1) |
+| v1.2 | **Consistency — a threshold restated in two places, one updated** | `room_gate_multiple` raised to 2.5 in §2.0/§3.1.1, left at `2 ×` in all three setup criteria; §15 carrying a scaling-in rule §7.1.1 had overturned; §4.3 carrying a composite score §20.10 documents as broken | A parameter registry |
+
+Verifying the examples against the *new* value confirmed the examples and never questioned whether the document agreed with itself. The registry closes that:
+
+- [ ] Every threshold appears in **exactly one** defining table (§2, §2.0, or §3.1.2) with a canonical name
+- [ ] Every other mention references it **by name**, never by restating the literal
+- [ ] A lint pass flags any numeric literal in §3–§7 that matches a registered default — each hit is either a legitimate worked-example value or a latent divergence
+- [ ] Cross-check that §15 and §16 assert nothing that §3, §7 or §20 has superseded
 
 **Output:** Verification notes / issues log; PRD Section 18 and Section 19 checklist signed off by someone other than the author.
 
@@ -180,7 +199,7 @@ The completed [docs/PRD.md](PRD.md) follows this table of contents:
 19. Acceptance Criteria Checklist
 20. Computation Semantics (Normative)
 21. Non-Functional Requirements & Operations
-22. Appendices (sources, glossary, IBKR costs)
+22. Appendices (sources, glossary, IBKR costs, reserved future-phase extension points)
 
 ---
 
@@ -239,6 +258,9 @@ The PRD is complete when all of the following are true. **Note: the checkmarks b
 | D14 | Pre-entry gate | Room gate at **2.5×** stop distance to nearest resistance | Replaces the tautological "R:R ≥ 2:1 to T1" (T1 *is* 2R, so it could never fail) and guarantees T1 < T2 with usable separation (A15) |
 | D15 | Scaling in | Legal **only after T1 fills** and stop moves to breakeven | Old "total risk ≤ 1.5× original max risk" openly violated the non-bypassable per-trade cap (A16) |
 | D16 | Risk denominator | **start-of-day equity**, frozen at 09:30 | Old rule used live equity *including* unrealized P&L, making the daily-loss threshold move as the loss accrued |
+| D17 | T1/T2 collapse | **Absolute, cost-denominated separation floor** (PRD §3.1.2): `T2 − T1 ≥ 3 × (spread + $0.015)`, alongside the room gate | D14's 2.5R gate was meant to stop T1 and T2 collapsing into one exit. It cannot: T1 is fixed at 2R, so a 2.5R gate buys exactly 0.5R — and R shrinks on cheap stocks, which is where costs bite hardest. The §3.4 example cleared the gate with T1 and T2 **$0.06 apart on a $3.83 stock** and recorded it as a pass. One multiplier cannot serve a $3 stock and a $15 stock; the constraint has to be in dollars (A18) |
+| D18 | Trailing-stop protection | **Mirror the ratcheted 9 EMA to a resting broker-side stop**, amended each bar close | §21.2 guarantees "protection lives at the broker" and §21.6 makes any unprotected position a Sev-1 — but a locally-computed EMA trail cannot be a static broker order, so the guarantee silently expired at `TRAILING`. Mirroring keeps it intact: if the client dies the last amended level stands, stale but never absent. Rejected: accepting the exposure and documenting it (A19) |
+| D19 | Price rounding | **$0.01 ticks; all rounding conservative** — stops down, targets up, gate thresholds up (PRD §20.13) | Several rules produce non-tick levels (`VWAP × 0.99`, odd-R targets). Rounding direction is not cosmetic: the wrong direction tightens stops into noise or flatters backtested R. Asymmetric-conservative means no rounding decision can make a trade look better than it is (A20) |
 
 ---
 
@@ -246,11 +268,15 @@ The PRD is complete when all of the following are true. **Note: the checkmarks b
 
 | Risk | Mitigation |
 |------|------------|
+| **Strategy may have no edge** (the top risk) | Phase 4b lightweight validation gates the execution build; PRD §18.7 viability gate requires positive expectancy **net of costs** over ≥100 trades per setup, out-of-sample, before any capital |
+| **Scanner may not be buildable on IBKR** | PRD §5.5: IBKR is an order-management API, not a screener, and float data is unreliable for small caps. Phase 2a data spike (V7) resolves provider, data quality and measured latency **before** Phase 5 |
 | Ross rarely states exact numeric thresholds | Document confidence levels; mark community proxies as Medium confidence |
 | IBKR data costs change | PRD includes approximate costs with "verify at subscription time" note |
 | Discretionary gap (tape reading) | Proxy via volume/price-action rules; document in Known Limitations |
 | Halt/LULD backtest complexity | Defer full halt simulation to Phase 7; MVP uses simplified model |
 | News catalyst automation | MVP uses manual verification + keyword NLP soft filter |
+| **Spec drift between sections** | Two rounds of internal contradictions have already been found (see Workstream 11). Mitigated by the parameter registry, PRD §21.1 worked-example fixtures, and §20 being declared normative — but **not yet independently verified** |
+| Cost estimates are estimates | `est_round_trip_cost_per_share` ($0.015) drives the D17 separation floor and is unmeasured. Calibrate from real paper fills in Phase 4b before trusting any expectancy figure |
 
 ---
 
@@ -260,6 +286,7 @@ The PRD is complete when all of the following are true. **Note: the checkmarks b
 - IBKR API integration code
 - Backtester or scanner implementation
 - Desktop GUI implementation
-- Git initialization
 
 These are deferred until the PRD passes Section 8 acceptance criteria and implementation is explicitly requested.
+
+*(The repository is now under version control; git initialization is no longer pending and has been removed from this list.)*

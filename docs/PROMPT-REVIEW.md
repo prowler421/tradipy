@@ -117,7 +117,11 @@ Relative weighting in a prompt is read as relative importance. **Consequence in 
 
 ### 3.9 Solution is pre-specified where the problem should be
 
-Python (§5), IBKR (§5), a desktop application with eleven named screens (§6.11), and a full relational schema (§6.10) are all fixed before any analysis. Legitimate if they are hard constraints — but §6.11 demands a full GUI specification while §6.12's MVP explicitly excludes the GUI. That guarantees wasted effort, and it duly appeared: PRD §11 contains wireframes for an interface deferred to Phase 8.
+Python (§5), IBKR (§5), a desktop application with eleven named screens (§6.11), and a full relational schema (§6.10) are all fixed before any analysis. That is legitimate if they are hard constraints, and for a personal trading system they plausibly are.
+
+*Revised — the original version of this item overreached.* It claimed the §6.11 GUI specification "guarantees wasted effort" because §6.12's MVP excludes the GUI. That does not follow: §6.12 says "no fancy GUI required" **for the MVP gate** and schedules the GUI at Phase 8, so specifying a Phase 8 deliverable in a Phase 1 product spec is ordinary forward planning, not waste.
+
+The defensible criticism is one of **opportunity cost, not waste** — the same argument as §3.6 and §3.10. The prompt allocates eleven named screens and a full schema to components that will not be built for a year, and one sentence (§6.2) to the non-functional requirements needed to run the thing at all. Attention spent on GUI wireframes is attention not spent on computation semantics, and it is the missing semantics (§3.5) — not the presence of wireframes — that actually blocked implementation. The problem is the prompt's *weighting*, not the inclusion of any single item.
 
 ### 3.10 "Be exhaustive" conflicts with "minimal ambiguity"
 
@@ -127,7 +131,7 @@ Python (§5), IBKR (§5), a desktop application with eleven named screens (§6.1
 
 ## 4. Rewrite checklist
 
-If this prompt is reused, these eight changes would address the substance of what went wrong:
+If this prompt is reused, these nine changes would address the substance of what went wrong:
 
 1. **Move falsification before construction.** Require an evidence gate — expectancy net of costs, out-of-sample — before any execution-engine or paper-trading phase.
 2. **Add an economics section.** Breakeven win rate at the chosen R:R, estimated per-trade cost drag, and what evidence would falsify the strategy.
@@ -137,6 +141,7 @@ If this prompt is reused, these eight changes would address the substance of wha
 6. **Replace the "no clarifying questions" bullet** with an actual cold-reader test whose output must be an empty list.
 7. **Give NFR/operations its own section** with weight comparable to the trading rules — explicitly including broker re-authentication, crash recovery, reconciliation, and time/calendar handling.
 8. **Reframe the source as hypothesis**, and require explicit skepticism toward vendor performance claims.
+9. **Require a parameter registry.** Every threshold defined exactly once with a canonical name; every other mention references it by name and never restates the literal. This is the one item added after the fact — see §6.
 
 ---
 
@@ -156,3 +161,17 @@ If this prompt is reused, these eight changes would address the substance of wha
 | Self-certified acceptance with no reviewer | §8 final bullet is unverifiable by the author (§3.4) |
 
 **Defects *not* attributable to the prompt** — these were independent authoring errors: the Windows-1252 encoding corruption; the inverted flag-volume comparison; the unreachable VWAP stop branch; the unnormalized composite score; the UUID-based duplicate check that could never fire; the missing `signals` table behind declared foreign keys; and the timeline that did not sum to its own rows.
+
+---
+
+## 6. Postscript: a defect class this review missed
+
+This review was written alongside PRD v1.1 and helped shape it. A later round found a **second class** that neither the prompt's acceptance criteria nor this critique anticipated, and it is worth recording because the fix for the first class actively concealed it.
+
+v1.1 corrected the trading rules but left superseded copies of them in downstream sections. The room-gate multiple was raised to 2.5 in §2.0 and §3.1.1 while all three setup criteria still read `≥ 2 ×` — and the worked examples, which *were* recomputed, used 2.5 and passed. Verification confirmed the examples against the new value and never asked whether the document agreed with itself. §15 likewise still carried a scaling-in rule that §7.1.1 had explicitly overturned, and §4.3 still carried the composite score §20.10 documents as broken.
+
+Three observations:
+
+1. **The prompt is partly culpable after all.** §3.3 above criticized §8's acceptance criteria for testing presence rather than correctness, but framed correctness as *arithmetic*. Internal agreement between sections is a distinct property, and no criterion tests it. The prompt fix in §3.3 should read: *"...and no parameter may hold conflicting values across sections."*
+2. **This review is not exempt.** §3.9 above overreached and has been revised. A critique is subject to the same standard it applies.
+3. **Neither fix is a sweep.** Worked-example fixtures (PRD §21.1) catch the arithmetic class; a parameter registry catches the consistency class. Both are mechanical, and mechanical checks are the only kind that survive the author's own confidence — which is the same argument §3.4 makes about the "no clarifying questions" criterion, applied to the document rather than the reader.

@@ -10,6 +10,35 @@ Corrections and reversals to [PRD.md](PRD.md), extracted so the spec itself can 
 
 ---
 
+## v1.3.1
+
+Driven by the independent review in [REVIEW-v1.3.md](REVIEW-v1.3.md). One change alters trading behaviour: the spread gates now round the other way, and are clamped.
+
+### Strategy behaviour
+
+| Section | Was | Is | Why |
+|---------|-----|-----|-----|
+| §3.1.3, §20.13 | Spread gates rounded with `ceil_to_tick` | `max(tick_size, floor_to_tick(...))` on both gates | **A maximum rounded up is a maximum weakened.** §20.13's rule said gate thresholds round up "conservative in every case" — true for a floor a value must exceed, reversed for a ceiling it must stay under. §3.1.3 inherited `ceil` by analogy and admitted spreads the unrounded threshold rejected. Its own robustness tables had been computed with `floor` throughout, so the tables were right and the formula was wrong. Under `ceil` the §3.2 Bull Flag example cleared its separation floor by exactly $0.00 — a pass by coincidence; under `floor` it clears by $0.03 (D25) |
+| §3.1.3 | — | One-tick clamp on both rounded maxima | `floor_to_tick(0.15 × R)` is `$0.00` for `R < $0.067`. No spread is ≤ 0, so an unclamped gate rejects every trade and reports `SPREAD_TOO_WIDE` on each — an outage indistinguishable from a working filter. Today's `min_stop_distance` keeps R above the boundary; §2.0's bounds permit values that do not (A25) |
+
+### Rationale relocated to where it is applied
+
+| Section | Change | Why |
+|---------|--------|-----|
+| §13 preamble, §3.1.2, §3.1.3, §6.5, §20.5, §20.13, §4.2 | PRD now cites the PLAN decision (D17–D22, D24) wherever it states a decided value, and carries the rejected alternative inline for every behaviour-changing one | A-ids were perfectly closed — 24 defined, 24 referenced — while 19 of 24 D-ids had no inbound reference. An implementer reading §3.1.3 saw the gates and defaults but not that lowering `sep_cost_multiple` had been considered and rejected for "preserving the ladder's appearance while still trading at negative expectancy." That is exactly the reasoning that stops a rule being tuned away by someone who meets only its inconvenient consequences |
+
+### Corrections
+
+| Section | Change | Why |
+|---------|--------|-----|
+| §9.2 | "eleven of thirteen inter-component payloads" delivered 11 types; `Alert` and `JournalEntry` added, making 13 | `NotificationSystem` and `TradeJournal` sat at the end of §9.3 arrows with untyped payloads. §21.6 already specifies `Alert` behaviour — severity routing, Sev-1 pinned until acknowledged — which is not implementable against an undefined payload |
+| §21.1 | Added rounding-direction assertions and cross-parameter coupling to the registry check | `assert cap == 0.01` passes under a wrong rounding rule that happens to agree at that input. Tests must assert the derivation, not the value |
+| [PLAN](PLAN.md) WS9 | "Modular architecture with interfaces and data contracts" ✓ split into contracts ✓ / interfaces ☐ | Contracts are done; no `Protocol`, ABC, or method signature exists anywhere. The tick was carried by the contracts alone |
+| [PLAN](PLAN.md) WS1, sequencing table | WS1 no longer attributes 14 threshold rows to the prompt (it names 12); implementation work moved out of the workstream-numbered table | "Depends on 5" was ambiguous between Workstream 5 and Phase 5 |
+| [PLAN](PLAN.md) WS11, [PROMPT-REVIEW](PROMPT-REVIEW.md) §6.2 | Fourth defect class recorded: **generalization** — a rule stated more broadly than its justification supports | Invisible to all three prior checks. The rule appeared once (registry clean), the tables applying it were arithmetically correct (fixtures clean), and the boundary case passed. Only the prose disagreed with the tables |
+
+---
+
 ## v1.3
 
 Driven by the independent review in [REVIEW-v1.2.md](REVIEW-v1.2.md). Two changes alter trading behaviour rather than wording: the spread gate (§3.1.3) and the correlated-exposure rule (§7.1.3).

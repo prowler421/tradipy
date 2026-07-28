@@ -1,6 +1,6 @@
 # Ross Cameron Momentum Trading System — Product Requirements Document
 
-**Version:** 1.3  
+**Version:** 1.3.1  
 **Status:** Phase 1 draft — **pending independent verification** (PLAN Workstream 11)  
 **Date:** 2026-07-28  
 **Revision history:** [CHANGELOG.md](CHANGELOG.md) — this document states current rules only; superseded rules and the reasoning behind each reversal live there  
@@ -218,7 +218,7 @@ require:  (T2 − T1) ≥ ceil_to_tick(min_separation)
 
 **Enforcement:** pre-entry, alongside the room gate. A setup that passes the room gate but fails the separation floor is rejected with `TARGETS_TOO_CLOSE` — it is not silently collapsed into a single target, because a 50/50 ladder has different expectancy than the specified 50/25/25 and would quietly change the strategy being measured.
 
-**Why not simply raise `room_gate_multiple`?** Because the required multiple is price-dependent. On the §3.4 example, forcing $0.075 of separation would need a gate of ~2.75R; on a $15 stock with a $0.40 stop the same dollar separation is 0.19R and the 2.5R gate is already generous. One multiplier cannot serve both. Recorded as **A18**.
+**Why not simply raise `room_gate_multiple`?** Because the required multiple is price-dependent. On the §3.4 example, forcing $0.075 of separation would need a gate of ~2.75R; on a $15 stock with a $0.40 stop the same dollar separation is 0.19R and the 2.5R gate is already generous. One multiplier cannot serve both. Recorded as **A18**; decided as [PLAN](PLAN.md) **D17**, which records what the earlier 2.5R gate was believed to accomplish and why it did not.
 
 **Unified room requirement.** The room gate and the separation floor are two constraints on the same quantity — the distance from entry to the nearest overhead resistance — and on wide-spread names the separation floor is the *stricter* of the two. Evaluating them independently obscures which one binds. They are therefore combined into a single pre-entry test:
 
@@ -239,22 +239,25 @@ Rejection code is `INSUFFICIENT_ROOM` when the first term binds, `TARGETS_TOO_CL
 
 The separation floor above takes `spread_at_signal` as an input, which makes the scanner's spread filter part of the strategy's economics rather than a hygiene check. §4.2 originally admitted any spread up to **1% of price**, and at that limit the arithmetic does not work:
 
-| Setup | Price | Spread at 1% | Round-trip spread cost | R | Cost as % of R |
-|-------|-------|-------------|----------------------|---|---------------|
+| Setup | Price | Spread at 1% (`floor_to_tick`) | Round-trip spread cost | R | Cost as % of R |
+|-------|-------|------------------------------|----------------------|---|---------------|
 | §3.2 Bull Flag | $5.16 | $0.05 | $0.10 | $0.12 | **83%** |
 | §3.3 HOD Breakout | $6.48 | $0.06 | $0.12 | $0.15 | **80%** |
 | §3.4 VWAP Reclaim | $3.83 | $0.03 | $0.06 | $0.10 | **60%** |
 
 §18.2 observes that "a gross +0.5R edge can turn negative once round-trip slippage and fees exceed ~0.5R." A 1%-of-price spread filter **admits trades that breach that threshold on spread alone**, before slippage or commission. All three worked examples also fail their own §3.1.2 separation floor at that spread. The filter and the floor were never jointly calibrated; this section does it.
 
-Two gates, because the binding quantity changes between scan time and signal time:
+Two gates, because the binding quantity changes between scan time and signal time. **Both are maximums, so both round *down* per §20.13** — rounding a ceiling up would admit spreads the unrounded threshold rejects:
 
 ```
 # Scan time (R is not yet known — the setup does not exist)
-max_spread_scan = min(max_spread_abs, max_spread_pct × price)
+max_spread_scan = max(tick_size,
+                      floor_to_tick(min(max_spread_abs, max_spread_pct × price)))
 
 # Signal time (R is known — this is the gate that matters)
-require:  spread_at_signal ≤ ceil_to_tick(max_spread_r × R)
+max_spread_signal = max(tick_size, floor_to_tick(max_spread_r × R))
+
+require:  spread_at_signal ≤ max_spread_signal
 ```
 
 | Parameter | Default | Rationale |
@@ -263,17 +266,25 @@ require:  spread_at_signal ≤ ceil_to_tick(max_spread_r × R)
 | `max_spread_pct` | 0.5% | Binds below ~$4, where two ticks is already a large fraction of price |
 | `max_spread_r` | 0.15 | Round-trip spread crossing ≤ 30% of R. Not comfortable — but it is the level at which the §18.2 erosion threshold is not breached by spread alone |
 
+**Why the one-tick clamp is load-bearing.** `floor_to_tick(max_spread_r × R)` returns `$0.00` whenever `R < tick_size / max_spread_r`, which at the defaults is **R below $0.067**. No spread can be less than or equal to zero, so an unclamped gate would reject *every trade* — silently, with a plausible-looking `SPREAD_TOO_WIDE` on each. Today's `min_stop_distance` of $0.10 keeps R above that boundary, but §2.0 permits `min_stop_distance` down to $0.01, so the failure is reachable by a legal configuration change and not by any bug. Recorded as **A25**; the parameter-registry check (§21.1) must treat this as a coupling, not two independent bounds.
+
 Rejection code `SPREAD_TOO_WIDE` at both points. Failing at signal time is expected and common: spreads widen precisely during the momentum bursts that produce triggers, and a trade whose spread has blown out is one the system should decline rather than pay for.
+
+> **This changes trading behaviour** — decided as [PLAN](PLAN.md) **D20**. The system now declines trades it previously took, and the rejection rate is expected to be material on sub-$4 names, where two ticks is already 0.5% of price. That is the intended effect, not a regression.
+>
+> **The rejected alternative matters more than the chosen one.** Lowering `sep_cost_multiple` would have made the §3.1.2 floor easy to clear and left the ladder looking healthy — while continuing to trade at negative expectancy, since the friction that the floor exists to measure would still have been there. It is the cheaper-looking fix and the wrong one. If the `SPREAD_TOO_WIDE` rate proves uncomfortably high in Phase 4b, **the correct response is to conclude the strategy cannot be traded on those names, not to widen the gate.** Any change to `max_spread_r`, `max_spread_abs`, `max_spread_pct`, or `sep_cost_multiple` must be justified against measured net expectancy, not against rejection count.
 
 **Robustness invariant (testable).** Every worked example in §3 must satisfy the §3.1.2 separation floor **at the widest spread its own filters admit**, not merely at an assumed $0.01. Recomputed at the tightened caps:
 
-| Setup | Widest admitted spread | Separation floor at that spread | Actual T2−T1 | Result |
-|-------|----------------------|-------------------------------|-------------|--------|
-| §3.2 Bull Flag | $0.01 (0.15 × $0.12 = $0.018 → 1 tick) | $0.08 | $0.11 | PASS |
-| §3.3 HOD Breakout | $0.02 (0.15 × $0.15 = $0.0225 → 2 ticks) | $0.11 | $0.22 | PASS |
-| §3.4 VWAP Reclaim | $0.01 (0.15 × $0.10 = $0.015 → 1 tick) | $0.08 | $0.12 | PASS |
+| Setup | Widest admitted spread (`floor_to_tick`) | Separation floor at that spread | Actual T2−T1 | Margin | Result |
+|-------|----------------------------------------|-------------------------------|-------------|--------|--------|
+| §3.2 Bull Flag | $0.01 (0.15 × $0.12 = $0.018 → **$0.01**) | $0.08 | $0.11 | $0.03 | PASS |
+| §3.3 HOD Breakout | $0.02 (0.15 × $0.15 = $0.0225 → **$0.02**) | $0.11 | $0.22 | $0.11 | PASS |
+| §3.4 VWAP Reclaim | $0.01 (0.15 × $0.10 = $0.015 → **$0.01**) | $0.08 | $0.12 | $0.04 | PASS |
 
-Under the old 1% filter all three failed. This invariant is encoded as a fixture in §21.1 so a future loosening of either parameter breaks CI rather than silently reintroducing negative-expectancy trades. Recorded as **A21**.
+Under the old 1% filter all three failed. The **margin** column is reported deliberately: had these gates rounded up instead of down, Bull Flag would have passed at exactly `$0.11 ≥ $0.11` — zero margin, which is not a pass so much as a coincidence, and which would make the CI fixture below flip on any parameter nudge without distinguishing a meaningful change from rounding jitter. A boundary fixture that passes with zero margin is reporting a problem, not a success.
+
+This invariant is encoded as a fixture in §21.1 so a future loosening of any of the four parameters breaks CI rather than silently reintroducing negative-expectancy trades. Recorded as **A21**.
 
 ---
 
@@ -572,7 +583,7 @@ Universe (US equities, common stock — external screening provider)
 | Institutional Ownership | ≥ 80% | Soft (**disabled by default**) | `INST_OWN_HIGH` | See note below — retained but inert |
 | Short Interest | ≥ 5% (flag only, not reject) | Soft | `HIGH_SHORT_INTEREST` | Potential squeeze fuel |
 
-**Note on Institutional Ownership.** This filter is **off by default** and should be treated as unvalidated. Two problems: its direction was stated inconsistently (`≥ 80%` here, `> 80%` in §15 — now reconciled to `≥`), and more seriously, its *premise* is doubtful. Institutional ownership at or above 80% in a universe capped at 20M float and $2B market cap is rare; on most qualifying names the filter would never fire, and where it does fire the causation is unclear — high institutional ownership on a micro-float gapper may indicate a recent placement rather than reduced effective float. No source in Appendix A states this threshold. Enable only after the Phase 2a spike (§5.5) confirms the data exists and Phase 4b shows it discriminates. Recorded as **A22**.
+**Note on Institutional Ownership.** This filter is **off by default** and should be treated as unvalidated. Two problems: its direction was stated inconsistently (`≥ 80%` here, `> 80%` in §15 — now reconciled to `≥`), and more seriously, its *premise* is doubtful. Institutional ownership at or above 80% in a universe capped at 20M float and $2B market cap is rare; on most qualifying names the filter would never fire, and where it does fire the causation is unclear — high institutional ownership on a micro-float gapper may indicate a recent placement rather than reduced effective float. No source in Appendix A states this threshold. Enable only after the Phase 2a spike (§5.5) confirms the data exists and Phase 4b shows it discriminates. Recorded as **A22**; decided as [PLAN](PLAN.md) **D24**, where the rejected alternative was deleting the filter outright — it is kept off-by-default so the hypothesis can be tested rather than silently lost.
 
 ### 4.3 Composite Scoring (Soft Filter Ranking)
 
@@ -755,7 +766,7 @@ impact = impact_coefficient × spread_at_signal × sqrt(order_shares / bar_volum
 
 At the §8.2 participation cap of 5% of bar volume, `sqrt(0.05) ≈ 0.224`, so impact adds ~22% of one spread — small at the cap and growing as participation rises. It is deliberately expressed as a multiple of *spread* rather than of price, so it scales with the same liquidity signal the §3.1.3 gate uses.
 
-**Stress requirement.** Phase 4b must report the viability gate at `1×` and `2×` the calibrated slippage (V2). A strategy that only clears the gate at 1× has no margin against a model that §18.2 already describes as optimistic.
+**Stress requirement.** Phase 4b must report the viability gate at `1×` and `2×` the calibrated slippage (V2). A strategy that only clears the gate at 1× has no margin against a model that §18.2 already describes as optimistic. Decided as [PLAN](PLAN.md) **D22**: the model previously had ticks and spread but no impact term, and because §18.7's viability gate is judged net of modeled slippage, an optimistic model biases the go/no-go decision toward "go" — the one direction in which an error costs real money.
 
 ### 6.6 Connection Failure Recovery
 
@@ -850,7 +861,7 @@ The rule was previously "> 1 position in the same sector," with `symbols.sector`
 
 Rule 1 dominates deliberately: it is the exposure that matters and the one a sector code cannot see.
 
-**Honest limitation.** No realized-correlation estimate is computed. Measuring intraday correlation on names with a few days of relevant history is not statistically meaningful, and a spurious estimate would be worse than an admitted proxy. With `max_open_positions` defaulting to 1 (beginner) and hard-capped at 3, the practical exposure to this gap is small — but it *is* a gap, and it grows immediately if the position cap is ever raised. Recorded as **A24**.
+**Honest limitation.** No realized-correlation estimate is computed. Measuring intraday correlation on names with a few days of relevant history is not statistically meaningful, and a spurious estimate would be worse than an admitted proxy. With `max_open_positions` defaulting to 1 (beginner) and hard-capped at 3, the practical exposure to this gap is small — but it *is* a gap, and it grows immediately if the position cap is ever raised. Recorded as **A24**; decided as [PLAN](PLAN.md) **D21**. **This changes trading behaviour** wherever two watchlist names share a headline — the second is declined, where earlier revisions would have taken both.
 
 ### 7.2 Emergency Kill Switch
 
@@ -932,7 +943,9 @@ Rule 1 dominates deliberately: it is the exposure that matters and the one a sec
 
 ### 9.2 Data Contracts
 
-Every arrow in the §9.3 event flow carries one of the types below. Earlier revisions typed only `TradeSignal` and `OrderEvent`, leaving eleven of thirteen inter-component payloads as prose — which is how `spread_at_signal` came to gate every entry without ever being given a type or a definition.
+Every arrow in the §9.3 event flow carries one of the **thirteen** types below. Earlier revisions typed only `TradeSignal` and `OrderEvent`, leaving the other eleven as prose — which is how `spread_at_signal` came to gate every entry without ever being given a type or a definition.
+
+The last two, `Alert` and `JournalEntry`, were added after a count in this paragraph claimed thirteen while eleven were defined: `NotificationSystem` and `TradeJournal` both sat at the end of §9.3 arrows carrying untyped payloads. `Alert` in particular needed a contract rather than an exemption, because §21.6 already specifies its behaviour — severity routing, Sev-1 pinning until acknowledged — which is not implementable against an undefined payload.
 
 Field types are indicative Python; `Decimal` is used wherever a value is compared against a tick boundary or accumulated into P&L, and `float` only where the value is a ratio or score that is never rounded to a price.
 
@@ -1137,6 +1150,38 @@ class BacktestResult:
     viability_gate: dict     # per-criterion pass/fail (§18.7)
 ```
 
+#### Alert
+```python
+@dataclass(frozen=True)
+class Alert:
+    alert_id: str
+    raised_at: datetime
+    severity: str                # "sev1" | "sev2" | "info" — §21.6
+    category: str                # "unprotected_position" | "kill_switch" |
+                                 # "risk_breach" | "data_gap" | "signal" | "fill"
+    symbol: str | None
+    message: str
+    dedupe_key: str              # identical keys collapse; a flapping condition
+                                 # must not generate one alert per bar
+    requires_ack: bool           # True for every sev1 (§11.2 pins until acked)
+    acknowledged_at: datetime | None
+    channels: list[str]          # "desktop" | "email" | "push" — routed by §11.2
+```
+
+#### JournalEntry
+```python
+@dataclass(frozen=True)
+class JournalEntry:
+    entry_id: str
+    trade_id: str                # FK to the ClosedTrade / Position
+    written_at: datetime
+    setup: str
+    entry_snapshot: dict         # FeatureVector at signal, frozen for review
+    decision_trace: list[str]    # ordered gate outcomes, incl. rejection codes
+    outcome_r: Decimal | None    # None while the position is open
+    user_note: str | None        # the only user-authored field
+```
+
 ### 9.3 Event Flow
 
 Every arrow is annotated with the §9.2 type it carries:
@@ -1163,11 +1208,13 @@ IBKR ──Bar, Quote──▶ MarketDataIngestion ──Bar, Quote──▶ Fea
                                               └────────Fill───────────┘
                                                               │
                                                               ▼
-                                              PortfolioManager ──Position──▶ TradeJournal
+                                              PortfolioManager ──Position, JournalEntry──▶ TradeJournal
                                                               │
                                                         ClosedTrade
                                                               ▼
                                                           Analytics
+
+RiskEngine, ExecutionEngine, Monitoring ──Alert──▶ NotificationSystem ──Alert──▶ UI / email / push
 ```
 
 `Backtester` consumes historical `Bar`/`Quote` and emits `BacktestResult`, driving the same `StrategyEngine` and `RiskEngine` instances as live — which is what makes §8.1's "backtest sizing must match live sizing" enforceable by construction rather than by discipline.
@@ -1587,6 +1634,10 @@ Desktop GUI deferred to Phase 8.
 
 Per the architect prompt §6.13, each assumption states the consequence if wrong **and a recommended alternative**. The alternatives column was previously present inline for only about four of twenty entries.
 
+**On registers and where rationale lives.** Three identifier registers run through these documents: **A-ids** (assumptions, below), **V-ids** (validation requirements, §15), and **D-ids** (decisions, in [PLAN.md](PLAN.md)). The first two are defined and referenced within the PRD, so they stay closed by construction. D-ids were not: nineteen of twenty-four had no inbound reference from this document, which meant an implementer reading only the PRD saw the rule and none of the reasoning — including, for every behaviour-changing decision, the alternative that was considered and rejected. That reasoning is what prevents a rule from being tuned away later by someone who encounters only its inconvenient consequences.
+
+The convention is now: **wherever this document states a decided value, it cites the D-id and carries enough of the rationale to be actionable in place.** The PLAN remains the authority on how a decision was reached; the PRD must not require a reader to go there to avoid making a mistake. Decisions that change trading behaviour — D17 (§3.1.2), D18 (§20.5/§21.2), D19 (§20.13), D20 (§3.1.3), D21 (§7.1.3), D22 (§6.5), D24 (§4.2) — are marked as such at the point of use.
+
 | ID | Assumption | Consequence if Wrong | Recommended Alternative |
 |----|------------|---------------------|------------------------|
 | A1 | Ross's 5× RVOL / 10% daily / $1–$20 / ≤20M float remain valid criteria | Scanner may miss or include wrong stocks | Re-fit each threshold against Phase 4b outcome data; treat the source values as priors, not constants. Widen float to ≤50M before widening price |
@@ -1613,6 +1664,7 @@ Per the architect prompt §6.13, each assumption states the consequence if wrong
 | A22 | The ≥80% institutional-ownership filter is unvalidated and **off by default** (§4.2) | If enabled on a false premise it silently shrinks the candidate set for no benefit | Leave disabled. Remove the filter entirely if Phase 4b shows no expectancy difference between high- and low-ownership names |
 | A23 | The opening auction is modelled as a non-participable print: excluded from the fill cap, no entries inside the 09:30 bar (§8.2) | Backtests that fill inside the auction overstate achievable liquidity at the open | Obtain imbalance feed data and model the cross explicitly — expensive and out of MVP scope. Interim alternative: exclude the first 5 minutes from backtests entirely and measure how much of the strategy's return depended on them |
 | A24 | Shared catalyst, then sector, is an adequate proxy for correlated exposure; realized correlation is not modelled (§7.1.3) | Two co-moving names are treated as independent positions, so true exposure is up to `max_open_positions` × nominal risk rather than the cap | Adequate while `max_open_positions ≤ 3`. If the cap is ever raised, compute rolling intraday return correlation over the session and group above a 0.7 threshold — but only once enough same-session history exists for the estimate to mean anything |
+| A25 | The one-tick clamp on the §3.1.3 spread gates is sufficient protection for the `min_stop_distance` ↔ `max_spread_r` coupling | Below `R = tick_size / max_spread_r` ($0.067 at defaults) the signal-time gate would floor to $0.00 and reject every trade. The clamp converts a total silent outage into a merely permissive gate on very tight stops — it does not make those trades economically sound, since a 1-tick spread against a sub-$0.07 R is still ~30% of R round-trip | Enforce the coupling directly: require `min_stop_distance ≥ 2 × tick_size / max_spread_r` as a config-load validation rather than relying on the clamp, so an unsound combination fails at startup instead of trading. Deferred because it adds a cross-parameter validator before there is a config loader to put it in |
 
 ---
 
@@ -1830,10 +1882,22 @@ No real money should be committed until, at minimum: backtest and paper trading 
 | Cross-section consistency sweep | ✓ v1.2 (see note below) |
 | Independent review of v1.2 | ✓ [REVIEW-v1.2.md](REVIEW-v1.2.md) — 23 defects; addressed in v1.3 |
 | Spread/separation joint calibration | ✓ v1.3 (§3.1.3), with the worst-case invariant now a fixture |
+| Independent review of v1.3 | ✓ [REVIEW-v1.3.md](REVIEW-v1.3.md) — 6 defects, one blocking (rounding direction); addressed in v1.3.1 |
+| Independent review of v1.3.1 | ☐ **outstanding** — no round has yet been run by a reader with no prior context |
 | Machine-checkable example fixtures | ☐ outstanding (§21.1 — the durable fix) |
 | Parameter registry check | ☐ outstanding (PLAN WS11 — the durable fix for the recurring class) |
+| Rounding-direction assertions | ☐ outstanding (§21.1 — the durable fix for the generalization class) |
 
-**The recurring defect class.** v1.1 fixed the trading rules but left superseded copies in downstream sections; v1.2 swept those and introduced two more (`spread_at_signal` and the spread-filter/separation-floor mismatch). The full record is in [CHANGELOG.md](CHANGELOG.md). **Every instance is the same failure mode:** a threshold restated as a literal in more than one place, with only one copy updated. The durable fix is not another sweep — it is the parameter registry (every threshold defined once, referenced by name, never re-stated), which is why it appears above as outstanding rather than complete.
+**Four defect classes, not one.** The self-assessment below has been wrong in a different way each round, and the pattern is worth stating plainly because it bears on how much the checkmarks are worth:
+
+| Round | Class | Why the previous fix could not see it |
+|-------|-------|---------------------------------------|
+| v1.1 | **Arithmetic** — examples violating their own rules | — |
+| v1.2 | **Consistency** — a threshold restated in two places, one updated | Recomputing the examples against the *new* value confirmed the examples and never asked whether the document agreed with itself |
+| v1.3 | **Joint incoherence** — two individually-correct parameters that cannot both hold | Every value appeared exactly once, so a parameter registry passes it clean |
+| v1.3.1 | **Generalization** — a rule stated more broadly than its justification supports | The rule appeared once, the tables applying it were arithmetically correct, and the boundary fixture passed. Only the prose and the tables disagreed — and prose comparison is the one check that does not mechanize |
+
+The durable fixes are the §21.1 fixture suite and the parameter registry, which is why they appear above as outstanding rather than complete. They close the four classes that have occurred; they are not an argument that a fifth does not exist. The full correction record is in [CHANGELOG.md](CHANGELOG.md), and PLAN Workstream 11 carries the checks.
 
 - [x] ~~Every setup in Section 4 has fully specified entry, exit, stop, target, and invalidation rules~~ — **met for 3 of 14 tradeable setups; deliberate deviation for the remaining 11.** Post-MVP setups in §3.5 carry entry, stop and target but no invalidation rules, worked examples, or false-signal patterns. This is a considered choice, not an oversight: see PROMPT-REVIEW §3.6 on why the prompt's demand for full depth across every listed component produces uniform shallowness. Ticking this box unqualified would be exactly the presence-over-correctness failure that §19's preamble warns about
 
@@ -1912,7 +1976,7 @@ EMA_9(t) = close_t × k + EMA_9(t−1) × (1 − k),  k = 2/(9+1) = 0.2
 - Premarket bars are **excluded** from the regular-session EMA.
 - Trail evaluation is **close-only** — an intrabar dip below the EMA does not trigger.
 - The trailing stop **ratchets**: it only ever moves up, never down.
-- The ratcheted level is **mirrored to a resting broker-side stop order** and amended on each bar close (§21.2). The EMA is computed locally; the protection is not. A position in `TRAILING` with no live broker stop is a Sev-1 (§21.6), identical to any other unprotected position.
+- The ratcheted level is **mirrored to a resting broker-side stop order** and amended on each bar close (§21.2). The EMA is computed locally; the protection is not. A position in `TRAILING` with no live broker stop is a Sev-1 (§21.6), identical to any other unprotected position. Decided as [PLAN](PLAN.md) **D18** — the rejected alternative was to accept the exposure and document it, which would have made §21.2's "protection lives at the broker" guarantee silently expire at exactly the state where a position is most likely to be left unattended.
 
 ### 20.6 "Tighter" and "Wider"
 
@@ -1998,11 +2062,15 @@ Several rules compute price levels that are not whole ticks — `VWAP × 0.99`, 
 | Universal requirement | Every price submitted to the broker or compared against a bar must be a whole tick. Rounding happens **once**, at level computation, never at comparison time |
 | **Stops (long)** | Round **down** (away from the position) → `floor_to_tick`. A wider stop reduces share count at fixed dollar risk, so this never increases risk and never creates a noise stop-out that the unrounded level would have survived |
 | **Targets (long)** | Round **up** (away from entry) → `ceil_to_tick`. Makes targets marginally harder to reach, so backtests are not flattered by rounding |
-| **Gate thresholds** | Round **up** → `ceil_to_tick`, so a requirement is never weakened by rounding. Applies to the §3.1.1 room gate and the §3.1.2 separation floor |
+| **Gate thresholds — MINIMUM** (value must **exceed** the threshold) | Round **up** → `ceil_to_tick`. Raising a floor makes it harder to clear, so the requirement is never weakened. Applies to the §3.1.1 room gate, the §3.1.2 separation floor, and `min_stop_distance` |
+| **Gate thresholds — MAXIMUM** (value must **stay under** the threshold) | Round **down** → `max(tick_size, floor_to_tick(threshold))`. **The opposite direction from a minimum**, for the same reason: lowering a ceiling makes it harder to clear. Rounding a maximum *up* admits values the unrounded threshold would have rejected. Applies to the §3.1.3 spread gates and any future cap of this shape |
+| Clamp on rounded maxima | A maximum that floors to `$0.00` rejects every possible value, which is a silent kill switch rather than a filter. Every rounded maximum is therefore clamped to at least one tick — see §3.1.3 and A25 for the specific coupling this protects against |
 | Ordering | Tick rounding is applied **before** the $0.10 minimum-stop floor and before the 5% maximum-stop skip test, so both tests operate on the level that will actually be sent |
 | Worked reference | §3.4: `VWAP × 0.99 = $3.762` → `floor_to_tick` → `$3.76` → `− 1 tick` → `$3.75`. The $0.10 floor then widens it to `$3.73` |
 
-Rounding is deliberately **asymmetric and conservative in every case** — it can only widen stops, raise targets, and raise gate thresholds. No rounding decision anywhere in the system can make a trade look better than it is.
+**Read the rationale, not the direction.** The governing principle is *"rounding must never weaken a constraint"*; `ceil` and `floor` are consequences of it, and which one applies depends on the polarity of the constraint. This distinction was missed once: §3.1.3's spread gate is a **maximum**, and an earlier draft applied `ceil_to_tick` to it by analogy with the minimum-gate row above, which made the gate more permissive while the surrounding prose claimed conservatism. Any new threshold must be classified as a minimum or a maximum **before** a rounding function is chosen.
+
+With both polarities specified, rounding can only widen stops, raise targets, raise floors, and lower ceilings. No rounding decision anywhere in the system can make a trade look better than it is — but that claim is only true because the polarity split above exists, so it must be re-checked whenever a threshold is added. Decided as [PLAN](PLAN.md) **D19**, amended by **D25** (the polarity split).
 
 ### 20.14 Spread and `spread_at_signal`
 
@@ -2052,7 +2120,8 @@ ATR_14 = Wilder's smoothing of TR over 14 periods:
 | Unit | Every §20 computation (VWAP, EMA seeding, RVOL as-of, flagpole height, sizing, room gate) with hand-computed fixtures |
 | **Worked-example fixtures** | Each §3 worked example encoded as a test: input bar series → asserted entry, stop, R, targets, share count. **These are regression tests against spec drift** — the four arithmetic errors found in v1.0 would all have been caught by this |
 | **Worst-case gate fixtures** | Each §3 worked example re-run at the **widest spread its own §3.1.3 caps admit**, asserting the §3.1.2 separation floor still passes. Under the former 1%-of-price filter all three examples failed this test while appearing to pass at an assumed $0.01 spread. Loosening `max_spread_r`, `max_spread_pct`, `max_spread_abs`, or `sep_cost_multiple` must break CI rather than silently readmit negative-expectancy trades |
-| **Parameter registry** | A test asserting that no §2 / §2.0 threshold appears as a numeric literal anywhere else in the spec or the code, except inside its own definition row. This is the durable fix for the recurring defect class described in §19 |
+| **Parameter registry** | A test asserting that no §2 / §2.0 threshold appears as a numeric literal anywhere else in the spec or the code, except inside its own definition row. This is the durable fix for the recurring defect class described in §19. It must also assert **cross-parameter couplings**, not only individual bounds — A25's `min_stop_distance ↔ max_spread_r` relation is the first such case, and it is invisible to a registry that checks each parameter alone |
+| **Rounding-direction assertions** | Every rounded threshold is tested against its *derivation*, not its value. `assert cap == Decimal("0.01")` passes under a wrong rounding rule that happens to agree at that input; `assert cap == floor_to_tick(x) and cap <= x` does not. Each test declares whether the threshold is a minimum or a maximum (§20.13) and asserts the direction that polarity requires. A `ceil`/`floor` divergence between §3.1.3's stated formula and its own tables survived a full review round because every number in the tables was individually correct |
 | Look-ahead | Property test: replaying a bar series truncated at time *t* must produce identical signals to the full series evaluated as-of *t* |
 | Integration | Against IBKR **paper** account: order lifecycle, partial fills, disconnect/reconnect, bracket integrity |
 | Replay harness | Deterministic bar-by-bar replay from recorded sessions with an **injectable clock** — no `datetime.now()` anywhere in strategy or risk code |
@@ -2146,7 +2215,9 @@ Earlier revisions covered secrets handling only and called it security. The thre
 | 8 | Architect Prompt (Revised) | prompts/ross_cameron_trading_system.pdf |
 | 9 | Critique of the architect prompt | [docs/PROMPT-REVIEW.md](PROMPT-REVIEW.md) — where PRD structure deliberately diverges from the prompt, the reasoning is recorded there |
 | 10 | Independent review of v1.2 | [docs/REVIEW-v1.2.md](REVIEW-v1.2.md) — the defect list v1.3 responds to |
-| 11 | Revision history | [docs/CHANGELOG.md](CHANGELOG.md) — superseded rules and the reasoning behind each reversal |
+| 11 | Independent review of v1.3 | [docs/REVIEW-v1.3.md](REVIEW-v1.3.md) — the defect list v1.3.1 responds to |
+| 12 | Decisions log | [docs/PLAN.md](PLAN.md) — D-ids cited throughout this document; the authority on how each decision was reached |
+| 13 | Revision history | [docs/CHANGELOG.md](CHANGELOG.md) — superseded rules and the reasoning behind each reversal |
 
 **Citation granularity — known gap.** Appendix A lists sources but not locations. The §15 "Ross Teaching" column is unsourced paraphrase, and no video or webinar sources are cited despite the architect prompt's §7.1 naming them as primary media. PLAN Workstream 11's traceability pass should add page numbers for the PDF and book sources and timestamps for any video source consulted, or mark the claim as community-derived rather than sourced. Until then, treat every "Ross Teaching" cell as a paraphrase of unverified provenance — several thresholds (institutional ownership, premarket volume, the 5× RVOL multiple) are already flagged as community proxies rather than source statements.
 
@@ -2197,4 +2268,4 @@ No schema, interface, or model choice is specified for any of these, and none is
 
 ---
 
-*End of PRD v1.3*
+*End of PRD v1.3.1*

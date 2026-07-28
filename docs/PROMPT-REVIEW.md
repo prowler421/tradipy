@@ -162,6 +162,7 @@ If this prompt is reused, these eleven changes would address the substance of wh
 9. **Require a parameter registry.** Every threshold defined exactly once with a canonical name; every other mention references it by name and never restates the literal. See §6.
 10. **Supply a specimen for every artifact type demanded** — one dataclass, one interface, one contract — at the concreteness level expected. A bare list of names comes back as a list of names (§3.11).
 11. **Forbid silent substitution.** Where a demanded output requires measurement that does not yet exist, the response must say so and name the phase that will supply it, rather than answering qualitatively as though the question had been met (§3.12).
+12. **Require rules to state their own scope.** A rule asserted to hold "in every case" must enumerate the cases, and each new instance must be classified against that enumeration rather than matched by analogy to the nearest one in the text (§6.2).
 
 ---
 
@@ -188,7 +189,7 @@ If this prompt is reused, these eleven changes would address the substance of wh
 
 ---
 
-## 6. Postscript: a defect class this review missed
+## 6. Postscript: three defect classes this review missed
 
 This review was written alongside PRD v1.1 and helped shape it. A later round found a **second class** that neither the prompt's acceptance criteria nor this critique anticipated, and it is worth recording because the fix for the first class actively concealed it.
 
@@ -198,7 +199,7 @@ Three observations:
 
 1. **The prompt is partly culpable after all.** §3.3 above criticized §8's acceptance criteria for testing presence rather than correctness, but framed correctness as *arithmetic*. Internal agreement between sections is a distinct property, and no criterion tests it. The prompt fix in §3.3 should read: *"...and no parameter may hold conflicting values across sections."*
 2. **This review is not exempt.** §3.9 above overreached and has been revised. A critique is subject to the same standard it applies.
-3. **Neither fix is a sweep.** Worked-example fixtures (PRD §21.1) catch the arithmetic class; a parameter registry catches the consistency class. Both are mechanical, and mechanical checks are the only kind that survive the author's own confidence — which is the same argument §3.4 makes about the "no clarifying questions" criterion, applied to the document rather than the reader.
+3. **Neither fix is a sweep.** Worked-example fixtures (PRD §21.1) catch the arithmetic class; a parameter registry catches the consistency class. Both are mechanical, and mechanical checks are the only kind that survive the author's own confidence — which is the same argument §3.4 makes about the "no clarifying questions" criterion, applied to the document rather than the reader. Two further classes have since been found; see §6.1 and §6.2.
 
 ### 6.1 A third class, found by the v1.2 review
 
@@ -212,4 +213,22 @@ No consistency check catches this, because nothing is inconsistent. Each value a
 
 > *Worked examples must satisfy their own rules at the boundary of every filter they depend on, not merely at illustrative values. An example that passes at a typical input and fails at a permitted one is a defect in the filter, the example, or both.*
 
-Three review rounds, three distinct failure classes — arithmetic, cross-section consistency, and joint parameter coherence. Each was invisible to the check designed for the one before it, which is the strongest available argument that self-certification is not a substitute for a cold reader.
+### 6.2 A fourth class, found by the v1.3 review
+
+[REVIEW-v1.3.md](REVIEW-v1.3.md) found a class invisible to all three checks above: **a rule stated more broadly than its justification supports, then applied outside the range where it holds.**
+
+PRD §20.13 said price rounding was "asymmetric and conservative in every case," with gate thresholds rounding **up**. That is conservative for a floor a value must exceed — raising it makes the requirement harder to clear. It reverses for a ceiling a value must stay under: rounding a maximum spread *up* admits wider spreads than the unrounded threshold. When §3.1.3's spread cap was added it inherited `ceil_to_tick` from the neighbouring rule, and the gate became more permissive while the prose two sections away asserted the opposite.
+
+Every existing check passes this. The rule is stated exactly once, so the registry is clean. The arithmetic in §3.1.3's tables is correct — the tables had in fact been computed with `floor`, the right function, which is why the boundary fixture passed. What was wrong was the *sentence*, and the disagreement between a formula and the tables that apply it is the one thing none of the three mechanical checks reads.
+
+**The generalizable fix is to scope the universal claim.** Any normative statement carrying *always*, *never*, *in every case*, or *uniformly* is asserting something about cases that may not have been enumerated, and is the natural place to ask which ones actually were. §20.13's closing sentence was false for the one case that had just been added to it. The concrete mechanization is narrow but real: a fixture must assert *why* a value is correct, not merely that it matches — `assert cap == 0.01` passes under a wrong rule that happens to agree at that input, while `assert cap == floor_to_tick(x) and cap <= x` does not.
+
+This adds a twelfth item to the rewrite checklist:
+
+> *A rule that generalizes must state the range over which it holds. Where a rule is asserted to apply "in every case," the cases must be enumerable, and each new instance must be classified against that enumeration before the rule is applied to it — not matched by analogy to whichever instance is nearest in the text.*
+
+### 6.3 Where this leaves the argument
+
+Four review rounds, four distinct failure classes — arithmetic, cross-section consistency, joint parameter coherence, and over-general rules. Each was invisible to the check designed for the one before it, which is the strongest available argument that self-certification is not a substitute for a cold reader.
+
+It is also, by now, an argument against expecting the next check to be the last one. The four fixes are worth building because each closes a class that has actually occurred, not because their conjunction is complete. The reasonable expectation is that a fifth class exists and that it will surface the same way the other four did: from a reader who did not write the document and therefore cannot see what it was meant to say.

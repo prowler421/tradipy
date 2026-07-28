@@ -156,3 +156,46 @@ The remaining work is six enumerable items, five of which are housekeeping. Docu
 **One thing to carry into coding:** the invariant worth protecting above all others is that `§20` governs. Every one of the three defect classes was ultimately a case of the same quantity being expressed in two places. The parameter registry is not documentation hygiene — it is the mechanism that makes "§20 governs" true in code rather than aspirational in prose. Build it before the strategy engine, not after.
 
 And `§18.7` still deserves its own sentence: no real capital until net-of-cost expectancy clears an out-of-sample gate over ≥100 trades per setup. Nothing in v1.3 changed that, and it remains the only part of these documents that can prevent an actual loss.
+
+---
+
+## 5. Response and resolution (PRD v1.3.1)
+
+All six findings are resolved. Corrections and additions to this review are recorded below rather than silently folded in, on the same principle as [REVIEW-v1.2](REVIEW-v1.2.md) §8.
+
+### 5.1 Dispositions
+
+| # | Finding | Resolution |
+|---|---------|-----------|
+| 2.1 | BLOCKING — `ceil` vs `floor` in §3.1.3 | Fixed as diagnosed. §20.13 now splits gate rounding by **constraint polarity** (minimums up, maximums down) rather than flipping D19; §3.1.3 uses `floor_to_tick` on both gates. A one-tick clamp was added — see §5.2. Recorded as [PLAN](PLAN.md) **D25**, PRD **A25**. §21.1 gains a rounding-direction fixture row asserting derivation rather than value |
+| 2.2 | §9.2 count | `Alert` and `JournalEntry` added; thirteen delivered, all thirteen appear in the §9.3 flow. Typing `Alert` was the right call for the reason given — §21.6 already specifies severity routing, Sev-1 pinning, and acknowledgement behaviourally, none of which is implementable against an undefined payload |
+| 2.3 | D-id graph one-way | PRD now cites the D-id wherever it states a decided value, **and carries the rejected alternative inline** for every behaviour-changing decision. The reference alone would not have solved the problem this finding describes: an implementer who does not follow the link is exactly the reader at risk. §13's preamble states the convention |
+| 2.4 | Sequencing table mixes schemes | Phase 2a moved out of the workstream-numbered table into a separate concurrent-work table, which also gave the §21.1 fixture suite a row it did not previously have anywhere in the plan |
+| 2.5 | WS9 / WS1 self-assessment | WS9 split: contracts ✓, interfaces ☐, with the [PROMPT-REVIEW](PROMPT-REVIEW.md) §3.11 diagnosis of *why* attached. WS1 no longer attributes 14 threshold rows to a prompt that names 12 |
+| 2.6 | Open items | Unchanged and still open. The two unmeasured constants and `max_spread_r`'s calibration basis are correctly characterised |
+
+### 5.2 What this review understated
+
+**The clamp.** §2.1 prescribed `floor_to_tick` and stopped there. Applied literally, `floor_to_tick(0.15 × R)` returns `$0.00` for any `R < $0.067` — and since no spread is ≤ 0, the gate would reject **every trade**, reporting `SPREAD_TOO_WIDE` on each. An outage that looks exactly like a working filter is worse than the permissive rounding it replaced.
+
+Today's `min_stop_distance` of $0.10 keeps R above that boundary, so the failure is not currently reachable. But §2.0 permits `min_stop_distance` down to $0.01, which means a legal configuration change — not a bug — silently disables all trading. Fixed with a one-tick clamp on both gates and recorded as **A25**, whose stated alternative is the better long-term fix: validate the coupling `min_stop_distance ≥ 2 × tick_size / max_spread_r` at config load, so an unsound combination fails at startup rather than trading.
+
+The general point is worth keeping: this is a **third** parameter pair that is individually sound and jointly constrained, after the spread/separation pair in v1.3. The parameter registry as specified checks each parameter against its own bounds and would pass all three. §21.1 has been amended to require coupling assertions, not only bounds.
+
+### 5.3 Where the diagnosis was better than the prescription
+
+§2.1 proposed amending D19 to distinguish minimums from maximums, which is right. But the framing — "D19 points the wrong way" — undersells what happened. D19 was not wrong; it was **over-general**. Every case it had been written against was a minimum, for which "round up" is correct, and the error entered when a maximum was added and matched by analogy to the nearest rule in the text.
+
+That distinction determines the fix. A rule that is wrong gets flipped. A rule that is over-general gets **scoped** — which is why §20.13 now requires every new threshold to be classified as a minimum or a maximum *before* a rounding function is attached, and why the closing sentence no longer claims conservatism "in every case" without saying which cases were enumerated.
+
+This is recorded as the fourth defect class (PLAN Workstream 11, [PROMPT-REVIEW](PROMPT-REVIEW.md) §6.2). §3 of this review anticipated that a fourth class existed; it turned out to be sitting inside finding 2.1.
+
+### 5.4 On the recommendation
+
+Accepted in full, including the ordering. The rounding fix is done, and the §21.1 fixture suite now has an explicit row in PLAN's concurrent-work table as the first code to be committed — alongside the Phase 2a data spike, which does not queue behind it.
+
+The observation that each round grows the documents while the marginal finding shrinks is the right reason to stop. v1.3.1 adds roughly 90 lines, and the honest accounting is that one of the six findings would have produced wrong code and five were housekeeping. That ratio is the signal.
+
+One qualification on *"§20 governs."* It is the right invariant, and the registry is the right mechanism — but this round's defect was **inside §20**, in a rule that was internally consistent and stated once. Making §20 authoritative in code prevents the sections around it from drifting; it does nothing to make §20 itself correct. The fixtures that assert derivations rather than values are the part that does, which is why they are specified as a distinct §21.1 row rather than folded into the registry.
+
+**Still not done, and it is the same gap every round:** no one without prior context has read any version of this document. Four rounds, four classes, all found by readers who were already deep in the material and each time missing what the previous fix concealed. That is an argument about the limits of familiarity, not about effort.

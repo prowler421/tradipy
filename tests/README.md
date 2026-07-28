@@ -9,8 +9,8 @@ executable.
 ## Running
 
 ```bash
-pip install -e ".[dev]"      # or: uv pip install -e ".[dev]"
-pytest
+uv sync        # or, with pip: pip install -e . --group dev   (pip 25.1+)
+uv run pytest
 ```
 
 Everything is `Decimal`. Binary float cannot represent `$0.01`, and almost every rule here

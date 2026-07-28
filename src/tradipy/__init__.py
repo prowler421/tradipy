@@ -8,4 +8,6 @@ Read docs/PRD.md §20 (Computation Semantics) first. It is normative and governs
 conflict with code comments.
 """
 
+from tradipy import gates, params, rounding
+
 __all__ = ["gates", "params", "rounding"]

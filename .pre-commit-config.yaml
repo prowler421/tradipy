@@ -1,0 +1,41 @@
+# Pre-commit hooks for tradipy.
+# Install once with `uv run pre-commit install` (or `make install`).
+# Ruff and BasedPyright run through the local uv environment so versions match uv.lock.
+minimum_pre_commit_version: "4.0.0"
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        # Two trailing spaces are a hard line break in Markdown, and docs/PRD.md uses them in
+        # its header block. Stripping them silently reflows the normative document.
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff (lint)
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
+        require_serial: true
+      - id: ruff-format
+        name: ruff (format)
+        entry: uv run ruff format
+        language: system
+        types: [python]
+        require_serial: true
+      - id: basedpyright
+        name: basedpyright (typecheck)
+        entry: uv run basedpyright
+        language: system
+        types: [python]
+        pass_filenames: false
+        require_serial: true

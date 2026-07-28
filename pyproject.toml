@@ -1,12 +1,44 @@
 [project]
 name = "tradipy"
 version = "0.0.1"
-description = "Ross Cameron momentum trading system — Phase 1 invariant fixtures"
-requires-python = ">=3.11"
+description = "Ross Cameron momentum trading system — Phase 1 invariant layer"
+readme = "README.md"
+requires-python = ">=3.13"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Itay Ozery", email = "prowler421@gmail.com" }]
+keywords = ["trading", "momentum", "invariants", "decimal", "risk"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+
+# Runtime dependencies. The invariant layer is intentionally stdlib-only (Decimal,
+# dataclasses, enum, collections.abc). Keep it that way unless a dependency earns its place.
 dependencies = []
 
-[project.optional-dependencies]
-dev = ["pytest>=8.0"]
+[project.urls]
+Documentation = "https://github.com/prowler421/tradipy/tree/main/docs"
+Repository = "https://github.com/prowler421/tradipy"
+Changelog = "https://github.com/prowler421/tradipy/blob/main/CHANGELOG.md"
+
+# Development dependency group (PEP 735). Installed by default with `uv sync`; with pip,
+# `pip install -e . --group dev` (pip >= 25.1). These never ship in the wheel.
+#
+# Ruff and BasedPyright are pinned to a minor series on purpose: both are gates in CI, and a
+# formatter or type checker that drifts under you turns a green branch red without a commit.
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.16,<0.17",
+    "basedpyright>=1.39,<2",
+    "pre-commit>=4.0",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -15,6 +47,73 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/tradipy"]
 
+# ---------------------------------------------------------------------------
+# Ruff — linter and formatter (replaces flake8, isort, pycodestyle, autoflake)
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "UP",   # pyupgrade (modern syntax)
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "SIM",  # flake8-simplify
+    "PTH",  # flake8-use-pathlib
+    "RUF",  # ruff-specific rules
+]
+ignore = [
+    "E501",  # line length is enforced by the formatter, not the linter
+
+    # `__all__` ordering. Each module lists its exports in dependency order — primitive
+    # types, then the constructs built on them — which reads as documentation of the layer.
+    # An isort-style sort would scramble that for no gain.
+    "RUF022",
+]
+
+# Docstrings, comments, and strings here quote docs/PRD.md verbatim, and the PRD is written
+# with typographic glyphs. These are allow-listed rather than switching RUF001-003 off, so an
+# *accidental* homoglyph (a Cyrillic `с` in an identifier, say) is still caught. Do not "fix"
+# the glyphs in the source either: test_parameter_registry.py scans the PRD for a literal `×`
+# to find thresholds stated without a registry entry.
+allowed-confusables = [
+    "×",  # MULTIPLICATION SIGN — PRD notation for a multiple, e.g. `VWAP × 0.99`
+    "–",  # EN DASH — PRD range notation, e.g. `$1.00–$1.99`
+    "−",  # MINUS SIGN — PRD arithmetic, e.g. `− 1 tick`
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests may use assert-heavy patterns and short fixture names.
+"tests/**" = ["N802", "N803", "N806"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["tradipy"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+
+# ---------------------------------------------------------------------------
+# BasedPyright — static type checking (stricter Pyright fork)
+# ---------------------------------------------------------------------------
+[tool.basedpyright]
+pythonVersion = "3.13"
+typeCheckingMode = "standard"
+include = ["src", "tests", "scripts"]
+exclude = ["**/__pycache__", ".venv"]
+reportMissingTypeStubs = false
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
@@ -23,4 +122,20 @@ markers = [
     "spec: asserts a rule stated normatively in docs/PRD.md",
     "boundary: asserts behaviour at a filter's own limit, not at an illustrative value",
     "polarity: asserts a rounding direction follows from constraint polarity (PRD §20.13)",
+]
+
+# ---------------------------------------------------------------------------
+# Coverage
+# ---------------------------------------------------------------------------
+[tool.coverage.run]
+branch = true
+source = ["tradipy"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
 ]

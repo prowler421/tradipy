@@ -1,0 +1,45 @@
+---
+description: Core engineering rules for tradipy
+alwaysApply: true
+---
+
+# tradipy — assistant rules
+
+tradipy is the **invariant layer** of a Ross Cameron momentum trading system. Its whole
+reason to exist is that four review rounds of `docs/PRD.md` each found a defect class the
+previous check could not see. The code makes the PRD's rules executable. Treat the PRD as
+normative: `docs/PRD.md §20` (Computation Semantics) governs on any conflict with code.
+
+## Preserve the architecture
+- A registered threshold is defined **once** in `src/tradipy/params.py` and read by name.
+  Never write a numeric literal for a registered threshold anywhere else — the registry
+  test enforces this against the PRD prose too.
+- Rounding direction is a property of the **constraint's polarity** (`Polarity.MINIMUM`
+  rounds up, `MAXIMUM` rounds down and clamps to one tick), not of the call site. Route all
+  threshold rounding through `round_threshold`.
+- All money is `Decimal`. Never introduce `float` where a value is compared to a tick
+  boundary or accumulated into P&L (PRD §9.2).
+
+## Typing and style
+- Target Python 3.13. Use modern typing (`X | None`, `dict[...]`, `collections.abc`),
+  `pathlib`, `dataclasses`, and `enum`. No legacy `typing.List`/`Optional`.
+- Prefer explicit types on public functions. Keep functions small and readable over clever.
+- Formatting and linting are Ruff's job (`make format`, `make lint`). Do not hand-format. The
+  one exemption is the `PARAMS` registry, fenced with `# fmt: off` / `# fmt: on` so the PRD
+  table stays readable row by row. Do not remove or widen that fence.
+- The `×`, `–`, and `−` glyphs quoted from the PRD are allow-listed in Ruff's
+  `allowed-confusables`. Never ASCII-ify them: `test_parameter_registry.py` matches the
+  literal `×` in the PRD to find unregistered thresholds.
+
+## Don't
+- Do not add dependencies casually — the runtime is intentionally stdlib-only.
+- Do not add abstractions, frameworks, Docker, a CLI, or logging unless a concrete need
+  exists. This is a pure library.
+- Do not "fix" a documented open finding by silently enforcing it; several couplings are
+  deliberately surfaced rather than enforced (see `validate_couplings` and its docstring).
+
+## Always
+- Add or update tests for any behavior change (`tests/`), and keep assertions written
+  against the **derivation**, not a magic value.
+- Update `CHANGELOG.md` (Keep a Changelog) and relevant `docs/` when behavior changes.
+- Run `make check` (lint + format check + typecheck + test) before considering work done.

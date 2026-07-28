@@ -95,9 +95,11 @@ These are exactly the details that separate a document an engineer can build fro
 
 ### 3.6 Breadth is demanded at the expense of depth
 
-§4 lists ~27 required strategy components. §6.3 then requires, **for every setup**: entry criteria, exit criteria, exact stop rule, profit targets, position sizing, pre/post-signal filters, invalidation rules, required *and* optional confirmations, edge cases, worked numeric examples, and known false-signal patterns.
+§4 lists **26** required strategy components — of which **14 are tradeable setups**; the other twelve are scanner filters (gap scanner, relative volume, low float, news catalysts), position management (scaling in, scaling out), risk rules (risk management, daily loss limits, max losses, position sizing), and operations (journaling, statistics). §6.3 then requires, **for every setup**: entry criteria, exit criteria, exact stop rule, profit targets, position sizing, pre/post-signal filters, invalidation rules, required *and* optional confirmations, edge cases, worked numeric examples, and known false-signal patterns.
 
-That is roughly 300 specification cells. The predictable outcome is uniform shallowness: the three MVP setups — the only ones being built — received the same thin treatment as the twenty-four that will not be touched for a year. The prompt's own MVP logic (§6.12) contradicts its specification demand (§6.3).
+That is roughly 170 specification cells across the tradeable setups alone. The predictable outcome is uniform shallowness: the three MVP setups — the only ones being built — received the same thin treatment as the eleven that will not be touched for a year. The prompt's own MVP logic (§6.12) contradicts its specification demand (§6.3).
+
+**A secondary defect: the prompt calls all 26 "setups" in its acceptance criteria while calling them "components" in §4.** The two words carry different obligations, and §8's criterion 1 — "every setup ... has entry, exit, stop, target, and invalidation rules" — is unsatisfiable for twelve of them by construction. There is no stop placement for Statistics. The "where applicable" qualifier rescues the criterion technically, but leaves the denominator undefined, which is how earlier revisions of both the PRD and this review came to cite 27 setups and reason about "the remaining 24."
 
 **Prompt fix:** *"Specify the three highest-confidence setups to implementation depth. Catalogue the remainder at one paragraph each, with confidence and a note on what full specification would require."*
 
@@ -119,19 +121,35 @@ Relative weighting in a prompt is read as relative importance. **Consequence in 
 
 Python (§5), IBKR (§5), a desktop application with eleven named screens (§6.11), and a full relational schema (§6.10) are all fixed before any analysis. That is legitimate if they are hard constraints, and for a personal trading system they plausibly are.
 
-*Revised — the original version of this item overreached.* It claimed the §6.11 GUI specification "guarantees wasted effort" because §6.12's MVP excludes the GUI. That does not follow: §6.12 says "no fancy GUI required" **for the MVP gate** and schedules the GUI at Phase 8, so specifying a Phase 8 deliverable in a Phase 1 product spec is ordinary forward planning, not waste.
-
-The defensible criticism is one of **opportunity cost, not waste** — the same argument as §3.6 and §3.10. The prompt allocates eleven named screens and a full schema to components that will not be built for a year, and one sentence (§6.2) to the non-functional requirements needed to run the thing at all. Attention spent on GUI wireframes is attention not spent on computation semantics, and it is the missing semantics (§3.5) — not the presence of wireframes — that actually blocked implementation. The problem is the prompt's *weighting*, not the inclusion of any single item.
+The criticism is one of **opportunity cost, not waste** — the same argument as §3.6 and §3.10. §6.12 says "no fancy GUI required" *for the MVP gate* and schedules the GUI at Phase 8, so specifying a Phase 8 deliverable in a Phase 1 product spec is ordinary forward planning. But the prompt allocates eleven named screens and a full schema to components that will not be built for a year, and one sentence (§6.2) to the non-functional requirements needed to run the thing at all. Attention spent on GUI wireframes is attention not spent on computation semantics, and it is the missing semantics (§3.5) — not the presence of wireframes — that actually blocked implementation. The problem is the prompt's *weighting*, not the inclusion of any single item.
 
 ### 3.10 "Be exhaustive" conflicts with "minimal ambiguity"
 
-§9 asks for both, and across 27 setups they are in direct tension: exhaustive coverage consumes exactly the attention that precision requires. The prompt never ranks them, so the agent optimized for the more visible one — surface area.
+§9 asks for both, and across 26 components they are in direct tension: exhaustive coverage consumes exactly the attention that precision requires. The prompt never ranks them, so the agent optimized for the more visible one — surface area.
+
+### 3.11 Interfaces are named but never exemplified
+
+§6.9 demands components with "clearly defined responsibilities, **interfaces, and data contracts**," then supplies a bulleted list of fifteen component *names* and no example of what an interface or a contract should look like.
+
+Contrast §7.4, where a single filled-in specimen row successfully forced concreteness across an entire matrix. The outcome tracks the difference exactly: PRD §9.1 gave all fifteen components a responsibility and prose Inputs/Outputs, while §9.2 typed **two** payloads. Every arrow in the §9.3 event flow except signal→order was untyped until v1.3.
+
+This generalizes into the single most useful observation in this review: **the prompt is strongest wherever it supplies an example, and weakest wherever it supplies only a list.** §7.4's specimen produced a 26-row matrix with no empty cells. §6.9's bare list produced two contracts out of fifteen. A specimen is worth more than an adjective — "interfaces and data contracts" produced neither, where one example dataclass would have produced fifteen.
+
+**Prompt fix:** *"Supply one worked specimen for every artifact type you require — one dataclass, one interface signature, one contract — at the level of concreteness you expect. A list of names will be returned as a list of names."*
+
+### 3.12 "Sensitivity" is demanded before measurement can exist
+
+§3 requires, per threshold, "(b) sensitivity — **how much** performance may change if the value is altered." "How much" is a quantity. All fourteen rows in PRD §2 answer qualitatively and directionally ("High — 3× captures more names; 10× misses early movers"). Not one gives a magnitude.
+
+This is arguably unanswerable at Phase 1: you cannot quantify sensitivity without the backtest that Phase 4b produces. It is therefore **a sequencing flaw of the same family as §3.1** — it demands, before any measurement exists, an output that only measurement can supply. The honest response would have been to state the substitution explicitly; the docs answered qualitatively without flagging it.
+
+**Prompt fix:** *"Where a requested quantity cannot be produced without measurement that does not yet exist, say so explicitly and name the phase that will produce it. Do not silently substitute a qualitative answer."*
 
 ---
 
 ## 4. Rewrite checklist
 
-If this prompt is reused, these nine changes would address the substance of what went wrong:
+If this prompt is reused, these eleven changes would address the substance of what went wrong:
 
 1. **Move falsification before construction.** Require an evidence gate — expectancy net of costs, out-of-sample — before any execution-engine or paper-trading phase.
 2. **Add an economics section.** Breakeven win rate at the chosen R:R, estimated per-trade cost drag, and what evidence would falsify the strategy.
@@ -141,7 +159,9 @@ If this prompt is reused, these nine changes would address the substance of what
 6. **Replace the "no clarifying questions" bullet** with an actual cold-reader test whose output must be an empty list.
 7. **Give NFR/operations its own section** with weight comparable to the trading rules — explicitly including broker re-authentication, crash recovery, reconciliation, and time/calendar handling.
 8. **Reframe the source as hypothesis**, and require explicit skepticism toward vendor performance claims.
-9. **Require a parameter registry.** Every threshold defined exactly once with a canonical name; every other mention references it by name and never restates the literal. This is the one item added after the fact — see §6.
+9. **Require a parameter registry.** Every threshold defined exactly once with a canonical name; every other mention references it by name and never restates the literal. See §6.
+10. **Supply a specimen for every artifact type demanded** — one dataclass, one interface, one contract — at the concreteness level expected. A bare list of names comes back as a list of names (§3.11).
+11. **Forbid silent substitution.** Where a demanded output requires measurement that does not yet exist, the response must say so and name the phase that will supply it, rather than answering qualitatively as though the question had been met (§3.12).
 
 ---
 
@@ -154,7 +174,11 @@ If this prompt is reused, these nine changes would address the substance of what
 | Fully-ticked checklist over a contradictory document | §8 presence-based criteria (§3.3) |
 | Four worked examples violating their own rules | §6.3 asks for examples, never for consistency (§3.3) |
 | VWAP / HOD / flagpole height undefined | No computation-semantics requirement (§3.5) |
-| 27 setups specified shallowly; 3 MVP setups no deeper | §4 + §6.3 breadth demand (§3.6) |
+| 14 tradeable setups specified shallowly; 3 MVP setups no deeper | §4 + §6.3 breadth demand (§3.6) |
+| Data contracts typed for 2 of 15 components | §6.9 names components, supplies no specimen (§3.11) |
+| Sensitivity answered qualitatively for all 14 thresholds | §3 demands "how much" before any measurement exists (§3.12) |
+| Slippage model lacked an impact term until v1.3 | §6.8 names "spread + impact" once in passing; §6.6 asks only for "slippage model & assumptions" |
+| Security reduced to secrets handling | §6.2 compresses ten NFR topics into one sentence (§3.7) |
 | No testing strategy, recovery, reconciliation, 2FA, DST | §6.2 one-sentence NFR treatment (§3.7) |
 | Warrior Trading claims treated as reliable | §7.1 uncritical source framing (§3.8) |
 | GUI wireframes for a deferred Phase 8 interface | §6.11 vs §6.12 conflict (§3.9) |
@@ -175,3 +199,17 @@ Three observations:
 1. **The prompt is partly culpable after all.** §3.3 above criticized §8's acceptance criteria for testing presence rather than correctness, but framed correctness as *arithmetic*. Internal agreement between sections is a distinct property, and no criterion tests it. The prompt fix in §3.3 should read: *"...and no parameter may hold conflicting values across sections."*
 2. **This review is not exempt.** §3.9 above overreached and has been revised. A critique is subject to the same standard it applies.
 3. **Neither fix is a sweep.** Worked-example fixtures (PRD §21.1) catch the arithmetic class; a parameter registry catches the consistency class. Both are mechanical, and mechanical checks are the only kind that survive the author's own confidence — which is the same argument §3.4 makes about the "no clarifying questions" criterion, applied to the document rather than the reader.
+
+### 6.1 A third class, found by the v1.2 review
+
+[REVIEW-v1.2.md](REVIEW-v1.2.md) found a class neither the arithmetic fixtures nor a parameter registry would catch: **two parameters that are individually correct and jointly incoherent.**
+
+The §4.2 spread filter admitted spreads up to 1% of price. The §3.1.2 separation floor consumed spread as an input. Both were defensible in isolation; together they meant every worked example failed its own gate at the widest spread the scanner permitted, and that round-trip spread cost could reach 83% of R — above the erosion threshold PRD §18.2 identifies as fatal. The examples passed only because they assumed a $0.01 spread and never tested the boundary.
+
+No consistency check catches this, because nothing is inconsistent. Each value appears once. The registry would have been satisfied.
+
+**The generalizable fix is a boundary test, not a consistency test:** every worked example must be recomputed at the extreme values its own filters admit, not only at the convenient values chosen to illustrate it. That is now PRD §21.1's worst-case fixture row, and it belongs in the rewrite checklist as a strengthening of item 5:
+
+> *Worked examples must satisfy their own rules at the boundary of every filter they depend on, not merely at illustrative values. An example that passes at a typical input and fails at a permitted one is a defect in the filter, the example, or both.*
+
+Three review rounds, three distinct failure classes — arithmetic, cross-section consistency, and joint parameter coherence. Each was invisible to the check designed for the one before it, which is the strongest available argument that self-certification is not a substitute for a cold reader.

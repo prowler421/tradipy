@@ -12,7 +12,13 @@ This document is the **work plan** for producing the Phase 1 Product Requirement
 
 **Primary deliverable:** [docs/PRD.md](PRD.md) — the complete Phase 1 specification.
 
-**Companion:** [docs/PROMPT-REVIEW.md](PROMPT-REVIEW.md) — a critique of the source prompt. Several PRD structural choices deliberately depart from the prompt (backtesting moved before the MVP gate; three setups specified to depth rather than 27 shallowly; a viability section the prompt never asked for). The reasoning for each departure lives there, so this plan does not repeat it.
+**Companions:**
+
+| Document | Role |
+|----------|------|
+| [docs/PROMPT-REVIEW.md](PROMPT-REVIEW.md) | Critique of the source prompt. Several PRD structural choices deliberately depart from it — backtesting moved before the MVP gate, three setups specified to depth rather than fourteen shallowly, a viability section the prompt never asked for. The reasoning for each departure lives there, so this plan does not repeat it |
+| [docs/REVIEW-v1.2.md](REVIEW-v1.2.md) | Independent review of PRD v1.2 — 23 findings, dispositions in its §8. Drove PRD v1.3 |
+| [docs/CHANGELOG.md](CHANGELOG.md) | Revision history. The PRD states current rules only; superseded rules and the reasoning behind each reversal live here |
 
 ---
 
@@ -154,21 +160,36 @@ Every workstream above was self-authored and self-certified, so the acceptance c
 - [ ] Pressure-test Section 18 (Strategy Viability): are the open risks complete, and is the viability gate strict enough?
 - [ ] **Parameter registry check** — build the registry described below and verify it is clean
 
-#### The parameter registry (added after the v1.2 sweep)
+#### Three defect classes, three mechanical checks
 
-Two review rounds found two *different* defect classes, and the second was not caught by the fix for the first:
+Each review round found a class invisible to the check designed for the one before it. This is the strongest available argument that self-certification does not substitute for a cold reader.
 
-| Round | Class | Example | What would have caught it |
-|-------|-------|---------|--------------------------|
-| v1.1 | Arithmetic — examples violating their own rules | Stop at $6.22 where the rule required $6.20; T2 below T1 | Machine-checkable example fixtures (PRD §21.1) |
-| v1.2 | **Consistency — a threshold restated in two places, one updated** | `room_gate_multiple` raised to 2.5 in §2.0/§3.1.1, left at `2 ×` in all three setup criteria; §15 carrying a scaling-in rule §7.1.1 had overturned; §4.3 carrying a composite score §20.10 documents as broken | A parameter registry |
+| Round | Class | Example | What catches it |
+|-------|-------|---------|-----------------|
+| v1.1 | **Arithmetic** — examples violating their own rules | Stop at $6.22 where the rule required $6.20; T2 below T1 | Machine-checkable example fixtures (PRD §21.1) |
+| v1.2 | **Consistency** — a threshold restated in two places, one updated | `room_gate_multiple` raised to 2.5 in §2.0/§3.1.1, left at `2 ×` in all three setup criteria; §15 carrying a scaling-in rule §7.1.1 had overturned | A parameter registry |
+| v1.3 | **Joint incoherence** — two individually-correct parameters that cannot both hold | The §4.2 spread filter admitted 1% of price while §3.1.2's separation floor consumed spread as input; every worked example failed its own gate at the widest spread the filter allowed, and round-trip spread cost reached 83% of R | **Boundary fixtures** — recompute every example at the extremes its filters admit (PRD §21.1 worst-case row) |
 
-Verifying the examples against the *new* value confirmed the examples and never questioned whether the document agreed with itself. The registry closes that:
+The v1.2 class was concealed by the v1.1 fix: verifying examples against the *new* value confirmed the examples and never asked whether the document agreed with itself. The v1.3 class was invisible to both — every value appeared exactly once and each was defensible alone, so a registry would have passed it clean.
 
-- [ ] Every threshold appears in **exactly one** defining table (§2, §2.0, or §3.1.2) with a canonical name
+**Registry check:**
+
+- [ ] Every threshold appears in **exactly one** defining table (§2, §2.0, §3.1.2, or §3.1.3) with a canonical name
 - [ ] Every other mention references it **by name**, never by restating the literal
 - [ ] A lint pass flags any numeric literal in §3–§7 that matches a registered default — each hit is either a legitimate worked-example value or a latent divergence
 - [ ] Cross-check that §15 and §16 assert nothing that §3, §7 or §20 has superseded
+
+**Boundary check:**
+
+- [ ] Every §3 worked example recomputed at the **widest spread** its §3.1.3 caps admit, asserting the §3.1.2 separation floor still passes
+- [ ] Every gate whose input is bounded by a filter is tested at that filter's boundary, not only at illustrative values
+- [ ] Any pair of parameters where one constrains the other's input is documented as jointly calibrated, with the calibration stated
+
+**Traceability check (carries the one open finding from REVIEW-v1.2 #23):**
+
+- [ ] Add page numbers for PDF and book sources; timestamps for any video or webinar source consulted
+- [ ] Mark every §15 "Ross Teaching" cell as either sourced (with location) or community-derived
+- [ ] Confirm no threshold is presented as a Ross statement when the source is a community proxy
 
 **Output:** Verification notes / issues log; PRD Section 18 and Section 19 checklist signed off by someone other than the author.
 
@@ -199,7 +220,9 @@ The completed [docs/PRD.md](PRD.md) follows this table of contents:
 19. Acceptance Criteria Checklist
 20. Computation Semantics (Normative)
 21. Non-Functional Requirements & Operations
-22. Appendices (sources, glossary, IBKR costs, reserved future-phase extension points)
+22. Appendices (sources, glossary, data costs, reserved future-phase extension points)
+
+Revision history lives in [CHANGELOG.md](CHANGELOG.md), not in the PRD (D23).
 
 ---
 
@@ -218,7 +241,8 @@ The completed [docs/PRD.md](PRD.md) follows this table of contents:
 | 9 | 8 — Backtesting | 3 | Done |
 | 10 | 9 — Architecture/UI/DB | 4–8 | Done |
 | 11 | 10 — Roadmap/MVP | 9 | Done |
-| 12 | 11 — Independent verification & challenge | All | **Pending — must be done by someone other than the author** |
+| 12 | 11 — Independent verification & challenge | All | **In progress** — [REVIEW-v1.2.md](REVIEW-v1.2.md) completed one round (23 findings, 22 resolved in v1.3). Registry, boundary and traceability checks still outstanding; v1.3 itself is unreviewed |
+| 13 | **Phase 2a data spike** — runs *concurrently* with step 12, not after | 5 | **Not started — highest-value technical action.** Vendor lead times are weeks, and a negative result rewrites §4 |
 
 ---
 
@@ -226,7 +250,7 @@ The completed [docs/PRD.md](PRD.md) follows this table of contents:
 
 The PRD is complete when all of the following are true. **Note: the checkmarks below are the author's self-assessment and remain pending independent sign-off under Workstream 11.**
 
-- [x] Every setup in Section 4 has fully specified entry, exit, stop, target, and invalidation rules with numeric parameters where applicable
+- [x] ~~Every setup in Section 4 has fully specified entry, exit, stop, target, and invalidation rules with numeric parameters where applicable~~ — **met for 3 of 14 tradeable setups; deliberate deviation for the remaining 11.** The prompt's §4 lists 26 *components*, twelve of which are not tradeable setups and are specified elsewhere. See PRD §19 and PROMPT-REVIEW §3.6
 - [x] Section 3 thresholds are populated with proposed defaults, confidence ratings, and source notes
 - [x] Every identified discretionary element has at least one recommended deterministic implementation and a documented alternative
 - [x] The Validation Matrix covers all major components and contains no empty "Deterministic Rule" cells
@@ -261,6 +285,11 @@ The PRD is complete when all of the following are true. **Note: the checkmarks b
 | D17 | T1/T2 collapse | **Absolute, cost-denominated separation floor** (PRD §3.1.2): `T2 − T1 ≥ 3 × (spread + $0.015)`, alongside the room gate | D14's 2.5R gate was meant to stop T1 and T2 collapsing into one exit. It cannot: T1 is fixed at 2R, so a 2.5R gate buys exactly 0.5R — and R shrinks on cheap stocks, which is where costs bite hardest. The §3.4 example cleared the gate with T1 and T2 **$0.06 apart on a $3.83 stock** and recorded it as a pass. One multiplier cannot serve a $3 stock and a $15 stock; the constraint has to be in dollars (A18) |
 | D18 | Trailing-stop protection | **Mirror the ratcheted 9 EMA to a resting broker-side stop**, amended each bar close | §21.2 guarantees "protection lives at the broker" and §21.6 makes any unprotected position a Sev-1 — but a locally-computed EMA trail cannot be a static broker order, so the guarantee silently expired at `TRAILING`. Mirroring keeps it intact: if the client dies the last amended level stands, stale but never absent. Rejected: accepting the exposure and documenting it (A19) |
 | D19 | Price rounding | **$0.01 ticks; all rounding conservative** — stops down, targets up, gate thresholds up (PRD §20.13) | Several rules produce non-tick levels (`VWAP × 0.99`, odd-R targets). Rounding direction is not cosmetic: the wrong direction tightens stops into noise or flatters backtested R. Asymmetric-conservative means no rounding decision can make a trade look better than it is (A20) |
+| D20 | Spread limits | **Two gates** (PRD §3.1.3): scan `≤ min($0.02, 0.5% × price)`; signal `≤ 0.15 × R` | The old `≤ 1% of price` filter and D17's separation floor were never jointly calibrated, and they are incompatible: at 1% of price, round-trip spread cost reached **83% of R** on the §3.2 example — above the ~0.5R erosion threshold §18.2 identifies as fatal — and all three worked examples failed their own separation floor at that spread. A percentage-of-price cap also scales the wrong way (1% of $20 is ten ticks). **Changes trading behaviour**: the system will decline more trades, including some it previously took. Rejected alternative: lowering `sep_cost_multiple`, which would have preserved the ladder's appearance while still trading at negative expectancy (A21) |
+| D21 | Correlated exposure | **`correlation_group`** — shared catalyst first, sector second, ungrouped third (PRD §7.1.3) | "One position per sector" had no data provider and modelled the wrong thing. Co-moving low-float gappers sharing one catalyst are frequently in different sectors, and same-sector names often do not co-move. Realized correlation is deliberately **not** estimated: too little same-session history for the number to mean anything, and a spurious estimate is worse than an admitted proxy. **Changes trading behaviour** where two watchlist names share a headline (A24) |
+| D22 | Slippage impact term | **Square-root model**: `impact_coefficient × spread × sqrt(shares / bar_volume)`, coefficient 1.0 unvalidated | The prompt's §6.8 specifies "spread **+ impact**" and the model had only ticks + spread. §18.7's viability gate is judged net of modeled slippage, so an optimistic model biases the go/no-go toward "go" — the exact direction §18.2 warns about. Phase 4b must report the gate at 1× **and** 2× calibrated slippage |
+| D23 | Revision history | **Extracted to [CHANGELOG.md](CHANGELOG.md)**; one inline note retained | ~20 passages of inline correction narrative had accumulated in the PRD. It kept reversals auditable but forced implementers to distinguish current rules from retracted ancestors inside sections whose purpose is to be unambiguous. The flag-volume note stays inline because `≤ 70%` reads as a typo to anyone expecting `≥` |
+| D24 | Institutional-ownership filter | **Disabled by default** | Stated two ways (`≥ 80%` in §4.2, `> 80%` in §15) and, more importantly, unsourced and probably inert: ≥80% institutional ownership in a ≤20M-float universe is rare. Rejected alternative: deleting it outright — kept as an off-by-default hypothesis so Phase 4b can test it rather than silently losing the idea (A22) |
 
 ---
 
@@ -269,14 +298,16 @@ The PRD is complete when all of the following are true. **Note: the checkmarks b
 | Risk | Mitigation |
 |------|------------|
 | **Strategy may have no edge** (the top risk) | Phase 4b lightweight validation gates the execution build; PRD §18.7 viability gate requires positive expectancy **net of costs** over ≥100 trades per setup, out-of-sample, before any capital |
-| **Scanner may not be buildable on IBKR** | PRD §5.5: IBKR is an order-management API, not a screener, and float data is unreliable for small caps. Phase 2a data spike (V7) resolves provider, data quality and measured latency **before** Phase 5 |
+| **Scanner may not be buildable on IBKR** | PRD §5.5: IBKR is an order-management API, not a screener, and float data is unreliable for small caps. Phase 2a data spike (V7) resolves provider, data quality and measured latency **before** Phase 5. **Start the spike concurrently with remaining documentation work** — vendor evaluations have multi-week lead times, and a negative result would require rewriting §4 anyway, mooting part of the doc queue |
+| **Data cost is understated by an order of magnitude** | Appendix C previously quoted $14.50/month for IBKR alone while §5.5 concludes an external vendor is effectively mandatory. Realistic all-in is $45–$500/month, which against a $30,000 account is up to 20%/year of fixed drag and belongs in the §18.7 viability arithmetic. The spike must return real quotes, not estimates |
+| **The new spread gate may reject most cheap-stock setups** | D20's `0.15 × R` signal-time cap is calibrated against three worked examples, not against real spread distributions. If it rejects too much, VWAP Reclaim — one of three MVP setups — could be effectively disabled. The Phase 2a spike must measure the realized spread distribution on qualifying names and report the implied rejection rate before Phase 4 (A21) |
 | Ross rarely states exact numeric thresholds | Document confidence levels; mark community proxies as Medium confidence |
 | IBKR data costs change | PRD includes approximate costs with "verify at subscription time" note |
 | Discretionary gap (tape reading) | Proxy via volume/price-action rules; document in Known Limitations |
 | Halt/LULD backtest complexity | Defer full halt simulation to Phase 7; MVP uses simplified model |
 | News catalyst automation | MVP uses manual verification + keyword NLP soft filter |
-| **Spec drift between sections** | Two rounds of internal contradictions have already been found (see Workstream 11). Mitigated by the parameter registry, PRD §21.1 worked-example fixtures, and §20 being declared normative — but **not yet independently verified** |
-| Cost estimates are estimates | `est_round_trip_cost_per_share` ($0.015) drives the D17 separation floor and is unmeasured. Calibrate from real paper fills in Phase 4b before trusting any expectancy figure |
+| **Spec drift between sections** | Three rounds of internal contradictions have been found, each of a class invisible to the previous fix (see Workstream 11). Mitigated by the parameter registry, PRD §21.1 worked-example and boundary fixtures, and §20 being declared normative — but v1.3 is **not yet independently verified**, and the pattern so far is that each round finds something the last one could not |
+| Cost estimates are estimates | `est_round_trip_cost_per_share` ($0.015) drives the D17 separation floor, and `impact_coefficient` (1.0) drives D22's slippage term. Both are unmeasured. Calibrate from real paper fills in Phase 4b before trusting any expectancy figure |
 
 ---
 
@@ -289,4 +320,4 @@ The PRD is complete when all of the following are true. **Note: the checkmarks b
 
 These are deferred until the PRD passes Section 8 acceptance criteria and implementation is explicitly requested.
 
-*(The repository is now under version control; git initialization is no longer pending and has been removed from this list.)*
+**One exception worth naming:** the Phase 2a data spike is investigative code, not implementation, and it should start now rather than waiting on the documentation queue. It answers whether a §4.2-matching candidate list is obtainable at all, at what cost, and with what spread distribution — three questions that between them determine whether the rest of this plan is buildable.

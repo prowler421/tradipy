@@ -19,9 +19,9 @@ because rounding direction is a property of the constraint, not of the call site
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
-from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Literal
 
@@ -71,7 +71,14 @@ def _p(name: str, default: str, lo: str, hi: str, unit: str, source: str, **kw) 
 
 # ---------------------------------------------------------------------------
 # Registry. Values and bounds transcribed from the PRD tables cited in `source`.
+#
+# Formatting is fenced off here, and only here. This is a transcription of the §2 / §2.0
+# tables, and reviewing it means reading it against them row by row; one call per line keeps
+# the columns comparable. Ruff's formatter expands any call carrying a `polarity=` keyword to
+# one argument per line, which turns 30 rows into ~200 lines and hides the grouping comments.
+# Everything outside this fence is Ruff's to format — do not widen the exemption.
 # ---------------------------------------------------------------------------
+# fmt: off
 PARAMS: dict[str, Param] = {p.name: p for p in [
     # --- §2.0 previously undefined parameters -----------------------------
     _p("start_of_day_equity", "30000", "25000", "10000000", "USD", "PRD §2.0 / A5"),
@@ -133,6 +140,7 @@ PARAMS: dict[str, Param] = {p.name: p for p in [
     _p("min_quote_size", "100", "100", "10000", "shares", "PRD §20.14",
        polarity=Polarity.MINIMUM),
 ]}
+# fmt: on
 
 
 # PRD §2.0 mode presets. `experienced` risk has a hard cap of 2.0% (§2, §7).
@@ -225,11 +233,11 @@ class Config:
         return p
 
     @classmethod
-    def default(cls, mode: Literal["beginner", "experienced"] = "experienced") -> "Config":
+    def default(cls, mode: Literal["beginner", "experienced"] = "experienced") -> Config:
         # __post_init__ validates; no second call needed.
         return cls({n: p.default for n, p in PARAMS.items()}, mode=mode)
 
-    def with_overrides(self, **overrides: str | int | float | Decimal) -> "Config":
+    def with_overrides(self, **overrides: str | int | float | Decimal) -> Config:
         vals = dict(self.values)
         for name, raw in overrides.items():
             if name not in PARAMS:

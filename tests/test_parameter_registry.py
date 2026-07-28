@@ -52,12 +52,12 @@ def _registered_literals() -> dict[str, str]:
     for name, p in PARAMS.items():
         d = p.default
         if p.unit == "USD" and d < Decimal("1"):
-            out[f"${d.normalize()}"] = name          # $0.015, $0.02, $0.10
+            out[f"${d.normalize()}"] = name  # $0.015, $0.02, $0.10
         elif p.unit == "xR" and d != Decimal("2.0"):
-            out[f"{d.normalize()}×"] = name          # 2.5×, 0.15×
+            out[f"{d.normalize()}×"] = name  # 2.5×, 0.15×
         elif p.unit == "fraction" and d < Decimal("0.1"):
             pct = (d * 100).normalize()
-            out[f"{pct}%"] = name                    # 0.5%, 4%, 5%, 1%, 3%
+            out[f"{pct}%"] = name  # 0.5%, 4%, 5%, 1%, 3%
     return out
 
 
@@ -136,8 +136,7 @@ def test_prd_prose_restatements_match_baseline() -> None:
 
     assert not new, (
         "new restatements of registered thresholds in PRD prose — each is either a worked "
-        "example (add to baseline) or a latent divergence (fix the doc):\n  "
-        + "\n  ".join(new)
+        "example (add to baseline) or a latent divergence (fix the doc):\n  " + "\n  ".join(new)
     )
     assert not gone, (
         f"{len(gone)} baseline entries are no longer present in the PRD. This is usually "

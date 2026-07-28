@@ -22,6 +22,7 @@ __all__ = [
     "Reject",
     "SpreadCaps",
     "RoomRequirement",
+    "Ladder",
     "spread_caps",
     "check_spread",
     "min_separation",

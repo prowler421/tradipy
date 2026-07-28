@@ -19,6 +19,7 @@ from types import MappingProxyType
 
 import pytest
 
+from tests.test_worked_examples import EXAMPLES, IDS
 from tradipy.gates import (
     Reject,
     apply_stop_floor_and_ceiling,
@@ -38,7 +39,6 @@ from tradipy.params import (
     signal_cap_ticks_at_min_r,
 )
 from tradipy.rounding import TICK_SIZE, Polarity, ceil_to_tick, floor_to_tick, round_threshold
-from tests.test_worked_examples import EXAMPLES, IDS
 
 D = Decimal
 CFG = Config.default(mode="experienced")
@@ -415,9 +415,16 @@ def test_every_gate_parameter_declares_a_polarity() -> None:
     threshold is how the v1.3.1 defect happened, so this is enforced rather than trusted.
     """
     gate_params = [
-        "room_gate_multiple", "min_stop_distance", "max_stop_pct",
-        "max_spread_abs", "max_spread_pct", "max_spread_r",
-        "min_rvol", "max_float_shares", "min_adv_shares", "max_vwap_extension_pct",
+        "room_gate_multiple",
+        "min_stop_distance",
+        "max_stop_pct",
+        "max_spread_abs",
+        "max_spread_pct",
+        "max_spread_r",
+        "min_rvol",
+        "max_float_shares",
+        "min_adv_shares",
+        "max_vwap_extension_pct",
     ]
     unclassified = [n for n in gate_params if PARAMS[n].polarity is None]
     assert not unclassified, f"gate parameters missing a polarity: {unclassified}"

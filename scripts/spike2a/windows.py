@@ -31,6 +31,17 @@ from scripts.spike2a.prereg import VIX_LOOKBACK_MONTHS, WINDOW_SESSIONS
 _DAYS_PER_MONTH = 30
 
 
+def _spans_overlap(start: date, end: date, sessions: tuple[date, ...]) -> bool:
+    """Whether ``[start, end]`` intersects the span of ``sessions``.
+
+    The one definition of "overlap" in this module. :meth:`Window.overlaps` and
+    :func:`select_windows`'s non-overlap filter both route through it — they had the same
+    comparison written out twice, which is the shape of defect the registry exists to prevent,
+    reproduced in a predicate instead of a threshold.
+    """
+    return start <= sessions[-1] and sessions[0] <= end
+
+
 @dataclass(frozen=True)
 class Window:
     """A run of ``WINDOW_SESSIONS`` consecutive sessions, with the mean VIX that selected it."""
@@ -42,7 +53,7 @@ class Window:
     sessions: tuple[date, ...]
 
     def overlaps(self, other: Window) -> bool:
-        return self.start <= other.end and other.start <= self.end
+        return _spans_overlap(self.start, self.end, other.sessions)
 
 
 def read_vix_csv(path: Path) -> list[tuple[date, Decimal]]:
@@ -109,9 +120,7 @@ def select_windows(series: list[tuple[date, Decimal]], as_of: date) -> tuple[Win
     active_mean, active_sessions = max(runs, key=lambda r: (r[0], r[1][0]))
     active = Window("active", active_sessions[0], active_sessions[-1], active_mean, active_sessions)
 
-    non_overlapping = [
-        r for r in runs if not (r[1][0] <= active.end and active.start <= r[1][-1])
-    ]
+    non_overlapping = [r for r in runs if not _spans_overlap(active.start, active.end, r[1])]
     if not non_overlapping:
         raise ValueError(
             "every candidate quiet window overlaps the active window; the series is too short "

@@ -56,7 +56,11 @@ packages = ["src/tradipy"]
 [tool.ruff]
 line-length = 100
 target-version = "py313"
-src = ["src", "tests"]
+# `scripts` is here so isort resolves `scripts.spike2a.*` the way it resolves `tradipy.*`.
+# Without it, any module importing from both — which every spike module that reads a registered
+# threshold does — trips I001. Fixed in the config rather than per-file so the next such module
+# does not have to rediscover it.
+src = ["src", "tests", "scripts"]
 
 [tool.ruff.lint]
 select = [

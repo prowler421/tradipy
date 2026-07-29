@@ -59,6 +59,14 @@ the live socket is one typo from breaking that.
 |---|---|
 | `vix.csv` | `date,close` |
 | `preopen.csv` | `session,symbol,price,gap_premarket_pct,gap_daily_pct,rvol,adv_shares,float_shares[,halted_before_open,missing_nbbo_pct,soft_*]` |
+
+**Units: `gap_premarket_pct`, `gap_daily_pct` and `missing_nbbo_pct` are fractions, not
+percentages.** A 12% gap is `0.12`, not `12`. This matches the registry, where
+`min_gap_premarket_pct` is `0.04`. Getting it wrong does not fail loudly on its own — `12 >= 0.04`
+is true for every row, so the gap filter would stop rejecting anything, and `5 > 0.05` is true for
+every row, so every session would be reported as a vendor coverage failure that never happened.
+`PreOpenFacts.check_units()` therefore rejects any of the three above `1`, and `classify()` calls
+it before anything else. `rvol` is *not* a fraction — `min_rvol` is a plain multiple of ADV.
 | `signal_bars.csv` | `symbol,session,setup,price,r` |
 | `quotes.csv` | `symbol,captured_at,bid,ask,bid_size,ask_size[,age_seconds]` |
 | `floats.csv` | `symbol,provider,float_shares,as_of[,short_interest_shares]` |

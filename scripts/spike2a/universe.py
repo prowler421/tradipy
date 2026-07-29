@@ -31,7 +31,7 @@ from enum import Enum
 from pathlib import Path
 
 from scripts.spike2a.prereg import MAX_MISSING_NBBO_PCT, MAX_SYMBOL_SESSIONS, pct
-from tradipy.params import Config
+from tradipy.params import PARAMS, Config
 
 
 class Exclusion(Enum):
@@ -46,6 +46,21 @@ class Exclusion(Enum):
     NO_NBBO_COVERAGE = "NBBO missing for too much of the session — Q1 coverage failure"
 
 
+#: Fields carrying a **fraction**, not a whole-number percentage. The registry stores gap
+#: thresholds as fractions (``min_gap_premarket_pct`` is ``0.04``, not ``4``), so a CSV supplying
+#: ``12`` for a 12% gap would compare ``12 >= 0.04`` — true for every row, and the gap filter
+#: silently stops rejecting anything. The same mistake on ``missing_nbbo_pct`` inverts instead:
+#: ``5 > 0.05`` is true for every row, and every session is reported as a vendor coverage failure
+#: that did not happen. Both produce a confident answer from a check not in a position to ask the
+#: question, which is the failure this package is otherwise built to avoid, so it is checked
+#: rather than documented.
+FRACTION_FIELDS = ("gap_premarket_pct", "gap_daily_pct", "missing_nbbo_pct")
+
+
+class UnitError(ValueError):
+    """A fraction-valued field arrived as a whole-number percentage."""
+
+
 @dataclass(frozen=True)
 class PreOpenFacts:
     """What is knowable about a symbol-session at or before 09:30 ET.
@@ -53,6 +68,9 @@ class PreOpenFacts:
     Every field is as-of the open. Nothing here may be derived from what the symbol did *after*
     09:30 — that is the survivorship boundary, and it is a property of the data collection rather
     than of this dataclass, so it is stated in :func:`from_csv_row` where the values arrive.
+
+    The three ``_pct`` fields are **fractions** — see :data:`FRACTION_FIELDS`. ``rvol`` is not:
+    ``min_rvol`` is a plain multiple of ADV, so there is no ambiguity to check there.
     """
 
     session: date
@@ -67,6 +85,27 @@ class PreOpenFacts:
     missing_nbbo_pct: Decimal = Decimal(0)
     #: §4.2 soft filters and provenance. Recorded, never used to include or exclude.
     soft: dict[str, str] = field(default_factory=dict)
+
+    def check_units(self) -> None:
+        """Raise :class:`UnitError` if a fraction-valued field looks like a percentage.
+
+        A legitimate fraction is never above 1: a 100% gap is ``1.0``, and a stock that doubled
+        pre-open is ``1.0`` too, not ``100``. Anything above 1 is therefore a unit error with
+        near-certainty, and failing loudly beats a gap filter that admits every row while
+        reporting that it filtered.
+        """
+        for name in FRACTION_FIELDS:
+            value: Decimal = getattr(self, name)
+            if value > 1:
+                # The illustrative value is read from the registry rather than typed, so the
+                # error message cannot drift from the threshold it is explaining.
+                example = PARAMS["min_gap_premarket_pct"].default
+                raise UnitError(
+                    f"{self.session} {self.symbol}: {name}={value} looks like a percentage. "
+                    "These fields are fractions, matching the registry convention "
+                    f"(min_gap_premarket_pct is {example}, not {example * 100}). "
+                    "Divide by 100 at collection."
+                )
 
 
 @dataclass(frozen=True)
@@ -113,7 +152,15 @@ def classify(facts: PreOpenFacts, cfg: Config, max_missing_nbbo: Decimal) -> Ver
     Exclusions precede filters because an excluded session is not a filter failure — it is a
     session the sample cannot speak about, and conflating the two would let a vendor's coverage
     gap read as a universe that is smaller than §4 describes.
+
+    Units are checked first and raise rather than reject. A unit error is not a property of the
+    symbol-session, so returning a :class:`Verdict` for it would file a collection bug as a market
+    observation. Deliberately **not** done in :func:`from_csv_row`, which swallows ``ValueError``
+    into an unparsable-row count — :class:`UnitError` would vanish into that tally, which is the
+    quietest possible outcome for the loudest possible mistake.
     """
+    facts.check_units()
+
     if facts.halted_before_open:
         return Verdict(facts, included=False, excluded_by=Exclusion.HALTED_BEFORE_OPEN)
     if facts.missing_nbbo_pct > max_missing_nbbo:

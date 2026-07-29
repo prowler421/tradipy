@@ -201,9 +201,7 @@ def main(argv: list[str]) -> int:
     with Path(argv[0]).open(newline="", encoding="utf-8") as fh:
         parsed = [from_csv_row(r) for r in csv.DictReader(fh)]
     readings = [r for r in parsed if r is not None]
-    measured_on = (
-        datetime.strptime(argv[1], "%Y-%m-%d").date() if len(argv) > 1 else date.today()
-    )
+    measured_on = datetime.strptime(argv[1], "%Y-%m-%d").date() if len(argv) > 1 else date.today()
 
     print(report(readings, measured_on))
     if len(parsed) != len(readings):

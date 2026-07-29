@@ -153,8 +153,11 @@ class IbkrHistoricalTicksFeed:
 
     def __init__(self, host: str = "127.0.0.1", port: int = 7497, client_id: int = 2) -> None:
         # Imported here rather than at module scope, deliberately: see the module docstring.
+        # `pyproject.toml` puts `scripts/` in basedpyright's scope, and ib_insync is correctly
+        # absent from the project's dependencies, so the missing import is expected rather than
+        # a mistake — the type-check analogue of the `pragma: no cover` two lines below.
         try:
-            from ib_insync import IB
+            from ib_insync import IB  # pyright: ignore[reportMissingImports]
         except ImportError as exc:  # pragma: no cover - environment-dependent
             raise RuntimeError(
                 "IbkrHistoricalTicksFeed needs ib_insync, which is a spike-only prerequisite "

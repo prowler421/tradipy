@@ -22,6 +22,14 @@ All notable changes to the tradipy **package** are documented here. This file fo
   package dependency. Q4 computes its caps with `gates.spread_caps` and its spread with
   `quotes.spread_at_signal` rather than reimplementing either (§4.3). **No `src/tradipy/` change
   and no new dependency.**
+- **`PreOpenFacts.check_units()`** — rejects `gap_premarket_pct`, `gap_daily_pct` or
+  `missing_nbbo_pct` above `1`, because the registry stores gap thresholds as fractions and a CSV
+  supplying `12` for a 12% gap compares `12 >= 0.04` — true for every row, so the gap filter stops
+  rejecting anything while still reporting that it filtered. The same error on `missing_nbbo_pct`
+  inverts it: every session becomes a vendor coverage failure that never happened. Called from
+  `classify()` and deliberately not from `from_csv_row`, which folds `ValueError` into an
+  unparsable-row count where a `UnitError` would vanish. It caught a real instance immediately —
+  the synthetic fixture used to smoke-test the module had `missing_nbbo_pct=9`.
 - **Two guard tests on the registry lint's new roots** —
   `test_the_lint_scans_scripts_recursively` asserts `scripts/` is in scope and that a nested file
   is reached; `test_the_lint_catches_a_planted_literal` asserts the detection half fires on a file
@@ -30,6 +38,10 @@ All notable changes to the tradipy **package** are documented here. This file fo
 
 ### Changed
 
+- **`[tool.ruff] src` gains `"scripts"`** (`pyproject.toml`). Without it isort does not classify
+  `scripts.spike2a.*` the way it classifies `tradipy.*`, so every spike module importing from both
+  — which is every module that reads a registered threshold — trips `I001`. Fixed in the config
+  rather than per-file so the next such module does not rediscover it.
 - **The registry lint now scans `scripts/` recursively**, not `src/tradipy/*.py` alone
   (`test_parameter_registry.lint_roots()`). PHASE-2A-SPIKE.md §8 called this a prerequisite rather
   than an improvement: the spike's central task is measuring whether `max_spread_r` is calibrated,

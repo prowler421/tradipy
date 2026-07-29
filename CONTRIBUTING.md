@@ -12,9 +12,10 @@ that ordinary review misses. A few conventions matter more than usual here.
 2. **One definition per threshold.** Every tunable threshold is registered once in
    `tradipy.params.PARAMS` and read by name. Never write a numeric literal for a registered
    threshold anywhere else; the registry test enforces this against the PRD prose too — within
-   its scope, which is `src/tradipy/*.py` non-recursively, skipping `params.py` and
-   `__init__.py`, exempting undistinctive values, and **not** covering `scripts/`. The rule is
-   wider than the lint; hold to the rule.
+   its scope, which is `src/tradipy/*.py` non-recursively plus `scripts/` recursively, skipping
+   `params.py` and `__init__.py` inside `src/tradipy/` only, and exempting undistinctive values.
+   `tests/` is **not** covered, deliberately: a fixture that asserts a derivation against a value
+   the registry supplied proves nothing. The rule is still wider than the lint; hold to the rule.
 3. **Polarity decides rounding, and the registry decides polarity.** In `gates.py` route
    rounding through `_rounded(cfg, value, *governed_by)`, never by naming a `Polarity`
    member — that gives direction a second definition, and a test asserts `gates.py` does not

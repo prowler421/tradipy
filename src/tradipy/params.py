@@ -13,8 +13,9 @@ The rule this module enforces is therefore: **a threshold is defined here exactl
 and every consumer reads it by name.** No numeric literal for a registered threshold may
 appear anywhere else in the package. `tests/test_parameter_registry.py` enforces this, and
 the same discipline against the prose in docs/PRD.md — within a stated scope: the lint walks
-`src/tradipy/*.py` non-recursively, skips this module and `__init__.py`, and exempts an
-undistinctive-value set. `scripts/` is not scanned.
+`src/tradipy/*.py` non-recursively plus `scripts/` recursively, skips this module and
+`__init__.py` inside `src/tradipy/` only, and exempts an undistinctive-value set. `tests/` is
+not scanned, deliberately: fixtures must state literals to assert a derivation against them.
 
 Each parameter carries its **polarity** (PRD §20.13) where it is used as a gate threshold,
 because rounding direction is a property of the constraint, not of the call site. As of

@@ -1,12 +1,20 @@
 # Phase 2a — Data Feasibility Spike
 
-**Status: not started. Scope and pre-registration both committed 2026-07-29 — §7 is filled and
-binding. The blocking action is a vendor trial account, which is not something this repository can
-open.**
+**Status: instrumented, not yet run. Scope and pre-registration both committed 2026-07-29 — §7 is
+filled and binding. The code that answers Q2, Q3 and Q4 is written and exercised against synthetic
+input (`scripts/spike2a/`, see its README). What is missing is data, and the blocking actions are
+external to this repository.**
 
-Q4 is the only question runnable without one, and it needs historical intraday NBBO data for the
-sample the §7 rule selects. Until that data exists locally, nothing here can execute. **Writing
-more about this spike is not progress on it** — the next action is external.
+| Question | Blocked on |
+|---|---|
+| Q1 | Vendor trial accounts. Also a **pre-determined negative for IBKR alone**: §7 requires ≥ 200 concurrent symbols against the ~100 market-data line cap §1 records. §3.3 says to establish that concretely rather than assume it, so it is still worth running |
+| Q2 | A **second** independent float/short-interest provider. Finviz alone answers the staleness condition only; the disagreement condition is unmeasurable with one source, and unmeasured is not a pass |
+| Q3 | An IBKR paper connection, plus the `ib_insync` timestamping that cannot be written until its event ordering has been seen |
+| Q4 | Historical intraday NBBO for the sample the §7 rule selects. **Whether the IBKR paper tier serves `reqHistoricalTicks` BID_ASK at that volume and lookback is unverified** — three specific limits are listed on `feeds.IbkrHistoricalTicksFeed`, and a negative answer there is a Q1 finding |
+
+**Writing more about this spike is still not progress on it.** What the code changes is that when
+the data arrives, the measurement is already pre-registered, already reads its thresholds from the
+registry, and already refuses to report an unmeasured condition as a passed one.
 
 Normative source: [PRD.md](PRD.md) §5.5, which recommends this spike and calls it **V7**. §4.2
 defines the filter set it must reproduce, §12.1 places it at Phase 2a depending on Phase 2, and
@@ -237,13 +245,23 @@ coverage obligation. If the answer to Q1 is positive, Phase 3 is written fresh a
 Two further guardrails:
 
 - **No threshold literal in spike code for a registered parameter.** Read from
-  `tradipy.params`. Convention 1 applies to `scripts/` by policy, but note that **the AST lint
-  does not currently scan it** — `test_no_registered_literal_hardcoded_in_source` iterates
-  `SRC.glob("*.py")` with `SRC = src/tradipy`, non-recursively. Since this guardrail is the one
-  keeping a second definition of `max_spread_r` out of the code that measures `max_spread_r`,
-  extending the lint's roots to `scripts/` is a prerequisite for the guardrail being mechanical
-  rather than aspirational. This is the same gap G8 flags in the docs that state the rule
-  unqualified.
+  `tradipy.params`. **This is now mechanical, not policy.** The lint previously iterated
+  `SRC.glob("*.py")` with `SRC = src/tradipy` and never looked at `scripts/`; since this
+  guardrail is the one keeping a second definition of `max_spread_r` out of the code that
+  measures `max_spread_r`, extending its roots was a prerequisite rather than an improvement.
+  `test_parameter_registry.lint_roots()` now walks `scripts/` recursively, and two guard tests
+  hold it there: one asserts the roots contain every file under `scripts/` including a nested
+  one, the other plants a literal and asserts it is caught. Verified by mutation —
+  `Decimal("0.15")` added to `scripts/spike2a/q4_spreads.py` fails the suite with a message
+  naming `max_spread_r`. The `__init__.py` exemption is deliberately **not** extended to
+  `scripts/`: exempting a filename exempts whatever anyone later puts in it.
+
+  Spike-only acceptance thresholds are a separate matter and live in `scripts/spike2a/prereg.py`
+  as `int` percents and counts. They are not registered parameters and must not become any — a
+  registered parameter is a tunable of the trading system; these are the acceptance thresholds of
+  one investigation, and registering them would create rows with no §2/§2.0 citation. Their
+  numeric coincidences with registered defaults (30, 2, 20, 500) are listed in that module's
+  docstring so no reader has to work out whether one is a restatement.
 - **No `datetime` import into `src/tradipy/`.** §20.1 is the natural first implementation task
   *after* this spike, precisely because a `Bar` that knows when it closed should be shaped by the
   feed that was chosen. Adding a timestamp during the spike commits the bar model to whichever

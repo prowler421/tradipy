@@ -201,3 +201,8 @@ pyrightconfig.json
 .ionide
 
 # End of https://www.toptal.com/developers/gitignore/api/visualstudiocode
+
+# Phase 2a spike datasets. D5 keeps the raw sample so every number in D1-D4 is recomputable,
+# but the files are large and vendor-licensed; the report carries their checksum and provenance
+# instead. See docs/PHASE-2A-SPIKE.md §5.
+data/spike2a/

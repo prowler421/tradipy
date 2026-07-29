@@ -16,8 +16,9 @@ question — raise it, do not resolve it silently in code.**
 - A registered threshold is defined **once** in `src/tradipy/params.py` and read by name.
   Never write a numeric literal for a registered threshold anywhere else — the registry
   test enforces this against the PRD prose too, within a stated scope: `src/tradipy/*.py`
-  non-recursively, skipping `params.py` and `__init__.py`, exempting undistinctive values,
-  and not covering `scripts/`. The rule binds where the lint does not look.
+  non-recursively plus `scripts/` recursively, skipping `params.py` and `__init__.py` inside
+  `src/tradipy/` only, exempting undistinctive values, and not covering `tests/`. The rule
+  binds where the lint does not look.
 - Rounding direction is a property of the **constraint's polarity** (`Polarity.MINIMUM`
   rounds up, `MAXIMUM` rounds down and clamps to one tick), not of the call site. In
   `gates.py` that means `_rounded(cfg, value, *governed_by)`, which reads polarity from the

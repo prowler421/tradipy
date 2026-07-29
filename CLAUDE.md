@@ -65,9 +65,11 @@ scripts/            # maintenance helpers — registry baseline, link checker
 1. **One definition per threshold.** A registered threshold lives once in `params.PARAMS`
    and is read by name. No literal for a registered threshold anywhere else — the registry
    test enforces this against the PRD prose as well as the code, **within its stated scope**:
-   the lint walks `src/tradipy/*.py` non-recursively, skips `params.py` and `__init__.py`, and
-   exempts an `_UNDISTINCTIVE` value set. `scripts/` is not scanned. State the rule with that
-   scope wherever it appears; an unqualified version of it is what F8 was about.
+   the lint walks `src/tradipy/*.py` non-recursively plus `scripts/` recursively, skips
+   `params.py` and `__init__.py` **inside `src/tradipy/` only**, and exempts an `_UNDISTINCTIVE`
+   value set. `tests/` is not scanned, deliberately — fixtures must state literals (convention
+   4). State the rule with that scope wherever it appears; an unqualified version of it is what
+   F8 was about.
 2. **Polarity, not the call site, decides rounding.** In `gates.py` this means
    `_rounded(cfg, value, *governed_by)`, which reads the direction from the registry. Do not
    import `Polarity` into `gates.py` and do not name a member at a call site: that gives

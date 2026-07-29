@@ -14,18 +14,20 @@ that defect clean, because every value appeared exactly once.
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import ROUND_CEILING, Decimal
 from types import MappingProxyType
 
 import pytest
 
 from tests.test_worked_examples import EXAMPLES, IDS
+from tradipy.bars import Bar, green_runs, measured_move, select_flagpole
 from tradipy.gates import (
     Reject,
     apply_stop_floor_and_ceiling,
     check_room,
     exit_ladder,
     min_separation,
+    position_size,
     required_room,
     spread_caps,
     vwap_reclaim_stop,
@@ -38,7 +40,14 @@ from tradipy.params import (
     min_tradeable_price_from_stop_bounds,
     signal_cap_ticks_at_min_r,
 )
-from tradipy.rounding import TICK_SIZE, Polarity, ceil_to_tick, floor_to_tick, round_threshold
+from tradipy.rounding import (
+    TICK_SIZE,
+    Polarity,
+    ceil_to_tick,
+    floor_to_tick,
+    is_whole_tick,
+    round_threshold,
+)
 
 D = Decimal
 CFG = Config.default(mode="experienced")
@@ -307,10 +316,79 @@ def test_signal_spread_cap_is_only_one_tick_wide_at_minimum_r() -> None:
 
 
 @pytest.mark.boundary
-def test_room_gate_multiple_must_exceed_t1_multiple() -> None:
-    """PRD §3.1.1: T1 sits at 2R, so a room gate at 2.0 leaves T2 no room above T1."""
-    with pytest.raises(CouplingError, match="must exceed"):
-        CFG.with_overrides(room_gate_multiple="2.0")
+def test_t1_cannot_be_configured_below_the_non_bypassable_2r_floor() -> None:
+    """PRD §1: *"Minimum 2:1 reward-to-risk on every trade … **non-bypassable**"*.
+
+    §2 states T1 as *"2R (minimum)"* and §3.1.1 as *"Exactly 2R"*, but ``t1_r_multiple``
+    carried a code-originated range of ``[1.0, 5.0]`` — so ``with_overrides`` happily put T1
+    at 1R and nothing objected. D26 removed the ``room_gate_multiple > t1_r_multiple``
+    coupling, which had been the only thing incidentally constraining it, so this had to
+    become an explicit bound rather than a side effect.
+    """
+    assert PARAMS["t1_r_multiple"].lo == D("2.0"), "§2 states 2R as a minimum, not a default"
+    with pytest.raises(ValueError, match="outside legal bounds"):
+        CFG.with_overrides(t1_r_multiple="1.0")
+
+    # Upward is allowed — §2 marks the R-multiple user-configurable — and T1 moves with it.
+    wider = CFG.with_overrides(t1_r_multiple="3.0")
+    assert exit_ladder(D("5.16"), D("0.12"), D("5.99"), wider).t1 == D("5.52")
+
+
+@pytest.mark.boundary
+def test_room_gate_multiple_at_its_prd_lower_bound_is_legal_and_inert() -> None:
+    """**D26.** PRD §1, §2.0, §3.1.1 and §7 all state 2.0 is legal. It is, and it does nothing.
+
+    Until v0.1.0 ``validate_couplings`` raised on ``room_gate_multiple <= t1_r_multiple``,
+    making the PRD's own lower bound throw. The justification cited §3.1.1, which says the
+    multiple *"cannot go below 2.0"* — that is ``>= 2.0``, not ``> 2.0`` — so the cited
+    section did not support the check, and grep found the deviation declared nowhere.
+
+    Removing it is safe because the ordering guarantee never came from the proportional term.
+    ``min_separation`` is a MINIMUM-polarity threshold over a strictly positive quantity, so
+    it is at least one tick at every legal configuration; the §3.1.2 separation term
+    ``t1_r_multiple * R + min_separation`` therefore strictly exceeds ``t1_r_multiple * R``,
+    and it is what actually guarantees ``entry < T1 < T2``. At 2.0 the proportional term is
+    dominated, exactly as it already is at the 2.5 default — see the finding above. Inert,
+    not unsafe.
+
+    **The obvious derivation is wrong, and a first draft of D26 used it in six places.**
+    ``min_separation >= min_sep_r * R > 0`` fails at ``min_sep_r = 0.0``, which §2.0 permits.
+    The conclusion survives — the cost term carries it — but the stated reasoning did not,
+    which is the v1.3.1 class (a rule generalized past its justification) restated the v1.2
+    way (in more than one copy), inside the fix for a finding about unenforced guarantees.
+    The worst case is exercised below rather than argued.
+    """
+    worst_case = CFG.with_overrides(min_sep_r="0.0", room_gate_multiple="2.0")
+    assert worst_case["min_sep_r"] * D("0.15") == 0, "the false derivation's premise fails here"
+    assert min_separation(D("0.15"), D("0.01"), worst_case) >= TICK_SIZE, (
+        "the correct derivation holds: the cost term is strictly positive at every legal "
+        "configuration, and a MINIMUM rounds up"
+    )
+    assert required_room(D("0.15"), D("0.01"), worst_case).separation_term > (
+        worst_case["t1_r_multiple"] * D("0.15")
+    ), "entry < T1 < T2 survives min_sep_r = 0 with room_gate_multiple at its floor"
+
+    at_lower_bound = CFG.with_overrides(room_gate_multiple="2.0")
+    assert at_lower_bound["room_gate_multiple"] == PARAMS["room_gate_multiple"].lo
+
+    for r in ["0.05", "0.10", "0.15", "0.60", "2.00"]:
+        req_default = required_room(D(r), D("0.01"), CFG)
+        req_floor = required_room(D(r), D("0.01"), at_lower_bound)
+        assert req_floor.separation_term > req_floor.proportional_term, (
+            f"R={r}: at the 2.0 lower bound the proportional term must be dominated"
+        )
+        assert req_floor.required == req_default.required, (
+            f"R={r}: lowering room_gate_multiple to its PRD floor must not change the "
+            "requirement, because the separation term already governs"
+        )
+        assert req_floor.required > CFG["t1_r_multiple"] * D(r), (
+            "entry < T1 < T2 is guaranteed by §3.1.2's separation term, not by the multiple"
+        )
+
+    # Below the PRD's floor, per-parameter validation is what rejects it — one bound, in the
+    # registry, exactly where §2.0 states it.
+    with pytest.raises(ValueError, match="outside legal bounds"):
+        CFG.with_overrides(room_gate_multiple="1.9")
 
 
 # ---------------------------------------------------------------------------
@@ -405,6 +483,171 @@ def test_ceil_on_a_maximum_would_be_more_permissive() -> None:
     actual_separation = D("5.51") - D("5.40")
     assert actual_separation - floor_correct == D("0.03"), "margin under the correct rule"
     assert actual_separation - floor_wrong == D("0.00"), "zero margin under the wrong rule"
+
+
+# ---------------------------------------------------------------------------
+# Rounding direction at a NON-DEGENERATE input
+#
+# Everything above this block asserts direction against `round_threshold`, which the five
+# §3.1.2/§3.1.3 gate thresholds route through. Nothing asserted it for the *other* rounding
+# in the package — the exit ladder, the stop chain, the sizing truncation — and at the three
+# §3 worked examples it could not: every level is already a whole tick and all three risk
+# divisions are exact ($300/$0.12, $300/$0.15, $300/$0.10), so ceil, floor and round all
+# agree. Eleven direction-and-truncation mutations survived the entire suite while PRD §19's
+# "rounding-direction assertions" row was ticked. That is the fifth defect class again, in
+# the module its own fix had just touched.
+#
+# The fixture below is deliberately degenerate in no respect: a 2.5R T1 on a $0.13 R lands
+# between ticks, the risk budget does not divide evenly, and the VWAP band is a tenth of a
+# tick off. Direction and truncation are visible in every one.
+# ---------------------------------------------------------------------------
+NON_TICK_R = D("0.13")  # 2.5 x 0.13 = 0.325 — half a tick past a boundary
+NON_TICK_CFG = CFG.with_overrides(t1_r_multiple="2.5")
+
+
+@pytest.mark.polarity
+def test_targets_round_up_away_from_entry_at_a_non_tick_level() -> None:
+    """PRD §20.13: *"Targets (long): round up."* Away from entry, so R is never flattered.
+
+    Rounding a target down would report a fill at a level the market never had to reach,
+    which inflates every backtested R by up to a tick — the specific dishonesty §20.13's
+    direction rule exists to prevent.
+    """
+    entry = D("5.16")
+    raw_t1 = entry + NON_TICK_CFG["t1_r_multiple"] * NON_TICK_R  # 5.485
+    raw_t2 = D("5.5149")
+
+    ladder = exit_ladder(entry, NON_TICK_R, raw_t2, NON_TICK_CFG)
+
+    assert not is_whole_tick(raw_t1) and not is_whole_tick(raw_t2), "fixture must not be degenerate"
+    assert ladder.t1 == ceil_to_tick(raw_t1) == D("5.49")
+    assert ladder.t2 == ceil_to_tick(raw_t2) == D("5.52")
+    assert ladder.t1 > raw_t1 and ladder.t2 > raw_t2, "a rounded target must never move closer"
+    assert ladder.t1 != floor_to_tick(raw_t1), "floor here would flatter backtested R"
+
+
+@pytest.mark.polarity
+def test_stops_round_down_away_from_the_position_at_a_non_tick_level() -> None:
+    """PRD §20.13: *"Stops (long): round down."* Away from the position, so it is never tighter.
+
+    Rounding a stop up moves it into the pattern and manufactures a noise stop-out, which is
+    the same failure §2 forbids when it says a too-wide stop means skip rather than tighten.
+    """
+    entry, raw_stop = D("5.16"), D("5.0449")
+    stop, verdict = apply_stop_floor_and_ceiling(entry, raw_stop, CFG)
+
+    assert not is_whole_tick(raw_stop), "fixture must not be degenerate"
+    assert verdict is None
+    assert stop == floor_to_tick(raw_stop) == D("5.04")
+    assert stop < raw_stop, "a rounded stop must never move closer to entry"
+    assert stop != ceil_to_tick(raw_stop), "ceil here would tighten the stop into the pattern"
+
+
+@pytest.mark.polarity
+def test_the_min_stop_floor_widens_and_never_narrows() -> None:
+    """The $0.10 floor is a MINIMUM *distance*, so the level it produces rounds **down**.
+
+    Shown with a floor that does not land on a tick from this entry: at ``min_stop_distance``
+    $0.105 the floored stop is $0.11 away, and the ceiled one would be $0.10 — narrower than
+    the floor demands, i.e. the constraint weakened by the arithmetic meant to enforce it.
+    """
+    cfg = CFG.with_overrides(min_stop_distance="0.105")
+    entry = D("5.16")
+    stop, verdict = apply_stop_floor_and_ceiling(entry, entry - TICK_SIZE, cfg)
+
+    assert verdict is None
+    assert stop == floor_to_tick(entry - cfg["min_stop_distance"]) == D("5.05")
+    assert entry - stop >= cfg["min_stop_distance"], "the floor must never be undershot"
+    assert entry - ceil_to_tick(entry - cfg["min_stop_distance"]) < cfg["min_stop_distance"]
+
+
+@pytest.mark.polarity
+def test_the_vwap_band_rounds_down_before_the_tick_is_subtracted() -> None:
+    """§20.13's worked reference, with the **intermediate** pinned rather than only the result.
+
+    ``VWAP x 0.99 = $3.762 -> floor -> $3.76 -> -1 tick -> $3.75``. The existing §3.4 fixture
+    asserts the final $3.73, which arrives via the min-stop floor and is therefore identical
+    under either rounding direction — so the step the reference exists to demonstrate was
+    unpinned. Here the dip low sits below the band and the entry is far enough above that the
+    floor does not fire, so the band's own direction is what decides the stop.
+    """
+    entry, dip_low, vwap = D("3.90"), D("3.70"), D("3.80")
+    raw_band = vwap * (Decimal(1) - CFG["vwap_stop_band_pct"])  # 3.7620
+
+    stop, verdict = vwap_reclaim_stop(entry, dip_low, vwap, CFG)
+
+    assert not is_whole_tick(raw_band), "fixture must not be degenerate"
+    assert verdict is None
+    assert stop == floor_to_tick(raw_band) - TICK_SIZE == D("3.75")
+    assert stop != ceil_to_tick(raw_band) - TICK_SIZE, "ceil would place the stop a tick tighter"
+
+
+@pytest.mark.polarity
+def test_share_count_truncates_and_never_rounds_up() -> None:
+    """PRD §2.2: shares = **floor**(max_dollar_risk / stop_distance).
+
+    Rounding to nearest breaches the §7 per-trade cap by up to one share's worth of R, which
+    is a hard rule rather than a rounding preference. The three §3 examples all divide
+    exactly, so floor, round and ceil agree on every one of them.
+    """
+    entry, entry_stop = D("5.16"), D("5.03")  # R = $0.13
+    budget = CFG["start_of_day_equity"] * CFG["max_risk_per_trade_pct"]
+    exact = budget / (entry - entry_stop)
+
+    shares = position_size(entry, entry_stop, CFG)
+
+    assert exact != exact.to_integral_value(), "fixture must not divide evenly"
+    assert shares == int(exact) == 2307
+    assert shares * (entry - entry_stop) <= budget, "§7: the risk cap is not a target to round to"
+    assert shares < exact, "truncation must lose the fraction, not recover it"
+    assert shares != round(exact), "round-to-nearest here breaches the per-trade cap"
+    assert shares != int(exact.to_integral_value(rounding=ROUND_CEILING))
+
+
+@pytest.mark.polarity
+def test_the_optional_sizing_caps_truncate_too() -> None:
+    """Both §2.2 constraints are ``<=``, so both floor. Neither divided evenly is tested."""
+    entry, stop = D("5.16"), D("5.03")
+    bp, adv = D("7777"), D("123456")
+
+    by_bp = position_size(entry, stop, CFG, buying_power=bp)
+    by_adv = position_size(entry, stop, CFG, adv_shares=adv)
+
+    assert by_bp == int((bp * CFG["max_bp_usage_pct"]) / entry) == 753
+    assert by_bp * entry <= bp * CFG["max_bp_usage_pct"]
+    assert by_adv == int(CFG["max_pct_of_adv"] * adv) == 1234
+    assert by_adv <= CFG["max_pct_of_adv"] * adv
+
+
+@pytest.mark.polarity
+def test_measured_move_is_returned_unrounded() -> None:
+    """§20.13 rounds **once**, at level computation — which for a target is ``exit_ladder``.
+
+    Its own docstring says so; nothing asserted it, so rounding here would have been a silent
+    second rounding of the same quantity.
+    """
+    entry, height = D("5.16"), D("0.3549")
+    assert measured_move(entry, height) == entry + height
+    assert not is_whole_tick(measured_move(entry, height))
+
+
+@pytest.mark.polarity
+def test_a_full_tie_between_flagpole_candidates_resolves_deterministically() -> None:
+    """§20.4 breaks ties by length then volume and is silent past that; earliest wins.
+
+    A documented choice with no test is the shape of defect this file exists for, and an
+    arbitrary winner would make flagpole selection depend on iteration order.
+    """
+    twin = [
+        Bar(D("1.00"), D("2.00"), D("1.00"), D("1.50"), 100),
+        Bar(D("1.50"), D("2.00"), D("1.00"), D("1.80"), 100),
+        Bar(D("1.80"), D("2.00"), D("1.00"), D("1.00"), 50),  # red separator
+        Bar(D("1.00"), D("2.00"), D("1.00"), D("1.50"), 100),
+        Bar(D("1.50"), D("2.00"), D("1.00"), D("1.80"), 100),
+    ]
+    runs = green_runs(twin)
+    assert runs == [(0, 1), (3, 4)], "the two candidates must tie on both length and volume"
+    assert select_flagpole(twin, runs) == (0, 1)
 
 
 @pytest.mark.polarity
@@ -545,6 +788,44 @@ def test_direct_construction_cannot_skip_coupling_validation() -> None:
     vals = {n: p.default for n, p in PARAMS.items()}
     vals["min_stop_distance"] = D("0.01")  # below tick / max_spread_r = $0.0667
     with pytest.raises(CouplingError):
+        Config(vals)
+
+
+@pytest.mark.boundary
+def test_direct_construction_cannot_skip_range_validation() -> None:
+    """The other half of the same hole, open until v0.1.0.
+
+    ``__post_init__`` checked *couplings* but never per-parameter **ranges**, which lived
+    only in ``with_overrides``. So the test above passed, the docstring said "no construction
+    path can route around it", and this was accepted::
+
+        Config({**defaults, "max_spread_r": Decimal("99")})
+
+    ``max_spread_r`` is bounded [0.05, 0.50]. At 99 the §3.1.3 signal-time cap on a $0.15 R
+    becomes **$14.85** — the spread gate is off, silently, on a config that reports itself
+    validated. The lesson is the one the project keeps relearning: a test that proves half a
+    guarantee is what stops anyone checking the other half.
+    """
+    vals = {n: p.default for n, p in PARAMS.items()}
+    vals["max_spread_r"] = D("99")
+    with pytest.raises(ValueError, match="outside legal bounds"):
+        Config(vals)
+
+    # And the gate really would have been disabled, which is why this is not a style point.
+    assert PARAMS["max_spread_r"].hi < D("99")
+    assert D("99") * D("0.15") > CFG["max_spread_abs"] * 100
+
+
+@pytest.mark.boundary
+def test_config_rejects_unregistered_names() -> None:
+    """``values`` may not carry a key that is not a registered parameter.
+
+    Completeness was checked from v0.0.1; the reverse direction was not, so a typo produced
+    a config that silently ignored the value the caller thought they had set.
+    """
+    vals = {n: p.default for n, p in PARAMS.items()}
+    vals["max_spread_R"] = D("0.15")  # capital R
+    with pytest.raises(ValueError, match="unregistered name"):
         Config(vals)
 
 

@@ -12,8 +12,15 @@ that ordinary review misses. A few conventions matter more than usual here.
 2. **One definition per threshold.** Every tunable threshold is registered once in
    `tradipy.params.PARAMS` and read by name. Never write a numeric literal for a registered
    threshold anywhere else; the registry test enforces this against the PRD prose too.
-3. **Polarity decides rounding.** Route all threshold rounding through `round_threshold`.
+3. **Polarity decides rounding, and the registry decides polarity.** In `gates.py` route
+   rounding through `_rounded(cfg, value, *governed_by)`, never by naming a `Polarity`
+   member — that gives direction a second definition, and a test asserts `gates.py` does not
+   import `Polarity` at all.
 4. **`Decimal`, never `float`, for anything compared to a tick or summed into P&L.**
+5. **Every guarantee needs the test that breaks it.** If you write "X cannot happen"
+   anywhere — docstring, README, architecture doc — write the test that attempts X and
+   asserts it fails. Four guarantees were unenforced at once in v0.0.1, three of them with a
+   passing happy-path test right beside the hole. See `tests/test_enforcement.py`.
 
 ## Getting set up
 
@@ -55,10 +62,12 @@ git diff -- tests/registry_baseline.json    # read this before committing
 
 ## Review checklist
 
-- [ ] No new literal for a registered threshold.
-- [ ] Rounding routed through `round_threshold` with the correct polarity.
+- [ ] No new literal for a registered threshold; any new bound the PRD does not state is
+      marked `(bounds: code)` in its `Param.source`.
+- [ ] Rounding routed through `_rounded`, with the polarity read from the registry.
 - [ ] `Decimal` used for all price/P&L comparisons.
-- [ ] Tests added/updated and assert the derivation.
-- [ ] `make check` passes.
-- [ ] `CHANGELOG.md` and docs updated for any behavior change.
+- [ ] Tests added/updated and assert the derivation, with the right marker.
+- [ ] Every new guarantee has a test that performs the violation it forbids.
+- [ ] `make check` passes, and `python -m tradipy demo` still exits 0.
+- [ ] Root `CHANGELOG.md` updated for code/tooling; `docs/CHANGELOG.md` for spec decisions.
 - [ ] No unnecessary dependency, abstraction, or framework introduced.

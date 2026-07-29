@@ -212,6 +212,43 @@ def test_section_2_2_sizing_example() -> None:
 
 
 @pytest.mark.spec
+def test_the_optional_sizing_constraints_actually_bind() -> None:
+    """PRD §2.2's buying-power and 1%-of-ADV caps, neither of which had a test.
+
+    §8.1 is explicit that the simulator must apply both: *"omitting the sizing cap would let
+    the backtest take positions the live system would refuse."* They are keyword arguments
+    defaulting to ``None`` because this layer has no broker and no feed, and ``adv_shares``
+    was never passed anywhere — so the guard PRD §18.3 calls a liquidity constraint was
+    entirely unexercised.
+    """
+    entry, stop = D("5.00"), D("4.90")  # $0.10 R -> 3,000 shares at the risk budget alone
+    unconstrained = position_size(entry, stop, CFG)
+    assert unconstrained == 3000
+
+    # Buying power: 50% of $10,000 / $5.00 = 1,000 shares.
+    assert position_size(entry, stop, CFG, buying_power=D("10000")) == 1000
+    # 1% of a 100,000-share ADV = 1,000 shares.
+    assert position_size(entry, stop, CFG, adv_shares=D("100000")) == 1000
+    # Both supplied: the tighter one wins, and neither can raise the count.
+    both = position_size(entry, stop, CFG, buying_power=D("10000"), adv_shares=D("50000"))
+    assert both == 500 <= unconstrained
+
+    # Ample resources leave the risk budget as the binding constraint.
+    ample = position_size(
+        entry, stop, CFG, buying_power=D("10000000"), adv_shares=D("10000000")
+    )
+    assert ample == unconstrained
+
+
+@pytest.mark.spec
+def test_a_stop_at_or_above_entry_is_rejected() -> None:
+    """There is no R to size against, so this is a caller bug rather than a rejection."""
+    for stop in (D("5.00"), D("5.01")):
+        with pytest.raises(ValueError, match="must be below entry"):
+            position_size(D("5.00"), stop, CFG)
+
+
+@pytest.mark.spec
 def test_sizing_uses_frozen_start_of_day_equity() -> None:
     """PRD §7.1 / D16: intraday gains must not compound size within a session.
 

@@ -16,26 +16,191 @@ make install      # uv sync + pre-commit install
 `uv sync` creates `.venv/` and installs the runtime package plus the `dev` dependency group.
 Everything else runs through `uv run`, so you never activate the environment by hand.
 
+## Project layout
+
+```
+src/tradipy/
+    __init__.py     imports and re-exports the seven library modules
+    rounding.py     tick arithmetic, Polarity, round_threshold        (§20.13)
+    rejects.py      the Reject enum, shared by gates and quotes
+    params.py       the parameter registry, Config, coupling validator (§2, §2.0)
+    bars.py         flagpole geometry and measured move                (§20.4)
+    quotes.py       NBBO quote validity and spread_at_signal           (§20.14)
+    score.py        composite score and the conviction gate      (§20.10, §14.2)
+    gates.py        pre-entry gates and position sizing         (§2.2, §3.1.x)
+    poc.py          composition: one candidate through every gate
+    __main__.py     the `python -m tradipy` CLI entry point
+tests/              six pytest files (see below) + registry_baseline.json
+docs/               PRD.md (normative), PLAN, CHANGELOG, reviews, these guides
+scripts/            regen_registry_baseline.py
+.github/workflows/  ci.yml, release.yml
+```
+
+The dependency graph is one-way and shallow. `rounding`, `rejects` and `bars` import nothing
+from the package; `params` imports `rounding`; `quotes` and `gates` import `params`, `rejects`
+and `rounding`; `score` imports `params`; `poc` composes all of them, and `__main__` is a
+front end over `poc`. Keeping an edge from pointing the other way is why `Reject` has its own
+module: `gates` and `quotes` both raise it, and a quote is the lower-level construct, so
+leaving the enum in `gates` would have made `quotes` depend on `gates`.
+
+`docs/api.md` documents every name in every module's `__all__`.
+
 ## Everyday commands
 
 | Command | What it does |
 | --- | --- |
-| `make check` | Lint + format check + type check + test — the same gate CI runs. Run this before every commit. |
+| `make check` | Lint, format check, type check, test — the gate CI runs. Run before committing. |
 | `make test` | Run the pytest suite. |
 | `make coverage` | Tests with a coverage report (term + `coverage.xml`). |
-| `make lint` | `ruff check`. |
+| `make lint` | `ruff check src tests scripts`. |
 | `make format` | `ruff format` — rewrites files. |
 | `make format-check` | `ruff format --check` — verifies without rewriting; part of `make check`. |
 | `make typecheck` | `basedpyright`. |
+| `make run` | Run a package module, e.g. `make run ARGS="-m tradipy demo"`. |
+| `make sync` | Sync the environment to `uv.lock`. |
+| `make precommit` | Run every pre-commit hook against every file. |
 | `make clean` | Remove caches and build artifacts. |
+| `make docs` | List the files in `docs/`. |
+| `make release` | Print the release checklist. |
 | `make help` | List every target. |
 
 Run a subset of tests directly:
 
 ```bash
 uv run pytest -m boundary            # only boundary-marked tests
-uv run pytest tests/test_worked_examples.py -vv
+uv run pytest tests/test_poc.py -vv
 ```
+
+## Running the proof of concept
+
+`python -m tradipy` makes the invariant layer runnable, so the rules can be exercised against
+arbitrary inputs instead of only against the fixtures. It is **not** the strategy engine: it
+takes a candidate that has already been found — entry, stop, structural target, resistance and
+a quote — and applies the gates in the order PRD §3.1 states them. Under uv, prefix everything
+below with `uv run`.
+
+### `demo`
+
+Replays the three PRD §3 worked examples through every gate and self-checks each derived value
+against the tables. It exits 1 on any disagreement, which makes it a smoke test of the whole
+layer as well as a demonstration: a table that drifts from its own rules fails instead of
+passing quietly.
+
+```console
+$ uv run python -m tradipy demo
+──────────────────────────────────────────────────────────────────────────────
+tradipy Phase 1 — PRD §3 worked examples
+──────────────────────────────────────────────────────────────────────────────
+mode=experienced  start_of_day_equity=30000  max_risk_per_trade_pct=0.01
+
+§20.4 flagpole geometry, derived from 8 bars:
+  flagpole      bars [0..3], low 4.80 -> high 5.15
+  height        0.35
+  flag          high 5.12, low 5.05
+  retrace       28.6%  (§3.2 crit. 3: <= 50%)
+  flag/pole vol 0.55   (§3.2 crit. 5: <= 0.70, contraction)
+
+§3.2 bull_flag  —  entry 5.16, resistance 5.51
+  PASS  quote validity     §20.14   bid 5.15 x500 / ask 5.16 x500, age 0s -> spread 0.01
+  PASS  stop construction  §20.13   raw 5.04 -> 5.04; R = 0.12; ceiling = 0.2580 (0.05 x 5.16)
+  PASS  spread gate        §3.1.3   observed 0.01 vs binding cap 0.01 (scan 0.02, signal 0.01)
+  PASS  room gate          §3.1.2   available 0.35 vs required 0.32 (proportional 0.300, separation 0.320)
+  PASS  exit ladder        §3.1.1   T1 5.40 (2.0R), T2 5.51; ordering entry < T1 < T2 holds
+  PASS  separation floor   §3.1.2   T2 - T1 = 0.11 vs floor 0.08 (cost term 3.0 x (0.01 + 0.015))
+  PASS  position size      §2.2     2,500 sh = floor(300.00 / 0.12); risk at stop 300.00, notional 12900.00
+  ->  ACCEPT
+
+[§3.3 hod_breakout and §3.4 vwap_reclaim follow, in the same form]
+
+──────────────────────────────────────────────────────────────────────────────
+3/3 examples accepted by the gate chain.
+Self-check OK — every derived value matches the PRD §3 tables.
+```
+
+`demo` is the default subcommand: bare `python -m tradipy` runs it. It is also the only thing
+that runs in `experienced` mode by default. Every share count in the PRD's worked examples is
+computed as 1% × $30,000, which is the experienced preset, while §2.0's declared default is
+`beginner` (see D28 in `docs/CHANGELOG.md`). `--mode beginner` prints the different share
+counts and *skips* the self-check rather than reporting a spurious failure.
+
+### `evaluate`
+
+Runs one candidate of your own through the same chain. `--entry`, `--stop` and `--resistance`
+are required; `--stop` is the pattern-derived stop **before** the §20.13 floor and ceiling,
+which the tool applies for you.
+
+```console
+$ uv run python -m tradipy evaluate --entry 6.48 --stop 6.34 --resistance 7.00
+mode=beginner  equity=30000  risk=0.005
+
+candidate  —  entry 6.48, resistance 7.00
+  PASS  quote validity     §20.14   bid 6.47 x500 / ask 6.48 x500, age 0s -> spread 0.01
+  PASS  stop construction  §20.13   raw 6.34 -> 6.34; R = 0.14; ceiling = 0.3240 (0.05 x 6.48)
+  PASS  spread gate        §3.1.3   observed 0.01 vs binding cap 0.02 (scan 0.02, signal 0.02)
+  PASS  room gate          §3.1.2   available 0.52 vs required 0.36 (proportional 0.350, separation 0.360)
+  PASS  exit ladder        §3.1.1   T1 6.76 (2.0R), T2 7.00; ordering entry < T1 < T2 holds
+  PASS  separation floor   §3.1.2   T2 - T1 = 0.24 vs floor 0.08 (cost term 3.0 x (0.01 + 0.015))
+  PASS  position size      §2.2     1,071 sh = floor(150.000 / 0.14); risk at stop 149.94, notional 6940.08
+  ->  ACCEPT
+```
+
+Every gate is reported, not only the first failure, because a candidate's other near-misses
+are the useful part of the output. The one exception is an unusable quote: every later gate
+consumes the spread, so the run stops there rather than reporting them against a fabricated
+value. Move the resistance in and three gates fail at once:
+
+```console
+$ uv run python -m tradipy evaluate --entry 6.48 --stop 6.34 --resistance 6.70
+mode=beginner  equity=30000  risk=0.005
+
+candidate  —  entry 6.48, resistance 6.70
+  PASS  quote validity     §20.14   bid 6.47 x500 / ask 6.48 x500, age 0s -> spread 0.01
+  PASS  stop construction  §20.13   raw 6.34 -> 6.34; R = 0.14; ceiling = 0.3240 (0.05 x 6.48)
+  PASS  spread gate        §3.1.3   observed 0.01 vs binding cap 0.02 (scan 0.02, signal 0.02)
+  FAIL  room gate          §3.1.2   available 0.22 vs required 0.36 (proportional 0.350, separation 0.360)  [TARGETS_TOO_CLOSE]
+  FAIL  exit ladder        §3.1.1   T1 6.76 (2.0R), T2 6.70; ordering entry < T1 < T2 VIOLATED  [TARGETS_TOO_CLOSE]
+  FAIL  separation floor   §3.1.2   T2 - T1 = -0.06 vs floor 0.08 (cost term 3.0 x (0.01 + 0.015))  [TARGETS_TOO_CLOSE]
+  PASS  position size      §2.2     1,071 sh = floor(150.000 / 0.14); risk at stop 149.94, notional 6940.08
+  ->  REJECT  TARGETS_TOO_CLOSE
+$ echo $?
+3
+```
+
+The remaining flags: `--target` (T2; defaults to `--resistance`), `--spread` (defaults to one
+tick), `--bid-size`, `--ask-size`, `--quote-age` and `--spread-estimated` for the §20.14 quote
+validity test, and `--mode`. Passing `--rvol` additionally computes the §20.10 composite score
+and the §14.2 conviction gate, and is what enables that block:
+
+```console
+$ uv run python -m tradipy evaluate --entry 6.48 --stop 6.34 --resistance 7.00 \
+    --rvol 12 --pct-change 7.29 --float-shares 8000000 \
+    --premarket-volume 450000 --catalyst headline_only
+[gate chain as above]
+
+  §20.10 composite score  0.4387  (gate >= 0.7: FAIL)
+      pct_change      0.1458
+      rvol            0.6000
+      float_inverse   0.6000
+      premarket_vol   0.4500
+      catalyst        0.5000
+```
+
+`--pct-change` is in **percent** units (`7.29` for a 7.29% move), matching §20.10; every
+`_pct` parameter in the registry is a fraction, so this is the one place the two conventions
+meet.
+
+### Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Success — the demo self-check passed, or the candidate was ACCEPTed |
+| 1 | The demo self-check disagreed with the PRD tables |
+| 2 | Usage error (argparse) |
+| 3 | The candidate was REJECTed |
+
+3 rather than 2 for a rejection: argparse already owns 2, and a rejected candidate is a
+correct answer rather than a failure to run. `demo` only ever returns 0 or 1, so it can be
+wired into CI as a smoke test with no extra interpretation.
 
 ## Dependency management
 
@@ -62,26 +227,67 @@ group, not an extra, so `pip install -e ".[dev]"` installs nothing.
 
 - Python 3.13, modern typing, `pathlib`, `dataclasses`, `enum`.
 - Google-style docstrings on public modules, classes, and functions.
-- Ruff owns formatting and import order. Do not hand-format; run `make format`.
+- Ruff owns formatting and import order at a line length of 100. Do not hand-format; run
+  `make format`.
 - Keep functions small and explicitly typed. Prefer readability over cleverness.
 
-One formatting exemption exists: the `PARAMS` registry in `params.py` is fenced with
-`# fmt: off` / `# fmt: on`. It is a row-by-row transcription of the PRD's §2 / §2.0 tables and
-is reviewed against them, so one parameter per line is the point; Ruff would expand every row
-carrying a `polarity=` keyword into an eight-line block. Do not widen that exemption.
+Two deliberate configurations to leave alone. The `PARAMS` registry in `params.py` is fenced
+with `# fmt: off` / `# fmt: on`: it is a row-by-row transcription of the PRD's §2 / §2.0
+tables and is reviewed against them, so one parameter per line is the point, and Ruff would
+expand every row carrying a `polarity=` keyword into a multi-line block. And the PRD's `×`,
+`–` and `−` glyphs are allow-listed in Ruff's `allowed-confusables` rather than switching
+RUF001-003 off, so an accidental homoglyph is still caught; ASCII-ifying them in the source
+would also break the PRD scanner in `test_parameter_registry.py`, which searches for a literal
+`×`. Do not widen either exemption.
 
 ## Type checking
 
-BasedPyright runs in `standard` mode (configured in `pyproject.toml`). Prefer fixing a type
-error over suppressing it; when a suppression is genuinely warranted, use a narrow
-`# pyright: ignore[ruleName]` with a comment explaining why.
+BasedPyright runs in `standard` mode over `src`, `tests` and `scripts` (configured in
+`pyproject.toml`). Prefer fixing a type error over suppressing it; when a suppression is
+genuinely warranted, use a narrow `# pyright: ignore[ruleName]` with a comment explaining why.
 
 ## Testing philosophy
 
-Assertions are written against the **derivation** of a value, not the value itself. The
-suite defends four defect classes and is verified by mutation testing; see
-[`../tests/README.md`](../tests/README.md) for what each file catches. Use the `spec`,
-`boundary`, and `polarity` markers where they apply.
+Assertions are written against the **derivation** of a value, not the value itself:
+`assert cap == Decimal("0.01")` passes under a wrong rounding rule that happens to agree at
+that input, while `assert cap == floor_to_tick(x) and cap <= x` does not.
+
+Six files. The first four each defend a defect class that the check built for the previous
+one could not see; the last two cover the §20 computations and the PoC.
+
+- `test_worked_examples.py` — **arithmetic**: an example that violates its own rules. PRD
+  v1.0 shipped four, and all four passed a fully-ticked acceptance checklist.
+- `test_parameter_registry.py` — **consistency**: a registered threshold restated as a
+  literal, in `src/` or in PRD prose, with one copy updated and the other left behind.
+- `test_boundary.py` — **joint incoherence** (`boundary` marks): two individually-legal
+  parameters that cannot both hold, tested at the limit the filters themselves admit rather
+  than at an illustrative value. Also **generalization** (`polarity` marks): a rounding rule
+  stated more broadly than its justification supports.
+- `test_enforcement.py` — **unenforced guarantee**: a rule that is stated normatively, has a
+  mechanism built for it, is believed to be enforced, and is not. Invisible to all four
+  earlier checks by construction: the rule appears once, the values are correct, the boundary
+  behaves as documented and the direction is right. None of them asks whether the mechanism
+  is wired to anything, and the documentation asserting that it is, is what stops anyone
+  checking.
+- `test_computations.py` — the three §20 computations that need no feed: §20.4 flagpole
+  geometry, §20.10 composite score, §20.14 quote validity. Each was fully specified and
+  entirely absent from the code through v0.0.1.
+- `test_poc.py` — the PoC chain and the CLI, including that the demo's self-check is not
+  vacuous. A demo that silently stops checking is worse than no demo, because its green
+  output is what people trust instead of reading the code.
+
+Three markers, declared in `pyproject.toml` and enforced by `--strict-markers`:
+
+- `spec` — asserts a rule stated normatively in `docs/PRD.md`.
+- `boundary` — asserts behaviour at a filter's own limit, not at an illustrative value.
+- `polarity` — asserts a rounding direction follows from constraint polarity (PRD §20.13).
+
+The suite is verified by mutation testing;
+[`../tests/README.md`](../tests/README.md) records what each mutation killed, the open spec
+findings the tests pin, and why the mutant tree must include `docs/`.
+
+`python -m tradipy demo` is a check of a different kind, outside pytest: it exercises the
+whole chain end to end and exits non-zero when a derived value disagrees with the PRD tables.
 
 ### Regenerating the registry baseline
 

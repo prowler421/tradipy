@@ -149,7 +149,9 @@ This is arguably unanswerable at Phase 1: you cannot quantify sensitivity withou
 
 ## 4. Rewrite checklist
 
-If this prompt is reused, these eleven changes would address the substance of what went wrong:
+If this prompt is reused, these twelve changes would address the substance of what went wrong
+(the twelfth was added by §6.2 below; this sentence said "eleven" for two revisions after the
+list grew — the same self-assessment miscount this document criticises at §3.6):
 
 1. **Move falsification before construction.** Require an evidence gate — expectancy net of costs, out-of-sample — before any execution-engine or paper-trading phase.
 2. **Add an economics section.** Breakeven win rate at the chosen R:R, estimated per-trade cost drag, and what evidence would falsify the strategy.

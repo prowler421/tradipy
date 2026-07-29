@@ -1,6 +1,6 @@
 [project]
 name = "tradipy"
-version = "0.0.1"
+version = "0.1.0"
 description = "Ross Cameron momentum trading system — Phase 1 invariant layer"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -29,8 +29,11 @@ Changelog = "https://github.com/prowler421/tradipy/blob/main/CHANGELOG.md"
 # Development dependency group (PEP 735). Installed by default with `uv sync`; with pip,
 # `pip install -e . --group dev` (pip >= 25.1). These never ship in the wheel.
 #
-# Ruff and BasedPyright are pinned to a minor series on purpose: both are gates in CI, and a
-# formatter or type checker that drifts under you turns a green branch red without a commit.
+# Ruff is pinned to a minor series and BasedPyright to a major one: both are gates in CI, and
+# a formatter or type checker that drifts under you turns a green branch red without a commit.
+# The specifiers alone do not deliver that for BasedPyright — `uv.lock` plus CI's
+# `uv sync --frozen` is what actually pins it. Stated precisely because an earlier version of
+# this comment claimed both were pinned to a minor series, and CHANGELOG.md repeated it.
 [dependency-groups]
 dev = [
     "pytest>=8.0",

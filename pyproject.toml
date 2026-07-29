@@ -56,11 +56,7 @@ packages = ["src/tradipy"]
 [tool.ruff]
 line-length = 100
 target-version = "py313"
-# `scripts` is here so isort resolves `scripts.spike2a.*` the way it resolves `tradipy.*`.
-# Without it, any module importing from both — which every spike module that reads a registered
-# threshold does — trips I001. Fixed in the config rather than per-file so the next such module
-# does not have to rediscover it.
-src = ["src", "tests", "scripts"]
+src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = [
@@ -101,7 +97,13 @@ allowed-confusables = [
 "tests/**" = ["N802", "N803", "N806"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["tradipy"]
+# `scripts` is declared explicitly rather than left to `src`-root detection. Ruff's default
+# `src` is `[".", "src"]`; this project overrides it to `["src", "tests"]`, which drops `.`, so
+# `scripts.spike2a.*` resolves as *third-party* and isort wants a section break between it and
+# `tradipy.*`. Adding `"scripts"` to `src` does not fix that — ruff would then look for
+# `scripts/scripts/`, which is not a thing. Declaring it here does not depend on filesystem
+# detection at all, and matches how `tradipy` is already declared.
+known-first-party = ["tradipy", "scripts"]
 
 [tool.ruff.format]
 quote-style = "double"

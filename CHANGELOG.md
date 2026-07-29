@@ -38,10 +38,13 @@ All notable changes to the tradipy **package** are documented here. This file fo
 
 ### Changed
 
-- **`[tool.ruff] src` gains `"scripts"`** (`pyproject.toml`). Without it isort does not classify
-  `scripts.spike2a.*` the way it classifies `tradipy.*`, so every spike module importing from both
-  — which is every module that reads a registered threshold — trips `I001`. Fixed in the config
-  rather than per-file so the next such module does not rediscover it.
+- **`[tool.ruff.lint.isort] known-first-party` gains `"scripts"`** (`pyproject.toml`). Ruff's
+  default `src` is `[".", "src"]`; this project overrides it to `["src", "tests"]`, dropping `.`,
+  so `scripts.spike2a.*` resolved as third-party and isort wanted a section break before
+  `tradipy.*`. Every spike module importing from both — which is every module that reads a
+  registered threshold — tripped `I001`. Declared here rather than by adding a `src` root, because
+  the declaration does not depend on filesystem detection and matches how `tradipy` is already
+  declared.
 - **The registry lint now scans `scripts/` recursively**, not `src/tradipy/*.py` alone
   (`test_parameter_registry.lint_roots()`). PHASE-2A-SPIKE.md §8 called this a prerequisite rather
   than an improvement: the spike's central task is measuring whether `max_spread_r` is calibrated,

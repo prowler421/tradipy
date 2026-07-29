@@ -35,7 +35,9 @@ EXAMPLES = worked_examples()
 IDS = [c.label for c in EXAMPLES]
 
 
-def _quote(price: Decimal, spread: Decimal = D("0.01"), **kw) -> Quote:
+def _quote(price: Decimal, spread: Decimal | None = None, **kw) -> Quote:
+    if spread is None:
+        spread = D("0.01")
     base = {
         "bid": price - spread,
         "ask": price,

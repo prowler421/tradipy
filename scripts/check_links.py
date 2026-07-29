@@ -104,11 +104,7 @@ def main() -> int:
             where = f"{path.relative_to(REPO)}:{lineno}"
 
             file_part, _, anchor = target.partition("#")
-
-            if not file_part:  # same-file anchor, e.g. ``[x](#section)``
-                resolved = path
-            else:
-                resolved = (path.parent / file_part).resolve()
+            resolved = path if not file_part else (path.parent / file_part).resolve()
 
             if not resolved.exists():
                 failures.append(f"{where}: {target} -> missing file {file_part}")

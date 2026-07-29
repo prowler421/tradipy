@@ -142,3 +142,17 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "raise NotImplementedError",
 ]
+
+# A floor, deliberately below the figure the docs cite. Measured coverage at v0.1.0 is ~99%
+# line and branch; this trips at 95 so that real rot fails the build while a single legitimate
+# uncovered line does not. Two reasons not to set it at 99:
+#
+#   1. A floor equal to the current value fails on the next honest commit, and a gate that
+#      fails for a non-reason gets raised or removed rather than heeded.
+#   2. The floor is not the claim. 99% is a measurement recorded in docs/PLAN.md and root
+#      CHANGELOG.md; this number only asserts that coverage has not collapsed. Conflating a
+#      floor with a target is how "enforced" comes to mean less than it says.
+#
+# Raise it deliberately, with the measurement in the commit message — never to match whatever
+# the suite happens to score today.
+fail_under = 95

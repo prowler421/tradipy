@@ -46,10 +46,18 @@ imports `params`; `poc` imports the lot, and only `__main__` imports `poc`. Ever
 ```
 src/tradipy/        # the library (rounding, rejects, params, bars, quotes, score, gates)
                     # plus poc.py and __main__.py — the runnable proof of concept
-tests/              # pytest suite — worked examples, registry, boundary/polarity marks
-docs/               # PRD.md (normative), PLAN, CHANGELOG (spec), reviews, architecture/dev/api
-scripts/            # maintenance helpers (e.g. regen the registry baseline)
-.github/workflows/  # CI and release
+tests/              # pytest suite — worked examples, registry, boundary/polarity marks,
+                    # enforcement fixtures, and doc-count consistency
+docs/               # start at docs/README.md (index)
+  PRD.md            #   normative; §20 governs on any conflict
+  PLAN.md           #   workstreams, sequencing, decision log D1–D29, risks
+  CHANGELOG.md      #   PRD corrections — NOT the root CHANGELOG.md, which tracks the package
+  PHASE-2A-SPIKE.md #   data spike scope with binding pre-registration
+  api.md architecture.md development.md
+  reviews/          #   every independent review round, kept unedited as the record
+scripts/            # maintenance helpers — registry baseline, link checker
+.claude/skills/     # guarantee-test, review-round (mirrored as .cursor/rules/*.mdc)
+.github/workflows/  # CI and release; dependabot.yml covers Actions only
 ```
 
 ## Non-negotiable conventions

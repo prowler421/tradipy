@@ -1,0 +1,45 @@
+---
+description: How to write the test that breaks a stated guarantee (CLAUDE.md convention 6). Apply when adding or reviewing any claim that something cannot happen, is non-bypassable, or is enforced.
+globs: ["tests/**/*.py", "src/tradipy/**/*.py"]
+---
+
+# Every guarantee needs the test that breaks it
+
+Cursor has no `SKILL.md` format, so this mirrors
+`.claude/skills/guarantee-test/SKILL.md`. Keep the two in step — if you change one, change
+the other, or they become a threshold stated in two places with one updated.
+
+**Why.** Four guarantees were unenforced at once in v0.0.1, three of them with a passing test
+right beside the hole. A happy-path test passes whether or not the guarantee holds.
+
+## Triggers
+
+Any sentence carrying *cannot happen*, *non-bypassable*, *hard cap*, *always*, *never*,
+*in every case*, *uniformly*, or *there is no other path*. Writing one means writing the test in
+the same change. Reviewing one means asking whether anything calls the mechanism, not whether it
+exists.
+
+## Procedure
+
+1. **Restate the guarantee as an executable attack.** "`Config` is frozen" → mutate the module
+   dict it reads from, after construction. "Every construction path validates" → enumerate the
+   paths and call each; `Config(values)` was the one nobody listed.
+2. **Prove the attack would succeed without the guard.** Remove or invert the mechanism, run the
+   test, confirm it *fails*, then restore. A test that passes in both states is false assurance —
+   which is what stopped anyone noticing `Config.polarity()` had zero callers.
+3. **Assert the derivation, not the value.** `assert cap == floor_to_tick(x) and cap <= x`, never
+   `assert cap == Decimal("0.01")` — the literal passes under a wrong rule that happens to agree
+   at that input.
+4. **Use a non-degenerate fixture for anything about rounding or direction.** The three PRD §3
+   worked examples all have whole-tick levels and exact risk divisions, so `ceil`, `floor` and
+   `round` agree on every one; twelve rounding mutations survived the whole suite because of it.
+   Extend the `NON_TICK_R` / `NON_TICK_CFG` block in `tests/test_boundary.py`.
+5. **If the guarantee is a lint, add the guard on the guard** — a test asserting the checker can
+   still see what it claims to check. The registry lint was blind to 7 of 29 parameters via
+   `Decimal.normalize()` scientific notation.
+6. **Place and mark.** `tests/test_enforcement.py` for enforcement, `tests/test_boundary.py` for
+   boundary and degenerate cases. Markers `spec` / `boundary` / `polarity`; `--strict-markers` is
+   on. Name the test after the violation, not the mechanism.
+7. **If it cannot be enforced yet, qualify the document instead.** `daily_loss_pct` is
+   non-bypassable in PRD §7 and nothing tracks realized P&L. Do not write a test that pretends
+   otherwise; raise it as a spec question and log it in `docs/CHANGELOG.md` under Unreleased.

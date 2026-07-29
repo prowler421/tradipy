@@ -4,7 +4,7 @@
 
 .DEFAULT_GOAL := help
 .PHONY: help install sync run test coverage lint format format-check check typecheck \
-        clean docs precommit release
+        clean docs links precommit release mutants
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -39,16 +39,23 @@ format-check: ## Verify formatting without rewriting (what CI runs)
 typecheck: ## Static type check with BasedPyright
 	uv run basedpyright
 
-check: lint format-check typecheck test ## Lint, format check, type check, test — what CI runs
+links: ## Validate every relative Markdown link and heading anchor
+	uv run python scripts/check_links.py
+
+check: lint format-check typecheck links test ## Lint, format check, type check, links, test — what CI runs
 
 clean: ## Remove caches and build artifacts
 	rm -rf .pytest_cache .ruff_cache .coverage coverage.xml htmlcov dist build \
 		src/*.egg-info **/__pycache__
 	find . -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
 
-docs: ## List the project documentation
-	@echo "Docs live in docs/ and README.md:"
+docs: ## Show the documentation index
+	@echo "Documentation index: docs/README.md"
+	@echo
 	@ls -1 docs
+	@echo
+	@echo "Review archive:"
+	@ls -1 docs/reviews | sed 's/^/  /'
 
 precommit: ## Run all pre-commit hooks against every file
 	uv run pre-commit run --all-files

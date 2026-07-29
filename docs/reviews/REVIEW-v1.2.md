@@ -1,6 +1,6 @@
 # Full Review — PRD v1.2, PLAN, and the Source Prompt
 
-**Scope:** [PRD.md](PRD.md) (1,712 lines, v1.2) · [PLAN.md](PLAN.md) (292) · [PROMPT-REVIEW.md](PROMPT-REVIEW.md) (177) · [prompts/ross_cameron_trading_system.pdf](../prompts/ross_cameron_trading_system.pdf) (7 pp, ~2,350 words)
+**Scope:** [PRD.md](../PRD.md) (1,712 lines, v1.2) · [PLAN.md](../PLAN.md) (292) · [PROMPT-REVIEW.md](PROMPT-REVIEW.md) (177) · [prompts/ross_cameron_trading_system.pdf](../../prompts/ross_cameron_trading_system.pdf) (7 pp, ~2,350 words)
 
 **Reviewed:** 2026-07-28 · **Method:** every enumerated prompt requirement mapped to PRD coverage; every worked example recomputed programmatically; every recurring numeric threshold scanned for divergent restatement. Counts below were taken from the prompt PDF directly, not from the PRD's own claims.
 
@@ -229,6 +229,6 @@ This is a third distinct defect class — not arithmetic, not cross-section inco
 | 22 | Opening auction one sentence | Fixed — §8.2 non-participable print (A23) |
 | 23 | No citation granularity | **Open** — deferred to PLAN Workstream 11; gap stated in Appendix A |
 | — | Spread/separation joint incoherence | Found here (§8.3); fixed — §3.1.3 |
-| — | Tier 4: ~20 passages of inline revision history | Fixed — extracted to [CHANGELOG.md](CHANGELOG.md) (D23). This row was missing from the table for three revisions: the finding was actioned, and only its disposition went unrecorded |
+| — | Tier 4: ~20 passages of inline revision history | Fixed — extracted to [CHANGELOG.md](../CHANGELOG.md) (D23). This row was missing from the table for three revisions: the finding was actioned, and only its disposition went unrecorded |
 
 Outstanding after v1.3: citation granularity (#23), the parameter registry, the §21.1 fixtures, and independent review of v1.3 itself.

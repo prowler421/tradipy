@@ -35,7 +35,9 @@ EXAMPLES = worked_examples()
 IDS = [c.label for c in EXAMPLES]
 
 
-def _quote(price: Decimal, spread: Decimal = D("0.01"), **kw) -> Quote:
+def _quote(price: Decimal, spread: Decimal | None = None, **kw) -> Quote:
+    if spread is None:
+        spread = D("0.01")
     base = {
         "bid": price - spread,
         "ask": price,
@@ -204,11 +206,16 @@ def test_evaluate_reports_the_composite_score_when_asked(
             "evaluate",
             *EXPERIENCED,
             *BULL_FLAG_ARGS,
-            "--rvol", "20",
-            "--pct-change", "50",
-            "--float-shares", "0",
-            "--premarket-volume", "1000000",
-            "--catalyst", "confirmed",
+            "--rvol",
+            "20",
+            "--pct-change",
+            "50",
+            "--float-shares",
+            "0",
+            "--premarket-volume",
+            "1000000",
+            "--catalyst",
+            "confirmed",
         ]
     )
     out = capsys.readouterr().out

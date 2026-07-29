@@ -1,0 +1,20 @@
+# Dependabot — GitHub Actions only.
+#
+# Deliberately NOT configured for pip/uv. The runtime is stdlib-only and the dev group is
+# pinned in uv.lock; a bot opening PRs against those pins would be proposing changes to a
+# lockfile whose whole job is not to move on its own. Dependency bumps here are a decision,
+# and `uv add` is likewise absent from the pre-approved command list in .claude/settings.json.
+#
+# Actions are different: they are pinned by major tag, they rot silently as runners change,
+# and a stale action version fails the build for reasons unrelated to the change under test.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci"
+    labels:
+      - tooling

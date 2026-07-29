@@ -289,6 +289,38 @@ findings the tests pin, and why the mutant tree must include `docs/`.
 `python -m tradipy demo` is a check of a different kind, outside pytest: it exercises the
 whole chain end to end and exits non-zero when a derived value disagrees with the PRD tables.
 
+### The mutation protocol
+
+The "47 of 47 mutations caught" figure the PLAN and root `CHANGELOG.md` cite was produced by
+hand and **is not automated**. That is a deliberate limitation, stated here rather than papered
+over with a `make` target that does not work: a mutation harness whose own correctness has not
+been demonstrated is a mechanism built and not wired, which is the defect class this project
+exists to prevent.
+
+Until it is automated, the protocol is manual and should be run whenever the rounding, registry,
+or gate arithmetic changes:
+
+1. Pick a mutation that a *wrong but plausible* implementation would make. The productive
+   families here are rounding direction (`ceil` ↔ `floor` ↔ `round`), truncation
+   (`//` ↔ `/`), comparison strictness (`<` ↔ `<=`), and polarity declarations in the registry.
+2. Apply it to one place in `src/tradipy/`.
+3. Run `make test`. **The suite must fail.** If it passes, you have found a hole — write the
+   test that closes it before reverting the mutation.
+4. Revert. Never commit with a mutation in place.
+
+`tests/README.md` records the families already covered and which test kills each. Two cautions
+it also records, both learned the hard way:
+
+- **The three PRD §3 worked examples are numerically degenerate** — whole-tick levels, exact
+  risk divisions — so `ceil`, `floor` and `round` agree on every one of them. Twelve rounding
+  mutations survived the entire suite because of this. Mutate against the `NON_TICK_R` /
+  `NON_TICK_CFG` block in `tests/test_boundary.py`, not the worked examples.
+- **The mutant tree must include `docs/`**, because the registry lint reads PRD prose. A
+  mutation confined to `src/` cannot exercise it.
+
+`make links` and `tests/test_documentation.py` cover the two classes that *are* mechanised:
+broken relative citations, and counts stated in prose that no longer match the code.
+
 ### Regenerating the registry baseline
 
 `tests/test_parameter_registry.py` deliberately refuses to self-heal. When a PRD edit
@@ -318,9 +350,21 @@ The release workflow (`.github/workflows/release.yml`) builds the sdist and whee
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on every push to `main` and every pull request: install uv,
-cache by `uv.lock`, `uv sync --frozen`, then Ruff lint, Ruff format check, BasedPyright, and
-pytest with coverage. Those are the steps of `make check`, split up so a failure names itself
-in the UI. Keep the two in step — if you change one, change the other.
+cache by `uv.lock`, `uv sync --frozen`, then Ruff lint, Ruff format check, BasedPyright, the
+documentation link check, and pytest with coverage. Those are the steps of `make check`, split
+up so a failure names itself in the UI. Keep the two in step — if you change one, change the
+other.
+
+Coverage carries a **floor of 95%** (`fail_under` in `pyproject.toml`), which is deliberately
+below the ~99% the documentation records. The floor exists to fail on collapse, not to pin the
+measurement: a floor equal to the current score fails on the next honest commit, and a gate that
+fails for a non-reason gets removed rather than heeded. Raise it deliberately, with the new
+measurement in the commit message.
+
+`.github/dependabot.yml` proposes monthly GitHub Actions bumps and **nothing else**. The runtime
+is stdlib-only and `uv.lock` pins the dev group; a bot opening PRs against a lockfile whose job
+is not to move on its own would be noise. Actions are different — they rot silently as runners
+change, and a stale one fails the build for reasons unrelated to the change under test.
 
 Both workflows declare `permissions: contents: read`. The release workflow additionally
 refuses to build when the pushed tag disagrees with `version` in `pyproject.toml`.

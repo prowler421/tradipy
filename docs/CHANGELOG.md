@@ -12,7 +12,7 @@ Corrections and reversals to [PRD.md](PRD.md), extracted so the spec itself can 
 
 ## Unreleased — raised by REVIEW-2026-07-29, not yet dispositioned
 
-Driven by [REVIEW-2026-07-29.md](REVIEW-2026-07-29.md), a verification round over package v0.1.0. **No rule in the PRD changes here, and no threshold moves.** The round's job was to check that v1.3.2's twelve findings were really closed — **ten** are, against file and line; F12 is correctly still open because leaving it open was its disposition; and **F8 is not closed**, its no-literal half standing unqualified in all six places it appears, `CLAUDE.md` among them — and its own findings are either small code fixes or the three spec questions below. They are recorded now, unresolved, because [CLAUDE.md](../CLAUDE.md) requires a divergence between code and PRD to be raised rather than settled in code, and because a finding that lives only in a dated review file is one refactor from being lost.
+Driven by [REVIEW-2026-07-29.md](reviews/REVIEW-2026-07-29.md), a verification round over package v0.1.0. **No rule in the PRD changes here, and no threshold moves.** The round's job was to check that v1.3.2's twelve findings were really closed — **ten** are, against file and line; F12 is correctly still open because leaving it open was its disposition; and **F8 is not closed**, its no-literal half standing unqualified in all six places it appears, `CLAUDE.md` among them — and its own findings are either small code fixes or the three spec questions below. They are recorded now, unresolved, because [CLAUDE.md](../CLAUDE.md) requires a divergence between code and PRD to be raised rather than settled in code, and because a finding that lives only in a dated review file is one refactor from being lost.
 
 ### Spec questions — open
 
@@ -56,7 +56,7 @@ Two errors were **inherited verbatim from REVIEW-2026-07-28 and repeated under t
 
 ## v1.3.2 — package v0.1.0
 
-Driven by [REVIEW-2026-07-28.md](REVIEW-2026-07-28.md), the first review of the **code** rather than of this document. Three of these change trading behaviour and are recorded as decisions D26–D28 in [PLAN](PLAN.md).
+Driven by [REVIEW-2026-07-28.md](reviews/REVIEW-2026-07-28.md), the first review of the **code** rather than of this document. Three of these change trading behaviour and are recorded as decisions D26–D28 in [PLAN](PLAN.md).
 
 The distinctive thing about this round: every finding was a place where the *document was right and the code was not*, which is the reverse of the previous four. Four review rounds hardened the prose; nothing had yet checked whether the implementation of that prose enforced it. Three of the four highest-severity findings sat directly beneath a sentence asserting the opposite, and that sentence is what stopped anyone looking.
 
@@ -99,7 +99,7 @@ Two further observations for a future spec round:
 
 ## v1.3.1
 
-Driven by the independent review in [REVIEW-v1.3.md](REVIEW-v1.3.md). One change alters trading behaviour: the spread gates now round the other way, and are clamped.
+Driven by the independent review in [REVIEW-v1.3.md](reviews/REVIEW-v1.3.md). One change alters trading behaviour: the spread gates now round the other way, and are clamped.
 
 ### Strategy behaviour
 
@@ -122,13 +122,13 @@ Driven by the independent review in [REVIEW-v1.3.md](REVIEW-v1.3.md). One change
 | §21.1 | Added rounding-direction assertions and cross-parameter coupling to the registry check | `assert cap == 0.01` passes under a wrong rounding rule that happens to agree at that input. Tests must assert the derivation, not the value |
 | [PLAN](PLAN.md) WS9 | "Modular architecture with interfaces and data contracts" ✓ split into contracts ✓ / interfaces ☐ | Contracts are done; no `Protocol`, ABC, or method signature exists anywhere. The tick was carried by the contracts alone |
 | [PLAN](PLAN.md) WS1, sequencing table | WS1 no longer attributes 14 threshold rows to the prompt (it names 12); implementation work moved out of the workstream-numbered table | "Depends on 5" was ambiguous between Workstream 5 and Phase 5 |
-| [PLAN](PLAN.md) WS11, [PROMPT-REVIEW](PROMPT-REVIEW.md) §6.2 | Fourth defect class recorded: **generalization** — a rule stated more broadly than its justification supports | Invisible to all three prior checks. The rule appeared once (registry clean), the tables applying it were arithmetically correct (fixtures clean), and the boundary case passed. Only the prose disagreed with the tables |
+| [PLAN](PLAN.md) WS11, [PROMPT-REVIEW](reviews/PROMPT-REVIEW.md) §6.2 | Fourth defect class recorded: **generalization** — a rule stated more broadly than its justification supports | Invisible to all three prior checks. The rule appeared once (registry clean), the tables applying it were arithmetically correct (fixtures clean), and the boundary case passed. Only the prose disagreed with the tables |
 
 ---
 
 ## v1.3
 
-Driven by the independent review in [REVIEW-v1.2.md](REVIEW-v1.2.md). Two changes alter trading behaviour rather than wording: the spread gate (§3.1.3) and the correlated-exposure rule (§7.1.3).
+Driven by the independent review in [REVIEW-v1.2.md](reviews/REVIEW-v1.2.md). Two changes alter trading behaviour rather than wording: the spread gate (§3.1.3) and the correlated-exposure rule (§7.1.3).
 
 ### Strategy behaviour
 

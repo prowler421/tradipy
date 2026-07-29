@@ -224,9 +224,7 @@ def _quote(price: Decimal, spread: Decimal) -> Quote:
     worked examples state a spread and say nothing about quote age, so assuming anything
     older would be inventing an input.
     """
-    return Quote(
-        bid=price - spread, ask=price, bid_size=500, ask_size=500, age_seconds=Decimal(0)
-    )
+    return Quote(bid=price - spread, ask=price, bid_size=500, ask_size=500, age_seconds=Decimal(0))
 
 
 #: PRD §3.2's flagpole and flag, as bars. Reproduces the table's stated geometry: flagpole

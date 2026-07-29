@@ -40,7 +40,7 @@ unresolvable without a real spread distribution.
 [PLAN.md](PLAN.md) has ranked this the highest-value technical action since before any code
 existed. It has been deferred twice, both times for work that could be finished in one sitting,
 and the PLAN records that the argument does not survive a third use. The invariant layer is now
-finished, the enforcement holes are closed, and [REVIEW-2026-07-29](REVIEW-2026-07-29.md) found
+finished, the enforcement holes are closed, and [REVIEW-2026-07-29](reviews/REVIEW-2026-07-29.md) found
 nothing that outranks this. **There is no competing candidate for the next piece of work.**
 
 **This is investigative code, not implementation.** Its output is a report and a dataset. §8 says

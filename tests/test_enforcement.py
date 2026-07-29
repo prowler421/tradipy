@@ -75,18 +75,20 @@ EXPERIENCED_PRESET = {
 }
 
 
-def _with_flipped_polarity(base: Config, name: str) -> Config:
-    """A config identical to ``base`` except that ``name`` declares the opposite polarity.
+def _with_flipped_polarity(base: Config, param_name: str) -> Config:
+    """A config identical to ``base`` except that ``param_name`` declares the opposite polarity.
 
     Used to prove the gates *read* the declaration rather than agreeing with it by
     coincidence. ``PARAMS`` is read-only, so the flip goes through the accessor — which is
     also the only thing the gates consult.
     """
-    flipped = Polarity.MINIMUM if base.polarity(name) is Polarity.MAXIMUM else Polarity.MAXIMUM
+    flipped = (
+        Polarity.MINIMUM if base.polarity(param_name) is Polarity.MAXIMUM else Polarity.MAXIMUM
+    )
 
     class Flipped(Config):
-        def polarity(self, n: str) -> Polarity:
-            return flipped if n == name else super().polarity(n)
+        def polarity(self, name: str) -> Polarity:
+            return flipped if name == param_name else super().polarity(name)
 
     return Flipped(base.values, mode=base.mode)
 
@@ -280,9 +282,7 @@ def test_an_unknown_mode_is_rejected_before_it_reaches_the_validator() -> None:
         ("max_consecutive_losses", "2", "5"),
     ],
 )
-def test_risk_settings_are_configurable_across_their_prd_range(
-    name: str, lo: str, hi: str
-) -> None:
+def test_risk_settings_are_configurable_across_their_prd_range(name: str, lo: str, hi: str) -> None:
     """PRD §2's "User-Configurable" column, made true.
 
     Through v0.0.1 these lived only in ``MODE_PRESETS`` with no registry entry, so §2's

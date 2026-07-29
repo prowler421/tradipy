@@ -1,0 +1,50 @@
+---
+description: Procedure for conducting an independent review round in house style — finding IDs, convention-8 triage, routing spec questions, and the mandatory adversarial fact-check. Apply when reviewing the codebase or PRD, auditing progress against PLAN/PRD, or verifying a previous round.
+globs: ["docs/reviews/**/*.md", "docs/PLAN.md", "docs/CHANGELOG.md"]
+---
+
+# Conducting a review round
+
+Cursor has no `SKILL.md` format, so this mirrors `.claude/skills/review-round/SKILL.md`. Keep the
+two in step.
+
+Six rounds exist; each found a defect class the previous check could not see. **The fact-check is
+not optional** — every round whose output was checked needed correcting, and the last needed two
+passes, the second finding three errors created by the first.
+
+## Sequence
+
+1. **Scope.** State the commit. Read `docs/PLAN.md` and `docs/PRD.md` *before* the code — the
+   question is whether the code enforces what the documents claim.
+2. **Run the gates**, or declare their absence. `make check`, `uv run python -m tradipy demo`.
+   Coverage, case counts and mutation results you did not reproduce are documented claims, not
+   findings. Reviews here have been wrong by inheriting a number and repeating it as "confirmed".
+3. **Verify the previous round first.** Trace every claimed fix to a file and line. Expect partial
+   closures — F8's fix addressed one half and the whole was reported closed. Check the arithmetic
+   of your own tally; two successive counts of it were wrong.
+4. **Fresh finding prefix** (`F*` → `G*` → `H*`) so old citations stay unambiguous. Assign
+   severity. Reproduce by **execution or mutation** where possible; a finding you only read is
+   weaker and should say so.
+5. **Triage, per `CLAUDE.md` convention 8.** One-line fixable, no spec implication, no behaviour
+   change → fix it in the same change, one line in the review, no changelog entry and no
+   disposition. When unsure whether it is trivial, disposition it.
+6. **Route the rest.** Behaviour change → numbered decision in `docs/PLAN.md` *with rejected
+   alternatives* + `docs/CHANGELOG.md`. Code/PRD divergence → **raise in
+   `docs/CHANGELOG.md` under Unreleased, never settle in code.** Code or tooling → root
+   `CHANGELOG.md`. Documented open finding → leave it; it is deliberate and test-pinned.
+7. **Cite `PLAN.md` and `docs/CHANGELOG.md` by section, never by line** — a review that edits them
+   invalidates its own line numbers. This happened thirteen times in one round.
+8. **Fact-check adversarially, twice.** A separate pass verifies every citation, count and PRD
+   attribution; then repeat after correcting, because corrections introduce errors. Record the
+   error rate in the appendix — it is evidence about the method.
+9. **Wire it in.** `docs/README.md` review table, `docs/PLAN.md` companion table and Workstream 11
+   checklist. Add to the five-defect-classes table **only for a genuinely new class**; a new
+   population of an existing one is a subsection.
+
+## Two claims a review here must not make
+
+- **Not a cold read.** Every round so far ran with the repository in context, while each of the
+  first four defect classes was found by a fresh reader. Say so in the appendix.
+- **No unchecked pleasing conclusion.** "Nothing in the docs over-claims a capability" survived a
+  full draft and was false. The PLAN's own writeup says it: *the claim was pleasing, which is why
+  it survived a draft.*

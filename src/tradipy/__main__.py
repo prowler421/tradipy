@@ -280,9 +280,7 @@ def main(argv: list[str] | None = None) -> int:
     command = args.command or "demo"
     # `demo` reproduces PRD tables computed at 1% x $30,000, which is the experienced
     # preset; everything else follows §2.0's declared default.
-    mode: Mode = getattr(args, "mode", None) or (
-        "experienced" if command == "demo" else "beginner"
-    )
+    mode: Mode = getattr(args, "mode", None) or ("experienced" if command == "demo" else "beginner")
     cfg = Config.default(mode=mode)
 
     if command == "demo":

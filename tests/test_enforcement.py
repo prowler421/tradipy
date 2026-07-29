@@ -280,9 +280,7 @@ def test_an_unknown_mode_is_rejected_before_it_reaches_the_validator() -> None:
         ("max_consecutive_losses", "2", "5"),
     ],
 )
-def test_risk_settings_are_configurable_across_their_prd_range(
-    name: str, lo: str, hi: str
-) -> None:
+def test_risk_settings_are_configurable_across_their_prd_range(name: str, lo: str, hi: str) -> None:
     """PRD §2's "User-Configurable" column, made true.
 
     Through v0.0.1 these lived only in ``MODE_PRESETS`` with no registry entry, so §2's

@@ -190,11 +190,11 @@ def test_documented_baseline_size_matches_the_baseline_file() -> None:
 
 @pytest.mark.spec
 def test_documented_module_count_matches_the_package() -> None:
-    """"Eight library modules" must be however many there actually are.
+    """Validate "Eight library modules" count matches the package.
 
-    ``architecture.md`` and ``api.md`` both open with this count and both draw a dependency
-    graph beneath it. The graph is the thing a reader trusts; the count is what tells them
-    whether it is complete.
+    ``architecture.md`` and ``api.md`` both open with this count and draw a dependency
+    graph beneath it. The graph is what a reader trusts; the count tells them whether
+    it is complete.
     """
     actual = len(_library_modules())
     word = WORDS[actual]
@@ -221,12 +221,12 @@ def test_documented_module_count_matches_the_package() -> None:
 
 @pytest.mark.spec
 def test_the_re_exported_module_count_matches_package_all() -> None:
-    """"the seven library modules" refers to ``tradipy.__all__``, which excludes ``poc``.
+    """Validate "the seven library modules" count in __all__ excludes poc.
 
     Two different true counts sit two paragraphs apart in ``architecture.md``: eight modules
     exist, seven are re-exported, because ``poc`` is deliberately not part of what
-    ``import tradipy`` means. Both are correct and the pair is exactly the configuration that
-    invites someone to "fix" one of them.
+    ``import tradipy`` means. Both are correct; the pair exactly matches the configuration
+    that invites someone to "fix" one of them.
     """
     import tradipy
 
@@ -290,9 +290,7 @@ def test_every_registered_marker_is_documented_and_used() -> None:
     block = pyproject.split("markers = [", 1)[1].split("]", 1)[0]
     declared = set(re.findall(r'"(\w+):', block))
 
-    suite = "\n".join(
-        _text(p) for p in sorted((REPO / "tests").glob("test_*.py"))
-    )
+    suite = "\n".join(_text(p) for p in sorted((REPO / "tests").glob("test_*.py")))
     unused = sorted(m for m in declared if f"@pytest.mark.{m}" not in suite)
     assert not unused, f"markers declared but applied to no test: {unused}"
 

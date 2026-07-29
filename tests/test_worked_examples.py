@@ -234,9 +234,7 @@ def test_the_optional_sizing_constraints_actually_bind() -> None:
     assert both == 500 <= unconstrained
 
     # Ample resources leave the risk budget as the binding constraint.
-    ample = position_size(
-        entry, stop, CFG, buying_power=D("10000000"), adv_shares=D("10000000")
-    )
+    ample = position_size(entry, stop, CFG, buying_power=D("10000000"), adv_shares=D("10000000"))
     assert ample == unconstrained
 
 

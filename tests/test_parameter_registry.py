@@ -234,7 +234,7 @@ def test_the_source_lint_sees_every_way_of_spelling_the_constructor() -> None:
             'QUALIFIED = decimal.Decimal("0.15")',
             'MULTILINE = Decimal(',
             '    "0.15"',
-            ")",
+            ')',
             'IN_A_CALL = round(D("2.5"))',
             '"""A docstring mentioning Decimal("0.99") must not count."""',
             '# nor a comment saying Decimal("0.98")',
@@ -322,8 +322,7 @@ def test_code_originated_bounds_are_declared_as_such() -> None:
     undeclared = [
         name
         for name, p in PARAMS.items()
-        if "bounds: code" not in p.source
-        and not any(t in p.source for t in bounds_are_stated)
+        if "bounds: code" not in p.source and not any(t in p.source for t in bounds_are_stated)
     ]
     assert not undeclared, (
         "these cite a PRD section with no Bounds column but do not mark their bounds as "

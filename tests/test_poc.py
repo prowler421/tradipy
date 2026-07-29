@@ -206,11 +206,16 @@ def test_evaluate_reports_the_composite_score_when_asked(
             "evaluate",
             *EXPERIENCED,
             *BULL_FLAG_ARGS,
-            "--rvol", "20",
-            "--pct-change", "50",
-            "--float-shares", "0",
-            "--premarket-volume", "1000000",
-            "--catalyst", "confirmed",
+            "--rvol",
+            "20",
+            "--pct-change",
+            "50",
+            "--float-shares",
+            "0",
+            "--premarket-volume",
+            "1000000",
+            "--catalyst",
+            "confirmed",
         ]
     )
     out = capsys.readouterr().out

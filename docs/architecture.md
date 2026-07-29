@@ -62,8 +62,10 @@ gate) its polarity. The registry exists because the most expensive defect the PR
 found was a single quantity expressed in more than one place, where the copies drifted apart.
 
 The rule the module enforces: **a threshold is defined here exactly once, and every consumer
-reads it by name.** No numeric literal for a registered threshold may appear elsewhere; the
-registry test enforces the same discipline against the PRD prose.
+reads it by name.** No numeric literal for a registered threshold may appear elsewhere in the
+package; the registry test enforces the same discipline against the PRD prose. Its scope is
+stated and narrower than the rule: `src/tradipy/*.py` non-recursively, skipping `params.py` and
+`__init__.py`, exempting undistinctive values, and not covering `scripts/`.
 
 `params` also holds:
 

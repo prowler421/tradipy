@@ -56,7 +56,10 @@ scripts/            # maintenance helpers (e.g. regen the registry baseline)
 
 1. **One definition per threshold.** A registered threshold lives once in `params.PARAMS`
    and is read by name. No literal for a registered threshold anywhere else — the registry
-   test enforces this against the PRD prose as well as the code.
+   test enforces this against the PRD prose as well as the code, **within its stated scope**:
+   the lint walks `src/tradipy/*.py` non-recursively, skips `params.py` and `__init__.py`, and
+   exempts an `_UNDISTINCTIVE` value set. `scripts/` is not scanned. State the rule with that
+   scope wherever it appears; an unqualified version of it is what F8 was about.
 2. **Polarity, not the call site, decides rounding.** In `gates.py` this means
    `_rounded(cfg, value, *governed_by)`, which reads the direction from the registry. Do not
    import `Polarity` into `gates.py` and do not name a member at a call site: that gives
@@ -79,6 +82,14 @@ scripts/            # maintenance helpers (e.g. regen the registry baseline)
 7. **A bound the PRD does not state must say so.** `Param.source` marks code-originated
    ranges `(bounds: code)`. §2, §3.1.1, §3.4, §20.10 and §20.14 have no Bounds column, so
    their `lo`/`hi` are this module's judgement, not spec.
+8. **Fix trivial findings; do not disposition them.** A review finding that is fixable in one
+   line, has no spec implication and changes no behaviour gets **fixed in the same change**,
+   listed in one line in the review, and gets no `docs/CHANGELOG.md` entry, no decision, and no
+   disposition block. Six rounds of review machinery exist for defects that recur or that
+   require a spec call; a heading that says "four" above a list of six needs neither, and
+   putting it through the full apparatus costs more than the defect. **The judgement is the
+   convention's weak point** — when unsure whether a finding is trivial, disposition it. A
+   finding that turns out to recur, or to have a behaviour consequence, was never trivial.
 
 ## Coding standards
 

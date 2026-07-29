@@ -10,6 +10,50 @@ Corrections and reversals to [PRD.md](PRD.md), extracted so the spec itself can 
 
 ---
 
+## Unreleased — raised by REVIEW-2026-07-29, not yet dispositioned
+
+Driven by [REVIEW-2026-07-29.md](REVIEW-2026-07-29.md), a verification round over package v0.1.0. **No rule in the PRD changes here, and no threshold moves.** The round's job was to check that v1.3.2's twelve findings were really closed — **ten** are, against file and line; F12 is correctly still open because leaving it open was its disposition; and **F8 is not closed**, its no-literal half standing unqualified in all six places it appears, `CLAUDE.md` among them — and its own findings are either small code fixes or the three spec questions below. They are recorded now, unresolved, because [CLAUDE.md](../CLAUDE.md) requires a divergence between code and PRD to be raised rather than settled in code, and because a finding that lives only in a dated review file is one refactor from being lost.
+
+### Spec questions — open
+
+| Section | The question | Why it is a spec question, not a fix |
+|---------|--------------|-------------------------------------|
+| §7 (**G2**) | `daily_loss_pct` is marked **No (NON-BYPASSABLE)** in §7's Bypassable column, has a legal range in code (D27) and a `HARD_CAPS` check — and **no enforcement point**. Nothing in the package tracks realized P&L. Should its §7 *Enforcement Point* cell be qualified, e.g. "Continuous (1 sec) — Phase 6"? | §7's form is *condition → enforcement point → action*, and this row names an enforcement point that does not exist. Qualifying the cell makes the deferral visible in the normative text that asserts the guarantee; leaving §7 alone and noting it only in `params.py` keeps an unqualified non-bypassable claim in the spec. Either way it is an edit to a row the PRD calls hard, which is not a code decision. Note the shape: F6 was a cap guarding a constant that could not vary; this is a cap guarding a value nothing reads. **Scope correction:** the review's first draft claimed this of four limits, having read §2's configurability column instead of §7's Bypassable column — `max_open_positions`, `max_consecutive_losses` and the two drawdown limits are all marked bypassable by §7 itself, so their absence from code is unremarkable |
+| §21.1 (**G4**) | §21.1 enumerates the fixture types and has **no row for the enforcement fixtures** — the check for the fifth defect class, 17 functions in `tests/test_enforcement.py`, named in `CLAUDE.md` convention 6 and in the PLAN's five-class table. Should it gain one? | Because §19 already ticks a row for them (`PRD.md:1898`), the two sections disagree about what the testing strategy contains: the status table credits a fixture type the strategy table does not enumerate. That is the v1.2 class between two sections of one document. The four §21.1 rows are the checks for defect classes one through four; the fifth class's check is missing from the section that catalogues them and present in the section that scores them |
+| §2 (**G9**) | `premarket_trading_enabled` (D11, A17) has no home in code because **`Param.default` is `Decimal`-typed and the registry cannot represent a boolean**. Does the registry gain a type, or does the flag live outside it? | If it lives outside, §2's "user-configurable" column means two different things depending on the row, and the registry stops being the single source of truth for tunables. If it goes in, `Config.values`, the AST lint and the frozen baseline all have to accommodate a non-`Decimal`. `impact_coefficient` (D22) and the §2.1 premarket RVOL `× 0.05` coefficient are also unregistered, but neither has this excuse — both are numbers and should be registered when §18.7's arithmetic is implemented at Phase 4b |
+
+### Decided
+
+| ID | Decision |
+|----|----------|
+| **D29** | **Phase 3 (scanner) is gated on Phase 2a**, not only Phase 2. PRD §12.1's Phase 3 dependency cell is amended from `2` to `2a (gate passed)`. §12.1 as written permitted building the scanner to §4.2's filter set before knowing the set is obtainable from any provider at any price, which is the waste §5.5 spends three paragraphs on; a negative Q1 rewrites §4 and therefore the scanner's input contract. Cost, stated because it is real: Phase 3 now sits behind a weeks-long external dependency, and if the spike stalls Phase 3 stalls. That is intended — a stalled Phase 3 is cheaper than a rewritten one. Full rationale and rejected alternatives in [PLAN](PLAN.md) |
+
+### Convention added, and the reason
+
+`CLAUDE.md` gains convention 8: **a finding fixable in one line, with no spec implication and no behaviour change, gets fixed in the same change and one line in the review — no CHANGELOG entry, no decision, no disposition block.** The six-round review apparatus exists for defects that recur or need a spec call. A heading reading "four" above a list of six needs neither, and this review's first two drafts gave it the same treatment as an unenforced non-bypassable risk limit. The convention names its own weak point: the triviality judgement. When unsure, disposition it — a finding that turns out to recur was never trivial.
+
+Applied immediately to G8, which is therefore **fixed rather than logged**: all six unqualified statements of the no-literal rule now carry the lint's actual scope (`src/tradipy/*.py` non-recursive, skipping `params.py` and `__init__.py`, exempting undistinctive values, not covering `scripts/`) in `CLAUDE.md`, `CONTRIBUTING.md`, `params.py`, `api.md`, `architecture.md` and `.cursor/rules/tradipy.mdc`; `tests/README.md`'s heading reads six; `test_boundary.py:496` reads twelve.
+
+### Corrections to the PLAN
+
+| Change | Why |
+|--------|-----|
+| The closing line of the five-defect-classes section read *"The honest extrapolation is that a fifth class exists. It will not be found by tightening any of the four checks above."* Replaced with a forward-looking statement about the sixth | Stale by one round, and it contradicted a paragraph four lines above it that already recorded the fifth class as found and named its check. Exactly the v1.2 class — a claim restated in two places with one updated — in the document whose own table defines that class. Found while wiring in this review, not by the review |
+| Added a subsection recording that the fifth defect class has a **second population**: a *parameter* registered and read by nothing, as against a *mechanism* built and not called | 17 of 47 registered thresholds have no reader outside `params.py`, and all but two of those have none at all; `select_flagpole`'s §3.2 qualification predicate has no shipped caller; `is_whole_tick` is called only from tests. `tests/test_enforcement.py` cannot see any of them, because its rule ranges over guarantees *the code makes* and these are guarantees the code has not reached. The gap looks identical from inside the check built for the first population, which is the whole point of recording it |
+| New risk row: **the gap between *registered* and *enforced*** | The registry is the artifact this project points at when asked whether a rule is implemented, and it answers "registered". That is the same conflation as F4 |
+
+### Recorded against this round itself
+
+The review's first draft was adversarially fact-checked before it shipped, then fact-checked again after correction. Both passes were needed.
+
+**First pass — nineteen substantive errors**, five in a finding's headline claim. G2 overstated its scope fourfold by reading §2's configurability column instead of §7's *Bypassable* column, two lines from the claim it was making. "All twelve F-findings closed" ignored that F12's disposition was to leave them open. G8 cited a `params.py` docstring that does not mention the lint, and missed five further live instances of the rule it was about. G3 undercounted the spec's reject-code namespace. §20.9 was classified absent on a standard §20.14 was simultaneously credited by. A further thirteen citations were stale `PLAN.md:` line numbers, invalidated by this round's own PLAN edit — now replaced by section names for that reason.
+
+**Second pass — nine more, three of them created by the first pass.** The F-finding count went 12 → 11 → **10**: "eleven closed plus F12 open" accounts for all twelve and leaves no slot for F8, three lines above a table marking F8 not closed. G3's correction asserted that three enum members were code-originated; `PRD.md:241` names two of them, and `rejects.py:35-39` already marks the third exactly as the finding demanded. G8's correction credited three doc ranges to the no-literal rule that are about a different over-claim entirely, so the rule is unqualified in six of six places rather than "the rest." G4's stated *reason* was falsified by a line the review's own F7 row cites: §19 already ticks an enforcement-fixtures row, which makes the finding better — §19 and §21.1 disagree about what the testing strategy contains.
+
+Two errors were **inherited verbatim from REVIEW-2026-07-28 and repeated under the word "confirmed"**: the non-degenerate rounding fixture is not "at the end of `test_boundary.py`", and the twelve surviving mutations are eleven according to the block's own header comment. Recorded here rather than quietly corrected, because between them these two passes are the most direct evidence yet for what Workstream 11 has asked for across six rounds. A verification round inherits the previous round's idea of where to look; a correction pass inherits the correction's. **Agents reading the same repository do not compose into a cold read, however many of them there are.**
+
+---
+
 ## v1.3.2 — package v0.1.0
 
 Driven by [REVIEW-2026-07-28.md](REVIEW-2026-07-28.md), the first review of the **code** rather than of this document. Three of these change trading behaviour and are recorded as decisions D26–D28 in [PLAN](PLAN.md).

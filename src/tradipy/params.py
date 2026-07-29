@@ -11,8 +11,10 @@ raised to 2.5 in two sections while all three setup criteria still read `2 ×`.
 
 The rule this module enforces is therefore: **a threshold is defined here exactly once,
 and every consumer reads it by name.** No numeric literal for a registered threshold may
-appear anywhere else in the codebase. `tests/test_parameter_registry.py` enforces the same
-discipline against the prose in docs/PRD.md.
+appear anywhere else in the package. `tests/test_parameter_registry.py` enforces this, and
+the same discipline against the prose in docs/PRD.md — within a stated scope: the lint walks
+`src/tradipy/*.py` non-recursively, skips this module and `__init__.py`, and exempts an
+undistinctive-value set. `scripts/` is not scanned.
 
 Each parameter carries its **polarity** (PRD §20.13) where it is used as a gate threshold,
 because rounding direction is a property of the constraint, not of the call site. As of

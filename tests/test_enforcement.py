@@ -82,7 +82,9 @@ def _with_flipped_polarity(base: Config, param_name: str) -> Config:
     coincidence. ``PARAMS`` is read-only, so the flip goes through the accessor — which is
     also the only thing the gates consult.
     """
-    flipped = Polarity.MINIMUM if base.polarity(param_name) is Polarity.MAXIMUM else Polarity.MAXIMUM
+    flipped = (
+        Polarity.MINIMUM if base.polarity(param_name) is Polarity.MAXIMUM else Polarity.MAXIMUM
+    )
 
     class Flipped(Config):
         def polarity(self, name: str) -> Polarity:

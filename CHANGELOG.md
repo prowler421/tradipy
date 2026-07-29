@@ -9,9 +9,60 @@ All notable changes to the tradipy **package** are documented here. This file fo
 
 ## [Unreleased]
 
+### Added
+
+- **`tests/test_documentation.py`** — asserts that counts stated in prose match the code:
+  registered parameters, frozen-baseline entries, library-module count, the re-exported count in
+  `__all__`, every `Reject` member being documented, and every declared pytest marker being both
+  documented and applied. The v1.2 defect class (a quantity stated twice, one copy updated) was
+  solved for thresholds by the registry and unsolved for the documentation's own numbers; it had
+  recurred by v0.1.0 in `tests/README.md`. Verified by injecting three mutations and confirming
+  each fails.
+- **`scripts/check_links.py`** plus `make links`, a `check-links` pre-commit hook and a CI step —
+  validates every relative Markdown link and heading anchor in the repository. Stdlib-only and
+  offline by design. It found a broken citation in this file on its first run.
+- **Two agent skills**, `.claude/skills/guarantee-test/` and `.claude/skills/review-round/`,
+  with mirrored Cursor rules in `.cursor/rules/`. They encode convention 6 (write the test that
+  performs the violation a guarantee forbids) and the review procedure including the mandatory
+  adversarial fact-check.
+- **`docs/README.md`** — documentation index, stating which documents are authoritative and how
+  the two changelogs differ.
+- **`.python-version`** pinning 3.13, and **`.github/dependabot.yml`** for GitHub Actions only —
+  deliberately not for pip/uv, since the runtime is stdlib-only and `uv.lock` exists precisely
+  so pins do not move on their own.
+- **Coverage floor** of 95% (`fail_under`), below the ~99% measured, so the gate fails on
+  collapse rather than on the next honest commit. The floor is not the claim.
+
+### Changed
+
+- **`docs/` reorganized**: the five review documents moved to `docs/reviews/`. They are the only
+  part of the documentation set that grows by one file per round. All 120 relative links updated
+  and verified by the new link checker; review filenames left as they are, because
+  `REVIEW-v1.2` versus `REVIEW-2026-07-28` tells a reader whether a round examined the
+  specification or the code.
+- **`make check` now includes `make links`**, and `make docs` shows the index rather than a bare
+  directory listing.
+- **`CLAUDE.md` convention 1 and five other statements of the no-literal rule** now carry the
+  registry lint's actual scope (`src/tradipy/*.py` non-recursive, skipping `params.py` and
+  `__init__.py`, exempting undistinctive values, `scripts/` not scanned). The unqualified form
+  was finding F8, reported closed and not closed.
+- **`CLAUDE.md` gains convention 8**: a finding fixable in one line, with no spec implication and
+  no behaviour change, gets fixed in the same change rather than dispositioned. Six rounds of
+  review machinery exist for defects that recur or need a spec call.
+- **`docs/development.md`** documents the manual mutation protocol. It is *not* automated, and
+  says so — a mutation harness whose own correctness is undemonstrated is a mechanism built and
+  not wired.
+
+### Fixed
+
+- `tests/README.md` heading read "Four open spec discrepancies" above a list of six.
+- `tests/test_boundary.py` said eleven surviving rounding mutations where `tests/README.md`, this
+  file and `docs/reviews/REVIEW-2026-07-28.md` all say twelve.
+- A stale citation in this file pointing at the pre-move review path.
+
 ## [0.1.0] - 2026-07-29
 
-Driven by [`docs/REVIEW-2026-07-28.md`](docs/REVIEW-2026-07-28.md), the first review of the
+Driven by [`docs/reviews/REVIEW-2026-07-28.md`](docs/reviews/REVIEW-2026-07-28.md), the first review of the
 **code** rather than of the specification. It found four guarantees the documentation asserts
 and the code did not enforce, all reproduced by execution. **Three of the four fixes change
 behaviour**, and one changes it for every caller: `Config.default()` is now `beginner` mode.

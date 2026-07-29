@@ -1,6 +1,6 @@
 # Review of the Source Architect Prompt
 
-**Subject:** [prompts/ross_cameron_trading_system.pdf](../prompts/ross_cameron_trading_system.pdf) — *"Quantitative Trading System Architect Prompt: Reverse-Engineering Ross Cameron's Discretionary Momentum Methodology," Revised Edition* (7 pages, ~2,350 words)
+**Subject:** [prompts/ross_cameron_trading_system.pdf](../../prompts/ross_cameron_trading_system.pdf) — *"Quantitative Trading System Architect Prompt: Reverse-Engineering Ross Cameron's Discretionary Momentum Methodology," Revised Edition* (7 pages, ~2,350 words)
 
 **Reviewed:** 2026-07-28 · **Reviewer note:** this is a critique of the *prompt*, not of the PRD it produced. Several defects found in PLAN.md and PRD.md trace directly back to instructions here, and are attributed below.
 

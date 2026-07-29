@@ -1,6 +1,6 @@
 # Full Review — PRD v1.3, PLAN, and the Source Prompt
 
-**Scope:** [PRD.md](PRD.md) (2,200 lines at the time of review; 2,280 today) · [PLAN.md](PLAN.md) (323 then) · [CHANGELOG.md](CHANGELOG.md) (104 then) · [PROMPT-REVIEW.md](PROMPT-REVIEW.md) (215 then) · [REVIEW-v1.2.md](REVIEW-v1.2.md) (233) · [prompts/ross_cameron_trading_system.pdf](../prompts/ross_cameron_trading_system.pdf)
+**Scope:** [PRD.md](../PRD.md) (2,200 lines at the time of review; 2,280 today) · [PLAN.md](../PLAN.md) (323 then) · [CHANGELOG.md](../CHANGELOG.md) (104 then) · [PROMPT-REVIEW.md](PROMPT-REVIEW.md) (215 then) · [REVIEW-v1.2.md](REVIEW-v1.2.md) (233) · [prompts/ross_cameron_trading_system.pdf](../../prompts/ross_cameron_trading_system.pdf)
 
 **Reviewed:** 2026-07-28 · **Purpose:** consistency clearance before coding begins.
 
@@ -167,7 +167,7 @@ All six findings are resolved. Corrections and additions to this review are reco
 
 | # | Finding | Resolution |
 |---|---------|-----------|
-| 2.1 | BLOCKING — `ceil` vs `floor` in §3.1.3 | Fixed as diagnosed. §20.13 now splits gate rounding by **constraint polarity** (minimums up, maximums down) rather than flipping D19; §3.1.3 uses `floor_to_tick` on both gates. A one-tick clamp was added — see §5.2. Recorded as [PLAN](PLAN.md) **D25**, PRD **A25**. §21.1 gains a rounding-direction fixture row asserting derivation rather than value |
+| 2.1 | BLOCKING — `ceil` vs `floor` in §3.1.3 | Fixed as diagnosed. §20.13 now splits gate rounding by **constraint polarity** (minimums up, maximums down) rather than flipping D19; §3.1.3 uses `floor_to_tick` on both gates. A one-tick clamp was added — see §5.2. Recorded as [PLAN](../PLAN.md) **D25**, PRD **A25**. §21.1 gains a rounding-direction fixture row asserting derivation rather than value |
 | 2.2 | §9.2 count | `Alert` and `JournalEntry` added; thirteen delivered, all thirteen appear in the §9.3 flow. Typing `Alert` was the right call for the reason given — §21.6 already specifies severity routing, Sev-1 pinning, and acknowledgement behaviourally, none of which is implementable against an undefined payload |
 | 2.3 | D-id graph one-way | PRD now cites the D-id wherever it states a decided value, **and carries the rejected alternative inline** for every behaviour-changing decision. The reference alone would not have solved the problem this finding describes: an implementer who does not follow the link is exactly the reader at risk. §13's preamble states the convention |
 | 2.4 | Sequencing table mixes schemes | Phase 2a moved out of the workstream-numbered table into a separate concurrent-work table, which also gave the §21.1 fixture suite a row it did not previously have anywhere in the plan |

@@ -1887,14 +1887,14 @@ No real money should be committed until, at minimum: backtest and paper trading 
 | Independent review | ☐ **outstanding** |
 | Worked examples recomputed | ✓ v1.1 (four arithmetic errors fixed) |
 | Cross-section consistency sweep | ✓ v1.2 (see note below) |
-| Independent review of v1.2 | ✓ [REVIEW-v1.2.md](REVIEW-v1.2.md) — 23 defects; addressed in v1.3 |
+| Independent review of v1.2 | ✓ [REVIEW-v1.2.md](reviews/REVIEW-v1.2.md) — 23 defects; addressed in v1.3 |
 | Spread/separation joint calibration | ✓ v1.3 (§3.1.3), with the worst-case invariant now a fixture |
-| Independent review of v1.3 | ✓ [REVIEW-v1.3.md](REVIEW-v1.3.md) — 6 defects, one blocking (rounding direction); addressed in v1.3.1 |
+| Independent review of v1.3 | ✓ [REVIEW-v1.3.md](reviews/REVIEW-v1.3.md) — 6 defects, one blocking (rounding direction); addressed in v1.3.1 |
 | Independent review of v1.3.1 | ☐ **outstanding** — no round has yet been run by a reader with no prior context |
 | Machine-checkable example fixtures | ✓ built and green (`tests/test_worked_examples.py`, `tests/test_poc.py`; §3.2 driven from a bar series via §20.4) |
 | Parameter registry check | ✓ built and green (`tests/test_parameter_registry.py`, `tradipy.params`) |
 | Rounding-direction assertions | ✓ built and green (`tests/test_boundary.py` polarity marks; direction is read from the registry, not named at the call site) |
-| Independent review of the **code** | ✓ [REVIEW-2026-07-28.md](REVIEW-2026-07-28.md) — four unenforced guarantees, all reproduced by execution; fixed in package v0.1.0. See [CHANGELOG](CHANGELOG.md) v1.3.2 |
+| Independent review of the **code** | ✓ [REVIEW-2026-07-28.md](reviews/REVIEW-2026-07-28.md) — four unenforced guarantees, all reproduced by execution; fixed in package v0.1.0. See [CHANGELOG](CHANGELOG.md) v1.3.2 |
 | Enforcement fixtures (fifth defect class) | ✓ `tests/test_enforcement.py` — for each documented guarantee, the test that performs the violation it forbids |
 
 **Four defect classes, not one.** The self-assessment below has been wrong in a different way each round, and the pattern is worth stating plainly because it bears on how much the checkmarks are worth:
@@ -2222,9 +2222,9 @@ Earlier revisions covered secrets handling only and called it security. The thre
 | 6 | Simplest Day Trading Strategy | https://www.warriortrading.com/simplest-day-trading-strategy/ |
 | 7 | IBKR Market Data Pricing | https://www.interactivebrokers.com/en/pricing/market-data-pricing.php |
 | 8 | Architect Prompt (Revised) | prompts/ross_cameron_trading_system.pdf |
-| 9 | Critique of the architect prompt | [docs/PROMPT-REVIEW.md](PROMPT-REVIEW.md) — where PRD structure deliberately diverges from the prompt, the reasoning is recorded there |
-| 10 | Independent review of v1.2 | [docs/REVIEW-v1.2.md](REVIEW-v1.2.md) — the defect list v1.3 responds to |
-| 11 | Independent review of v1.3 | [docs/REVIEW-v1.3.md](REVIEW-v1.3.md) — the defect list v1.3.1 responds to |
+| 9 | Critique of the architect prompt | [docs/PROMPT-REVIEW.md](reviews/PROMPT-REVIEW.md) — where PRD structure deliberately diverges from the prompt, the reasoning is recorded there |
+| 10 | Independent review of v1.2 | [docs/REVIEW-v1.2.md](reviews/REVIEW-v1.2.md) — the defect list v1.3 responds to |
+| 11 | Independent review of v1.3 | [docs/REVIEW-v1.3.md](reviews/REVIEW-v1.3.md) — the defect list v1.3.1 responds to |
 | 12 | Decisions log | [docs/PLAN.md](PLAN.md) — D-ids cited throughout this document; the authority on how each decision was reached |
 | 13 | Revision history | [docs/CHANGELOG.md](CHANGELOG.md) — superseded rules and the reasoning behind each reversal |
 

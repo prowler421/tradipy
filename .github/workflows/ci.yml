@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   # These steps are `make check` split up so a failure names itself in the UI. Keep the two
-  # in step: `make check` runs lint, format check, typecheck, test — in that order.
+  # in step: `make check` runs lint, format check, typecheck, links, test — in that order.
   check:
     name: lint · format · typecheck · test
     runs-on: ubuntu-latest
@@ -43,6 +43,11 @@ jobs:
 
       - name: Type check (BasedPyright)
         run: uv run basedpyright
+
+      # Relative Markdown links and heading anchors. Cheap, and it fails on the class of
+      # defect that three review rounds found by reading citations by hand.
+      - name: Check documentation links
+        run: uv run python scripts/check_links.py
 
       - name: Test with coverage
         run: uv run pytest --cov=tradipy --cov-report=term-missing --cov-report=xml

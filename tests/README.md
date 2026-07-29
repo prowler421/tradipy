@@ -21,6 +21,19 @@ uv sync        # or, with pip: pip install -e . --group dev   (pip 25.1+)
 uv run pytest
 ```
 
+Three markers are declared in `pyproject.toml` and `--strict-markers` is on, so a typo fails
+rather than silently doing nothing:
+
+| Marker | Asserts |
+|---|---|
+| `spec` | a rule stated normatively in `docs/PRD.md` |
+| `boundary` | behaviour at a filter's own limit, not at an illustrative value |
+| `polarity` | a rounding direction that follows from constraint polarity (PRD §20.13) |
+
+`test_documentation.py` asserts the reverse of `--strict-markers`: that every declared marker is
+documented in this table *and* applied to at least one test. A marker declared, described as
+meaningful, and used nowhere is a mechanism built and not wired.
+
 Everything is `Decimal`. Binary float cannot represent `$0.01`, and almost every rule here
 compares a price against a tick boundary, so float would produce comparison errors that look
 like logic bugs (PRD §9.2).
@@ -36,6 +49,7 @@ like logic bugs (PRD §9.2).
 | `test_enforcement.py` | **Unenforced guarantee** — a rule that is stated, has a mechanism, is believed to be enforced, and is not | v0.0.1 code review: four at once. A mutable `MODE_PRESETS` read live past a "non-bypassable" cap; a registry lint blind to 7 of 29 parameters; `Config(values)` skipping range validation under a docstring reading *"every construction path validates; there is no other"*; and rounding direction decided at the call site |
 | `test_computations.py` | The three PRD §20 rules that need no feed — §20.4 flagpole geometry, §20.10 composite score, §20.14 quote validity | All three were fully specified and entirely absent. §20.14 had a registered parameter and two `Reject` members that no code returned |
 | `test_poc.py` | A self-checking demo that has stopped checking | `python -m tradipy demo` is what people will run instead of reading the code, so its self-check needs its own test — including `test_demo_self_check_would_catch_spec_drift`, which asserts the check can still fail |
+| `test_documentation.py` | **Consistency, applied to the documentation's own counts** — a number stated in prose that no longer matches the code | The registry solved this for thresholds; nothing solved it for the counts the docs quote about themselves. It recurred at v0.1.0 inside this very file: the heading below read "Four open spec discrepancies" above a list of six, while a fixture comment said eleven surviving mutations where three other documents said twelve |
 
 Assertions are written against the **derivation**, not the value. `assert cap == Decimal("0.01")`
 passes under a wrong rounding rule that happens to agree at that input;

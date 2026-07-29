@@ -39,3 +39,14 @@ repos:
         types: [python]
         pass_filenames: false
         require_serial: true
+
+      # Relative Markdown links and heading anchors. Stdlib-only and offline by design — a
+      # network fetch in a pre-commit hook is a flake, not a check. Catches the class of defect
+      # three review rounds found by reading citations one at a time.
+      - id: check-links
+        name: markdown links (relative targets and anchors)
+        entry: uv run python scripts/check_links.py
+        language: system
+        files: \.md$
+        pass_filenames: false
+        require_serial: true

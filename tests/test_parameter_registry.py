@@ -6,8 +6,9 @@ three setup criteria still read ``2 ×``; §15 carried a scaling-in rule §7.1.1
 
 Two checks here:
 
-1. **Code**: no registered threshold may appear as a numeric literal in ``src/`` outside the
-   registry itself.
+1. **Code**: no registered threshold may appear as a numeric literal in ``src/tradipy/`` or
+   ``scripts/`` outside the registry itself. See :func:`lint_roots` for the exact scope, and
+   for why ``scripts/`` was added to it.
 2. **Prose**: numeric literals in docs/PRD.md that match a registered default are collected
    and compared against a committed baseline. Some are legitimate — worked examples must
    state numbers — so the lint's job is to fail on *new* occurrences, not to demand zero.
@@ -41,7 +42,17 @@ from tradipy.params import HARD_CAPS, MODE_PRESETS, PARAMS
 REPO = Path(__file__).resolve().parents[1]
 PRD = REPO / "docs" / "PRD.md"
 SRC = REPO / "src" / "tradipy"
+SCRIPTS = REPO / "scripts"
 BASELINE = Path(__file__).parent / "registry_baseline.json"
+
+#: Exempt from the code lint inside ``src/tradipy/`` only. ``params.py`` is the definition the
+#: lint enforces against; ``__init__.py`` there only re-exports it.
+#:
+#: Deliberately **not** applied to ``scripts/``. Exempting a filename is exempting whatever
+#: anyone later puts in it, and ``scripts/spike2a/__init__.py`` is a package marker in a tree
+#: whose whole purpose is to handle registered thresholds. An exemption that is empty today is
+#: still an exemption.
+EXEMPT_IN_SRC = ("params.py", "__init__.py")
 
 #: Sections whose whole purpose is to state values. Definition tables are exempt: that is
 #: where a threshold is *supposed* to appear as a literal.
@@ -188,11 +199,48 @@ def _decimal_literals_in(text: str) -> list[tuple[int, str]]:
     return found
 
 
-@pytest.mark.spec
-def test_no_registered_literal_hardcoded_in_source() -> None:
-    """Every threshold in ``src/`` must be read from the registry by name.
+def lint_roots() -> list[Path]:
+    """Every file the code lint reads, in a stable order.
 
-    ``params.py`` is exempt — it is the definition. Everything else must go through it.
+    ``src/tradipy/`` is flat, so a non-recursive glob covers it. ``scripts/`` is **not** flat —
+    PHASE-2A-SPIKE.md §5 puts spike code in ``scripts/spike2a/`` — so it is walked recursively.
+
+    **Why ``scripts/`` is in scope.** It was not until the Phase 2a spike. The lint globbed
+    ``src/tradipy/*.py`` and nothing else, and PHASE-2A-SPIKE.md §8 recorded the consequence: the
+    spike's central task is measuring whether ``max_spread_r`` is calibrated, its code lives in
+    ``scripts/spike2a/``, and the one guardrail keeping a second definition of ``max_spread_r``
+    out of the code that measures ``max_spread_r`` was a sentence in a document rather than a
+    test. A second implementation of the cap arithmetic would silently absorb any disagreement
+    between the shipped threshold and the measured one — which is the measurement the spike
+    exists to make.
+
+    Note what this does *not* extend to: ``tests/`` is still unscanned, and deliberately so.
+    Fixtures must state literals — asserting a derivation against a value the registry supplied
+    proves nothing (convention 4).
+    """
+    files = [p for p in SRC.glob("*.py") if p.name not in EXEMPT_IN_SRC]
+    files += list(SCRIPTS.rglob("*.py"))
+    return sorted(files)
+
+
+def _label(path: Path) -> str:
+    """Repo-relative path where possible, else the last two components.
+
+    The fallback is for :func:`test_the_lint_catches_a_planted_literal`, which plants its
+    specimen in a ``tmp_path`` outside the repository.
+    """
+    try:
+        return path.relative_to(REPO).as_posix()
+    except ValueError:
+        return "/".join(path.parts[-2:])
+
+
+def _hardcoded_offenders(paths: list[Path]) -> list[str]:
+    """Registered-threshold literals found in ``paths``, labelled repo-relative.
+
+    Split out from the test so the roots and the detection can be asserted separately, and
+    labelled by relative path rather than ``path.name`` because ``scripts/`` has
+    subdirectories: two files called ``sample.py`` would otherwise report identically.
     """
     literals: dict[str, str] = {}
     for name, p in PARAMS.items():
@@ -201,16 +249,73 @@ def test_no_registered_literal_hardcoded_in_source() -> None:
         for form in source_literal_forms(p.default):
             literals.setdefault(form, name)
 
-    offenders = [
-        f"{path.name}:{line} hardcodes {lit} (= {literals[lit]})"
-        for path in sorted(SRC.glob("*.py"))
-        if path.name not in ("params.py", "__init__.py")
+    return [
+        f"{_label(path)}:{line} hardcodes {lit} (= {literals[lit]})"
+        for path in paths
         for line, lit in _decimal_literals_in(path.read_text(encoding="utf-8"))
         if lit in literals
     ]
+
+
+@pytest.mark.spec
+def test_no_registered_literal_hardcoded_in_source() -> None:
+    """Every threshold in ``src/tradipy/`` and ``scripts/`` must be read from the registry.
+
+    ``params.py`` is exempt — it is the definition. Everything else must go through it.
+    """
+    offenders = _hardcoded_offenders(lint_roots())
     assert not offenders, (
         "registered thresholds must be read from tradipy.params, not hardcoded:\n  "
         + "\n  ".join(offenders)
+    )
+
+
+@pytest.mark.spec
+def test_the_lint_scans_scripts_recursively() -> None:
+    """Guard on the guard: ``scripts/`` is in scope, and subdirectories are not skipped.
+
+    Asserting the roots rather than the result, because the result is (correctly) clean and a
+    clean result is exactly what a lint reports when it is looking at nothing. This is the
+    ``Config.polarity()`` shape — a mechanism that exists, is documented as load-bearing, and
+    is wired to nothing — and the reason PHASE-2A-SPIKE.md §8 called the extension a
+    prerequisite rather than an improvement.
+    """
+    roots = lint_roots()
+    assert SCRIPTS.is_dir(), "scripts/ must exist for this check to mean anything"
+
+    scanned = {p.relative_to(REPO) for p in roots}
+    on_disk = {p.relative_to(REPO) for p in SCRIPTS.rglob("*.py")}
+    assert on_disk, "no scripts found; the glob or the layout has changed"
+    assert on_disk <= scanned, f"scripts/ files the lint cannot see: {sorted(on_disk - scanned)}"
+
+    nested = [p for p in on_disk if len(p.parts) > 2]
+    assert nested, (
+        "expected at least one script in a subdirectory (scripts/spike2a/) to prove the walk "
+        "is recursive; if the layout has flattened, this check is no longer meaningful and the "
+        "rglob in lint_roots() is no longer load-bearing"
+    )
+
+
+@pytest.mark.spec
+def test_the_lint_catches_a_planted_literal(tmp_path: Path) -> None:
+    """Guard on the guard: the detection half fires, on a file in a subdirectory.
+
+    :func:`test_the_lint_scans_scripts_recursively` proves the lint *looks* at ``scripts/``;
+    this proves that looking finds something. Both are needed — the roots could be right while
+    the offender construction silently drops every hit, which is the failure mode the
+    ``normalize()`` blind spot actually had.
+    """
+    planted = tmp_path / "spike2a" / "q4_spreads.py"
+    planted.parent.mkdir(parents=True)
+    planted.write_text(
+        'from decimal import Decimal\n\nMAX_SPREAD_R = Decimal("0.15")\n', encoding="utf-8"
+    )
+
+    offenders = _hardcoded_offenders([planted])
+    assert len(offenders) == 1, f"expected the planted literal to be caught, got {offenders}"
+    assert "max_spread_r" in offenders[0], offenders[0]
+    assert "spike2a/q4_spreads.py:3" in offenders[0].replace("\\", "/"), (
+        f"offender must be labelled by relative path, not bare filename: {offenders[0]}"
     )
 
 

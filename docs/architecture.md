@@ -64,8 +64,10 @@ found was a single quantity expressed in more than one place, where the copies d
 The rule the module enforces: **a threshold is defined here exactly once, and every consumer
 reads it by name.** No numeric literal for a registered threshold may appear elsewhere in the
 package; the registry test enforces the same discipline against the PRD prose. Its scope is
-stated and narrower than the rule: `src/tradipy/*.py` non-recursively, skipping `params.py` and
-`__init__.py`, exempting undistinctive values, and not covering `scripts/`.
+stated and still narrower than the rule: `src/tradipy/*.py` non-recursively plus `scripts/`
+recursively, skipping `params.py` and `__init__.py` inside `src/tradipy/` only, exempting
+undistinctive values, and not covering `tests/` — where fixtures must state literals in order to
+assert a derivation against them.
 
 `params` also holds:
 

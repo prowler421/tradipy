@@ -130,8 +130,9 @@ def min_tradeable_price_from_stop_bounds(cfg: Config) -> Decimal
 PRD source citation, and — where it is used as a gate threshold — its polarity. A
 threshold is defined there exactly once and every consumer reads it by name; no numeric
 literal for a registered threshold may appear anywhere else in the package. The lint that
-enforces this walks `src/tradipy/*.py` non-recursively, skips `params.py` and `__init__.py`,
-and exempts undistinctive values; `scripts/` is not scanned.
+enforces this walks `src/tradipy/*.py` non-recursively plus `scripts/` recursively, skips
+`params.py` and `__init__.py` inside `src/tradipy/` only, and exempts undistinctive values;
+`tests/` is not scanned, because fixtures must state literals to assert derivations against.
 
 `PARAMS`, `MODE_PRESETS` (including its inner preset maps) and `HARD_CAPS` are read-only
 `Mapping`s. They were plain dicts read *live* by `Config.__getitem__` until v0.1.0, so a

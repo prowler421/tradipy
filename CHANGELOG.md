@@ -11,6 +11,54 @@ All notable changes to the tradipy **package** are documented here. This file fo
 
 ### Added
 
+- **`scripts/spike2a/`** — the Phase 2a data feasibility spike, instrumented. Throwaway
+  investigative code per PHASE-2A-SPIKE.md §8: not imported by `src/tradipy/`, no coverage
+  obligation, and Phase 3 gets written fresh against the PRD rather than grown from it. Eight
+  modules — `prereg.py` (§7's pre-registration table, so the pass thresholds are read rather than
+  re-typed), `windows.py` (the VIX window rule), `universe.py` (the §7 selection rule and its
+  three exclusions), `feeds.py` (the swappable NBBO fetch layer), `q4_spreads.py`, `q2_float.py`,
+  `q3_latency.py`. Stdlib-only and CSV-driven, so the whole pipeline runs with no broker and no
+  subscription; `ib_insync` is imported lazily inside one constructor and is deliberately not a
+  package dependency. Q4 computes its caps with `gates.spread_caps` and its spread with
+  `quotes.spread_at_signal` rather than reimplementing either (§4.3). **No `src/tradipy/` change
+  and no new dependency.**
+- **`PreOpenFacts.check_units()`** — rejects `gap_premarket_pct`, `gap_daily_pct` or
+  `missing_nbbo_pct` above `1`, because the registry stores gap thresholds as fractions and a CSV
+  supplying `12` for a 12% gap compares `12 >= 0.04` — true for every row, so the gap filter stops
+  rejecting anything while still reporting that it filtered. The same error on `missing_nbbo_pct`
+  inverts it: every session becomes a vendor coverage failure that never happened. Called from
+  `classify()` and deliberately not from `from_csv_row`, which folds `ValueError` into an
+  unparsable-row count where a `UnitError` would vanish. It caught a real instance immediately —
+  the synthetic fixture used to smoke-test the module had `missing_nbbo_pct=9`.
+- **Two guard tests on the registry lint's new roots** —
+  `test_the_lint_scans_scripts_recursively` asserts `scripts/` is in scope and that a nested file
+  is reached; `test_the_lint_catches_a_planted_literal` asserts the detection half fires on a file
+  in a subdirectory. Two tests because the roots can be right while the offender construction
+  drops every hit, which is the failure mode the `normalize()` blind spot actually had.
+
+### Changed
+
+- **`[tool.ruff.lint.isort] known-first-party` gains `"scripts"`** (`pyproject.toml`). Ruff's
+  default `src` is `[".", "src"]`; this project overrides it to `["src", "tests"]`, dropping `.`,
+  so `scripts.spike2a.*` resolved as third-party and isort wanted a section break before
+  `tradipy.*`. Every spike module importing from both — which is every module that reads a
+  registered threshold — tripped `I001`. Declared here rather than by adding a `src` root, because
+  the declaration does not depend on filesystem detection and matches how `tradipy` is already
+  declared.
+- **The registry lint now scans `scripts/` recursively**, not `src/tradipy/*.py` alone
+  (`test_parameter_registry.lint_roots()`). PHASE-2A-SPIKE.md §8 called this a prerequisite rather
+  than an improvement: the spike's central task is measuring whether `max_spread_r` is calibrated,
+  its code lives in `scripts/spike2a/`, and until now the only thing keeping a second definition of
+  `max_spread_r` out of the code that measures `max_spread_r` was a sentence in a document.
+  Verified by mutation — `Decimal("0.15")` planted in `scripts/spike2a/q4_spreads.py` fails with a
+  message naming `max_spread_r`. Two related changes: the `params.py`/`__init__.py` filename
+  exemption now applies **inside `src/tradipy/` only**, because exempting a filename exempts
+  whatever anyone later puts in it; and offenders are labelled by repo-relative path rather than
+  bare filename, since `scripts/` has subdirectories and two files called `sample.py` would
+  otherwise report identically. The six live statements of convention 1's scope (`CLAUDE.md`,
+  `CONTRIBUTING.md`, `params.py`, `api.md`, `architecture.md`, `.cursor/rules/tradipy.mdc`) are
+  updated to match, per the rule F8 established.
+
 - **`tests/test_documentation.py`** — asserts that counts stated in prose match the code:
   registered parameters, frozen-baseline entries, library-module count, the re-exported count in
   `__all__`, every `Reject` member being documented, and every declared pytest marker being both

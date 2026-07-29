@@ -1587,7 +1587,7 @@ Desktop GUI deferred to Phase 8.
 | 1 | Architecture, config, data contracts | Medium | 0 | — |
 | 2 | Market data ingestion + quality checks | High | 1, IBKR account | IBKR API complexity |
 | **2a** | **Data feasibility spike (§5.5)** — can we source a real-time candidate list matching §4 filters, how reliable is float data, what is measured latency | Medium | 2 | **May prove IBKR-only scanning infeasible and require a data vendor** |
-| 3 | Scanner (hard filters) | Medium | 2 | Float data availability |
+| 3 | Scanner (hard filters) | Medium | **2a (gate passed)** | Float data availability — resolved by 2a before this phase starts (D29) |
 | 4 | Strategy engine (3 MVP setups) | High | 3 | Discretion proxies |
 | **4b** | **Lightweight strategy validation** — historical replay of the 3 MVP setups with modeled slippage/fees; produce expectancy, win rate, drawdown | Medium | 4, historical data | **Setups may show no edge** |
 | **Viability Gate** | Section 18.7 go/no-go: positive net expectancy over ≥100 trades/setup, out-of-sample. **If failed, stop or iterate — do not build execution** | — | 4b | — |

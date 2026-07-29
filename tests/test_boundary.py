@@ -493,7 +493,7 @@ def test_ceil_on_a_maximum_would_be_more_permissive() -> None:
 # in the package — the exit ladder, the stop chain, the sizing truncation — and at the three
 # §3 worked examples it could not: every level is already a whole tick and all three risk
 # divisions are exact ($300/$0.12, $300/$0.15, $300/$0.10), so ceil, floor and round all
-# agree. Eleven direction-and-truncation mutations survived the entire suite while PRD §19's
+# agree. Twelve direction-and-truncation mutations survived the entire suite while PRD §19's
 # "rounding-direction assertions" row was ticked. That is the fifth defect class again, in
 # the module its own fix had just touched.
 #

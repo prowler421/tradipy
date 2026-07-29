@@ -145,7 +145,7 @@ Six restatements of `max_spread_abs` and six of `max_spread_pct` currently sit a
 §3.3, §3.4, §4.2, §13 and §15. Each is a future divergence point; the baseline is what makes
 the seventh visible.
 
-## Four open spec discrepancies these tests pin
+## Six open spec discrepancies these tests pin
 
 None is a code bug — each follows from defaults that were individually reasonable, set in
 different revisions. All are recorded as tests that fail once resolved, so they cannot be

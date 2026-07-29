@@ -2,21 +2,27 @@
 
 Normative sources: PRD §2.2 (position sizing), §3.1.1 (exit ladder and room gate),
 §3.1.2 (separation floor and the unified room requirement), §3.1.3 (spread gates),
-§20.13 (rounding), §20.14 (spread definition).
+§20.13 (rounding), §20.14 (spread definition — see :mod:`tradipy.quotes`).
 
 No numeric threshold appears as a literal in this module. Every value comes from
 :mod:`tradipy.params` by name — that is the mechanism that makes "§20 governs" true in
 code rather than aspirational in prose.
+
+**Rounding direction comes from the registry too.** Until v0.1.0 each ``round_threshold``
+call named a :class:`~tradipy.rounding.Polarity` member directly, so polarity had two
+definitions — the registry field and the literal here — and nothing reconciled them.
+Flipping a registry polarity broke no test. Every rounded threshold below now goes through
+:func:`_rounded`, which reads the direction from the parameter that governs it.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
-from enum import Enum
 
 from tradipy.params import Config
-from tradipy.rounding import TICK_SIZE, Polarity, ceil_to_tick, floor_to_tick, round_threshold
+from tradipy.rejects import Reject
+from tradipy.rounding import TICK_SIZE, ceil_to_tick, floor_to_tick, round_threshold
 
 __all__ = [
     "Reject",
@@ -29,21 +35,33 @@ __all__ = [
     "required_room",
     "check_room",
     "exit_ladder",
+    "exceeds_max_stop",
     "position_size",
     "vwap_reclaim_stop",
     "apply_stop_floor_and_ceiling",
 ]
 
 
-class Reject(Enum):
-    """Rejection reason codes. PRD §3.1.2, §3.1.3, §4.2."""
+def _rounded(cfg: Config, value: Decimal, *governed_by: str) -> Decimal:
+    """Round ``value`` in the direction the registry declares for its governing parameters.
 
-    SPREAD_TOO_WIDE = "SPREAD_TOO_WIDE"
-    INSUFFICIENT_ROOM = "INSUFFICIENT_ROOM"
-    TARGETS_TOO_CLOSE = "TARGETS_TOO_CLOSE"
-    STOP_TOO_WIDE = "STOP_TOO_WIDE"
-    QUOTE_STALE = "QUOTE_STALE"
-    QUOTE_CROSSED = "QUOTE_CROSSED"
+    PRD §20.13 requires a threshold to be classified as a minimum or a maximum *before* a
+    rounding function is chosen. Passing the governing parameter names rather than a
+    :class:`~tradipy.rounding.Polarity` member makes that classification the single source of
+    truth: change the registry and the arithmetic here follows.
+
+    A threshold built from several parameters must have one classification. ``max(min_sep_r *
+    R, sep_cost_multiple * cost)`` is a minimum because *both* of its terms are; if they ever
+    disagree the threshold is not classifiable and this raises rather than guessing.
+    """
+    polarities = {cfg.polarity(n) for n in governed_by}
+    if len(polarities) != 1:
+        raise ValueError(
+            f"threshold governed by {governed_by} has conflicting polarities "
+            f"{sorted(p.name for p in polarities)}; PRD §20.13 requires exactly one "
+            "classification per rounded threshold"
+        )
+    return round_threshold(value, polarities.pop())
 
 
 # ---------------------------------------------------------------------------
@@ -71,19 +89,28 @@ def spread_caps(price: Decimal, r: Decimal, cfg: Config) -> SpreadCaps:
         max_spread_signal = max(tick, floor_to_tick(max_spread_r * R))
 
     Both are **maxima**, so both round *down* and both are clamped to one tick
-    (§20.13, A25). At scan time R does not exist yet — the setup has not formed — which
-    is why there are two gates rather than one.
+    (§20.13, A25) — but that direction is read from the registry, not asserted here. At scan
+    time R does not exist yet — the setup has not formed — which is why there are two gates
+    rather than one.
     """
     scan_raw = min(cfg["max_spread_abs"], cfg["max_spread_pct"] * price)
     signal_raw = cfg["max_spread_r"] * r
     return SpreadCaps(
-        scan=round_threshold(scan_raw, Polarity.MAXIMUM),
-        signal=round_threshold(signal_raw, Polarity.MAXIMUM),
+        scan=_rounded(cfg, scan_raw, "max_spread_abs", "max_spread_pct"),
+        signal=_rounded(cfg, signal_raw, "max_spread_r"),
     )
 
 
 def check_spread(spread: Decimal, price: Decimal, r: Decimal, cfg: Config) -> Reject | None:
-    """None if the spread passes both §3.1.3 gates, else ``Reject.SPREAD_TOO_WIDE``."""
+    """None if the spread passes both §3.1.3 gates, else ``Reject.SPREAD_TOO_WIDE``.
+
+    §3.1.3 states one requirement at signal time — ``spread_at_signal <= max_spread_signal``
+    — while §4.2 makes the scan cap a hard filter. Both are applied here, i.e. against
+    ``caps.binding``: a name whose spread has widened past the scan cap by the time the setup
+    forms would no longer pass the scanner, and taking it anyway would mean the scan filter
+    binds only on a stale quote. On all three §3 worked examples the two produce identical
+    verdicts; where they differ this is the stricter reading.
+    """
     caps = spread_caps(price, r, cfg)
     return None if spread <= caps.binding else Reject.SPREAD_TOO_WIDE
 
@@ -106,7 +133,7 @@ def min_separation(r: Decimal, spread: Decimal, cfg: Config) -> Decimal:
     """
     round_trip = spread + cfg["est_round_trip_cost_per_share"]
     raw = max(cfg["min_sep_r"] * r, cfg["sep_cost_multiple"] * round_trip)
-    return round_threshold(raw, Polarity.MINIMUM)
+    return _rounded(cfg, raw, "min_sep_r", "sep_cost_multiple", "est_round_trip_cost_per_share")
 
 
 @dataclass(frozen=True)
@@ -128,6 +155,13 @@ def required_room(r: Decimal, spread: Decimal, cfg: Config) -> RoomRequirement:
     The two constraints act on the same quantity, and on wide-spread names the separation
     term is the stricter. Evaluating them independently obscures which one binds, so the
     PRD combines them and records the binding reason on the signal.
+
+    Because ``min_separation`` is a MINIMUM-polarity threshold over a strictly positive
+    quantity, it is at least one tick at every legal configuration, so the separation term
+    strictly exceeds ``t1_r_multiple * R``. That is why D26 could remove the
+    ``room_gate_multiple > t1_r_multiple`` coupling: the ordering ``entry < T1 < T2`` is
+    guaranteed here, not by the proportional multiple. (Not via ``min_sep_r * R``, which §2.0
+    permits to be exactly zero — see :func:`tradipy.params.validate_couplings`.)
     """
     proportional = cfg["room_gate_multiple"] * r
     separation = cfg["t1_r_multiple"] * r + min_separation(r, spread, cfg)
@@ -143,13 +177,13 @@ def required_room(r: Decimal, spread: Decimal, cfg: Config) -> RoomRequirement:
     # caller can see the tie for itself.
     if separation > proportional:
         return RoomRequirement(
-            round_threshold(separation, Polarity.MINIMUM),
+            _rounded(cfg, separation, "t1_r_multiple"),
             Reject.TARGETS_TOO_CLOSE,
             proportional,
             separation,
         )
     return RoomRequirement(
-        round_threshold(proportional, Polarity.MINIMUM),
+        _rounded(cfg, proportional, "room_gate_multiple"),
         Reject.INSUFFICIENT_ROOM,
         proportional,
         separation,
@@ -181,7 +215,9 @@ def exit_ladder(entry: Decimal, r: Decimal, structural_target: Decimal, cfg: Con
     """T1 at exactly ``t1_r_multiple`` R; T2 at the structural level.
 
     Targets round **up** (away from entry) per §20.13, so rounding never flatters
-    backtested R.
+    backtested R. This is a price level rather than a gate threshold, so it uses
+    ``ceil_to_tick`` directly: §20.13 states the direction for *targets* as such, not by
+    reference to any parameter's polarity.
     """
     return Ladder(
         t1=ceil_to_tick(entry + cfg["t1_r_multiple"] * r),
@@ -192,6 +228,17 @@ def exit_ladder(entry: Decimal, r: Decimal, structural_target: Decimal, cfg: Con
 # ---------------------------------------------------------------------------
 # §20.13 stop level construction, §2.2 sizing
 # ---------------------------------------------------------------------------
+def exceeds_max_stop(entry: Decimal, stop: Decimal, cfg: Config) -> bool:
+    """PRD §2 / §20.13: is this stop further than ``max_stop_pct`` of entry?
+
+    Extracted so :func:`apply_stop_floor_and_ceiling` and :func:`position_size` share one
+    definition of the ceiling. Writing the comparison twice would be a restatement of a rule
+    rather than of a literal, which the registry lint cannot see and which is how the v1.2
+    class arose in the first place.
+    """
+    return entry - stop > cfg["max_stop_pct"] * entry
+
+
 def apply_stop_floor_and_ceiling(
     entry: Decimal, raw_stop: Decimal, cfg: Config
 ) -> tuple[Decimal, Reject | None]:
@@ -208,7 +255,7 @@ def apply_stop_floor_and_ceiling(
     stop = floor_to_tick(raw_stop)  # stops round away from the position (§20.13)
     if entry - stop < cfg["min_stop_distance"]:
         stop = floor_to_tick(entry - cfg["min_stop_distance"])
-    if entry - stop > cfg["max_stop_pct"] * entry:
+    if exceeds_max_stop(entry, stop, cfg):
         return stop, Reject.STOP_TOO_WIDE
     return stop, None
 
@@ -220,7 +267,7 @@ def vwap_reclaim_stop(
 
     PRD §3.4 / §20.13::
 
-        raw_stop = max(dip_low, VWAP * 0.99) - 1 tick     # "tighter" = higher (§20.6)
+        raw_stop = round_down_to_tick(max(dip_low, VWAP * 0.99)) - 1 tick
         then the $0.10 minimum-stop floor widens it if needed
 
     Worked reference (§20.13): ``VWAP * 0.99 = $3.762`` -> ``floor_to_tick`` -> ``$3.76``
@@ -237,6 +284,11 @@ def vwap_reclaim_stop(
     # PRD §3.4 writes this as `VWAP × 0.99`. That 1% is the only threshold on the MVP path
     # stated as a bare literal with no §2/§2.0 entry, so it is registered as
     # `vwap_stop_band_pct` and read by name here.
+    #
+    # §3.4 writes the tick rounding around the whole `max()`; it is applied to the VWAP
+    # branch alone here. The two agree whenever `dip_low` is a whole tick, which §20.13
+    # guarantees for a bar low, and `apply_stop_floor_and_ceiling` floors the result again
+    # immediately. Kept this way so the VWAP band is a whole tick before it is compared.
     vwap_band = floor_to_tick(vwap * (Decimal(1) - cfg["vwap_stop_band_pct"]))
     raw = max(dip_low, vwap_band) - TICK_SIZE
     return apply_stop_floor_and_ceiling(entry, raw, cfg)
@@ -256,22 +308,30 @@ def position_size(
     **frozen start-of-day** figure (§7.1, D16), so intraday gains cannot compound size
     within a session.
 
-    **Two Phase 2 gaps, recorded here because the signature is where they get closed.**
+    ``buying_power`` and ``adv_shares`` are optional because this layer has no broker and no
+    market-data feed to supply them. PRD §8.1 requires the backtester to pass both: *"the
+    simulator applies the full §2.2 constraint set, including the 1%-of-ADV liquidity
+    guard… omitting the sizing cap would let the backtest take positions the live system
+    would refuse."* Omitting them here yields the risk-and-order-size-capped figure only.
 
-    1. This function never consults ``max_stop_pct``. It accepts any ``effective_stop``, so
-       a path that derives a stop without going through
-       :func:`apply_stop_floor_and_ceiling` can size a trade the ceiling would reject.
-       Returning the verdict from :func:`vwap_reclaim_stop` fixed the information loss but
-       not this: honouring it is still a convention, not an invariant. Closing it means
-       either taking the ``Reject | None`` here and refusing, or making the stop a small
-       result type whose level cannot be read without its verdict.
-    2. A budget too small for one share returns ``0`` rather than a rejection, so "no size"
-       and "skip this trade" are the same value. Callers that treat 0 as falsy behave
-       correctly by accident; anything summing fills does not.
+    **One remaining Phase 2 gap, recorded here because the signature is where it gets
+    closed.** A budget too small for one share returns ``0`` rather than a rejection, so "no
+    size" and "skip this trade" are the same value. Callers that treat 0 as falsy behave
+    correctly by accident; anything summing fills does not.
+
+    The other gap recorded here previously — that this function never consulted
+    ``max_stop_pct``, so a stop the §20.13 ceiling rejects could still be sized — is closed:
+    it now raises. That makes honouring the ceiling an invariant rather than a convention.
     """
     stop_distance = entry - effective_stop
     if stop_distance <= 0:
         raise ValueError("effective_stop must be below entry for a long")
+    if exceeds_max_stop(entry, effective_stop, cfg):
+        raise ValueError(
+            f"stop distance {stop_distance} exceeds max_stop_pct "
+            f"({cfg['max_stop_pct']}) of entry {entry}: PRD §20.13 requires skipping this "
+            "trade, not sizing it. Check the Reject from apply_stop_floor_and_ceiling."
+        )
 
     max_dollar_risk = cfg["start_of_day_equity"] * cfg["max_risk_per_trade_pct"]
     shares = int(max_dollar_risk / stop_distance)  # floor

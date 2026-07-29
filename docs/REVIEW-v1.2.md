@@ -229,5 +229,6 @@ This is a third distinct defect class — not arithmetic, not cross-section inco
 | 22 | Opening auction one sentence | Fixed — §8.2 non-participable print (A23) |
 | 23 | No citation granularity | **Open** — deferred to PLAN Workstream 11; gap stated in Appendix A |
 | — | Spread/separation joint incoherence | Found here (§8.3); fixed — §3.1.3 |
+| — | Tier 4: ~20 passages of inline revision history | Fixed — extracted to [CHANGELOG.md](CHANGELOG.md) (D23). This row was missing from the table for three revisions: the finding was actioned, and only its disposition went unrecorded |
 
 Outstanding after v1.3: citation granularity (#23), the parameter registry, the §21.1 fixtures, and independent review of v1.3 itself.

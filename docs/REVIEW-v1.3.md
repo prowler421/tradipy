@@ -1,6 +1,6 @@
 # Full Review — PRD v1.3, PLAN, and the Source Prompt
 
-**Scope:** [PRD.md](PRD.md) (2,200 lines, v1.3) · [PLAN.md](PLAN.md) (323) · [CHANGELOG.md](CHANGELOG.md) (104) · [PROMPT-REVIEW.md](PROMPT-REVIEW.md) (215) · [REVIEW-v1.2.md](REVIEW-v1.2.md) (233) · [prompts/ross_cameron_trading_system.pdf](../prompts/ross_cameron_trading_system.pdf)
+**Scope:** [PRD.md](PRD.md) (2,200 lines at the time of review; 2,280 today) · [PLAN.md](PLAN.md) (323 then) · [CHANGELOG.md](CHANGELOG.md) (104 then) · [PROMPT-REVIEW.md](PROMPT-REVIEW.md) (215 then) · [REVIEW-v1.2.md](REVIEW-v1.2.md) (233) · [prompts/ross_cameron_trading_system.pdf](../prompts/ross_cameron_trading_system.pdf)
 
 **Reviewed:** 2026-07-28 · **Purpose:** consistency clearance before coding begins.
 
@@ -117,8 +117,8 @@ Not defects — recorded here so nothing is lost at the doc→code boundary:
 | Item | Status |
 |---|---|
 | Citation granularity (REVIEW-v1.2 #23) | Open, assigned to WS11 traceability check, gap stated in Appendix A |
-| Parameter registry | Specified (§21.1, PLAN WS11) — **not built** |
-| Worked-example + worst-case fixtures | Specified (§21.1) — **not built** |
+| Parameter registry | ~~Specified — not built~~ **Built** in package v0.0.1 (`tradipy.params`, `tests/test_parameter_registry.py`); 47 thresholds. See [REVIEW-2026-07-28](REVIEW-2026-07-28.md) for the round that reviewed it |
+| Worked-example + worst-case fixtures | ~~Specified — not built~~ **Built** in package v0.0.1 (`tests/test_worked_examples.py`, `tests/test_boundary.py`), and runnable end to end via `python -m tradipy demo` |
 | Independent review of v1.3 itself | Not done. Every prior round found a class the previous fix could not see |
 | `est_round_trip_cost_per_share` = $0.015, `impact_coefficient` = 1.0 | Both unmeasured; drive the separation floor and the slippage model respectively |
 | `max_spread_r` = 0.15 | Calibrated against three worked examples, not a real spread distribution (A21). May disable VWAP Reclaim in practice |

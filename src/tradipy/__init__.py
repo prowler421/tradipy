@@ -1,13 +1,17 @@
 """tradipy — Ross Cameron momentum trading system.
 
-This package currently contains only the invariant layer: the parameter registry, tick
-rounding with constraint polarity, and the pre-entry gates. It exists so that the rules
-established over four review rounds of docs/PRD.md are executable rather than prose.
+This package contains the invariant layer: the parameter registry, tick rounding with
+constraint polarity, the pre-entry gates, and the three PRD §20 computations that need no
+market-data feed to be correct (§20.4 flagpole geometry, §20.10 composite score, §20.14
+quote validity). It exists so that the rules established over four review rounds of
+docs/PRD.md are executable rather than prose.
 
 Read docs/PRD.md §20 (Computation Semantics) first. It is normative and governs on any
 conflict with code comments.
+
+Run ``python -m tradipy demo`` to replay the three §3 worked examples end to end.
 """
 
-from tradipy import gates, params, rounding
+from tradipy import bars, gates, params, quotes, rejects, rounding, score
 
-__all__ = ["gates", "params", "rounding"]
+__all__ = ["rounding", "rejects", "params", "bars", "quotes", "score", "gates"]

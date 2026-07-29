@@ -19,6 +19,7 @@ This document is the **work plan** for producing the Phase 1 Product Requirement
 | [docs/PROMPT-REVIEW.md](PROMPT-REVIEW.md) | Critique of the source prompt. Several PRD structural choices deliberately depart from it — backtesting moved before the MVP gate, three setups specified to depth rather than fourteen shallowly, a viability section the prompt never asked for. The reasoning for each departure lives there, so this plan does not repeat it |
 | [docs/REVIEW-v1.2.md](REVIEW-v1.2.md) | Independent review of PRD v1.2 — 23 findings, dispositions in its §8. Drove PRD v1.3 |
 | [docs/REVIEW-v1.3.md](REVIEW-v1.3.md) | Independent review of PRD v1.3 — 6 findings, one blocking (rounding direction). Drove PRD v1.3.1 |
+| [docs/REVIEW-2026-07-28.md](REVIEW-2026-07-28.md) | Independent review of the **code** — the first round to review the implementation rather than the specification. Four unenforced guarantees, all reproduced by execution, plus the fifth defect class. Drove package v0.1.0 and decisions D26–D28 |
 | [docs/CHANGELOG.md](CHANGELOG.md) | Revision history. The PRD states current rules only; superseded rules and the reasoning behind each reversal live here |
 
 ---
@@ -132,7 +133,7 @@ This document is the **work plan** for producing the Phase 1 Product Requirement
 ### Workstream 9 — Architecture, Data Model, UI
 
 - [x] Data contracts — 13 typed payloads, every §9.3 arrow annotated (PRD §9.2)
-- [ ] **Interfaces** — no `Protocol`s, ABCs, or method signatures exist. Prompt §6.9 asks for both, and this box was previously ticked on the strength of the contracts alone. The gap is diagnosed in [PROMPT-REVIEW](PROMPT-REVIEW.md) §3.11: the prompt named the interfaces without providing a specimen, so there is no shared notion of what "an interface" means here. Resolve when the §21.1 fixture suite is written — the fixtures will need to instantiate against something, which forces the signatures to be real rather than described
+- [ ] **Interfaces** — no `Protocol`s, ABCs, or method signatures exist. Prompt §6.9 asks for both, and this box was previously ticked on the strength of the contracts alone. The gap is diagnosed in [PROMPT-REVIEW](PROMPT-REVIEW.md) §3.11: the prompt named the interfaces without providing a specimen, so there is no shared notion of what "an interface" means here. **The proposed resolution failed and needs replacing.** The §21.1 fixture suite was to force real signatures by having to instantiate against something; it is now written and forced none, because the invariant layer is pure functions over `Decimal` and dataclasses — nothing in it has a collaborator to abstract. The first genuine interface will be the market-data feed, so resolve this at the Phase 2a spike, against a real vendor API rather than a hypothetical one
 - [x] Database schema
 - [x] Desktop UI wireframe descriptions and framework recommendation
 
@@ -160,9 +161,10 @@ Every workstream above was self-authored and self-certified, so the acceptance c
 - [ ] Sanity-check the worked numeric examples in Section 3 (position sizing, R:R) by recomputation
 - [ ] Confirm the "engineer could start with no clarifying questions" claim by having someone unfamiliar with Ross Cameron read the MVP sections and list every question they still have
 - [ ] Pressure-test Section 18 (Strategy Viability): are the open risks complete, and is the viability gate strict enough?
-- [ ] **Parameter registry check** — build the registry described below and verify it is clean
+- [x] **Parameter registry check** — built (`src/tradipy/params.py`, `tests/test_parameter_registry.py`) and clean. 47 registered thresholds; a 68-entry frozen baseline of PRD prose restatements
+- [x] **Independent review of the code** — [REVIEW-2026-07-28.md](REVIEW-2026-07-28.md). Found the fifth defect class (below); four instances, all fixed in package v0.1.0
 
-#### Four defect classes, four mechanical checks
+#### Five defect classes, five mechanical checks
 
 Each review round found a class invisible to the check designed for the one before it. This is the strongest available argument that self-certification does not substitute for a cold reader.
 
@@ -172,8 +174,15 @@ Each review round found a class invisible to the check designed for the one befo
 | v1.2 | **Consistency** — a threshold restated in two places, one updated | `room_gate_multiple` raised to 2.5 in §2.0/§3.1.1, left at `2 ×` in all three setup criteria; §15 carrying a scaling-in rule §7.1.1 had overturned | A parameter registry |
 | v1.3 | **Joint incoherence** — two individually-correct parameters that cannot both hold | The §4.2 spread filter admitted 1% of price while §3.1.2's separation floor consumed spread as input; every worked example failed its own gate at the widest spread the filter allowed, and round-trip spread cost reached 83% of R | **Boundary fixtures** — recompute every example at the extremes its filters admit (PRD §21.1 worst-case row) |
 | v1.3.1 | **Generalization** — a rule stated more broadly than its justification supports, then applied outside the range where it holds | D19 said "gate thresholds round **up**, which is always conservative." True for a floor you must exceed; the reverse for a ceiling you must stay under. The §3.1.3 spread cap inherited `ceil_to_tick` by analogy and became *more permissive* while the surrounding prose claimed conservatism | **Direction assertions.** A fixture must assert *why* a value is correct, not only that it matches. `assert cap == 0.01` passes under a wrong rule that happens to agree; `assert cap == floor_to_tick(x) and cap < x` does not |
+| v0.0.1 (code) | **Unenforced guarantee** — a rule that is stated normatively, has a mechanism built for it, is believed to be enforced, and is not | `Config.polarity()` existed, was documented as the thing that decides rounding direction, and had **zero callers**: `gates.py` named `Polarity` members at the call site, so flipping a registry declaration broke no test. Three more of the same shape in one sitting — a mutable `MODE_PRESETS` read live past a "non-bypassable" cap, a registry lint blind to 7 of 29 parameters, and `Config(values)` skipping range validation under a docstring reading *"every construction path validates; there is no other"* | **Enforcement fixtures** (`tests/test_enforcement.py`). For every documented guarantee, write the test that *performs the violation it forbids* — not the one that confirms the happy path. Three of the four had a passing test immediately adjacent to the hole |
 
 The v1.2 class was concealed by the v1.1 fix: verifying examples against the *new* value confirmed the examples and never asked whether the document agreed with itself. The v1.3 class was invisible to both — every value appeared exactly once and each was defensible alone, so a registry would have passed it clean. The v1.3.1 class is invisible to all three: the rule was stated once, the tables that applied it were arithmetically right, and the boundary fixture passed. It surfaced only because the prose and the tables disagreed, and prose comparison is the one check that does not mechanize.
+
+**The fifth class arrived on schedule, and from the direction this table could not look.** The four rows above are all defects *in the document*. Once the document was hardened, the next defect class was the gap between the document and the code that claims to implement it — and it is invisible to all four earlier checks by construction. The rule appears once, so the registry passes. The values are arithmetically correct, so the fixtures pass. The boundary behaves as documented, so the boundary fixtures pass. The direction is right, so the polarity assertions pass. **Nothing asks whether the mechanism is wired to anything**, and the documentation asserting that it is, is what stops anyone checking. A third heuristic falls out, as cheap as the other two:
+
+- **Every guarantee needs the test that breaks it.** For each sentence of the form "X cannot happen", write the test that attempts X and asserts it fails. A test that confirms the happy path passes whether or not the guarantee is enforced — which is why three of the four v0.0.1 instances had a passing test sitting immediately next to the hole.
+
+The honest extrapolation is unchanged: a sixth class exists. Note that the fifth was predicted here and still took a fresh reader to find, which is the argument for [Workstream 11's](#workstream-11--independent-verification--challenge) cold read rather than against it.
 
 **Two heuristics fall out of this, both cheap:**
 
@@ -184,16 +193,23 @@ The honest extrapolation is that a fifth class exists. It will not be found by t
 
 **Registry check:**
 
-- [ ] Every threshold appears in **exactly one** defining table (§2, §2.0, §3.1.2, or §3.1.3) with a canonical name
-- [ ] Every other mention references it **by name**, never by restating the literal
-- [ ] A lint pass flags any numeric literal in §3–§7 that matches a registered default — each hit is either a legitimate worked-example value or a latent divergence
-- [ ] Cross-check that §15 and §16 assert nothing that §3, §7 or §20 has superseded
+- [x] Every threshold appears in **exactly one** defining table with a canonical name — 47 in `tradipy.params`, each citing the PRD section that defines it, and each declaring whether its bounds were transcribed or originated in code
+- [x] Every other mention references it **by name**, never by restating the literal — enforced across `src/` by an AST-based lint that follows the `D = Decimal` alias
+- [x] A lint pass flags any numeric literal in the PRD that matches a registered default — 68 frozen in `tests/registry_baseline.json`; the lint fails on *new* occurrences rather than demanding zero
+- [ ] Cross-check that §15 and §16 assert nothing that §3, §7 or §20 has superseded — **still open**, this one is prose comparison and does not mechanize
 
 **Boundary check:**
 
-- [ ] Every §3 worked example recomputed at the **widest spread** its §3.1.3 caps admit, asserting the §3.1.2 separation floor still passes
-- [ ] Every gate whose input is bounded by a filter is tested at that filter's boundary, not only at illustrative values
-- [ ] Any pair of parameters where one constrains the other's input is documented as jointly calibrated, with the calibration stated
+- [x] Every §3 worked example recomputed at the **widest spread** its §3.1.3 caps admit, asserting the §3.1.2 separation floor still passes
+- [x] Every gate whose input is bounded by a filter is tested at that filter's boundary, not only at illustrative values
+- [x] Any pair of parameters where one constrains the other's input is documented as jointly calibrated — enforced in `validate_couplings`, or surfaced as a documented open finding where the incoherent combination is the shipped default (see `tests/README.md`)
+
+**Enforcement check** (added after the v0.0.1 code review):
+
+- [x] Every registry mapping is read-only, and no live `Config` can be reached through one
+- [x] Rounding direction is read from the registry, not named at the call site — proved by flipping a declaration and asserting the gate's output changes
+- [x] Every construction path validates ranges *and* couplings
+- [x] Each lint has a guard on the guard: a test asserting the lint can still see what it claims to check
 
 **Traceability check (carries the one open finding from REVIEW-v1.2 #23):**
 
@@ -251,16 +267,18 @@ Revision history lives in [CHANGELOG.md](CHANGELOG.md), not in the PRD (D23).
 | 9 | 8 — Backtesting | 3 | Done |
 | 10 | 9 — Architecture/UI/DB | 4–8 | Done |
 | 11 | 10 — Roadmap/MVP | 9 | Done |
-| 12 | 11 — Independent verification & challenge | All | **In progress** — [REVIEW-v1.2.md](REVIEW-v1.2.md) and [REVIEW-v1.3.md](REVIEW-v1.3.md) have each completed a round (23 and 6 findings). Registry, boundary and traceability checks still outstanding; no round has yet been run by a reader with no prior context |
+| 12 | 11 — Independent verification & challenge | All | **In progress** — three rounds done: [REVIEW-v1.2](REVIEW-v1.2.md) (23 findings), [REVIEW-v1.3](REVIEW-v1.3.md) (6), [REVIEW-2026-07-28](REVIEW-2026-07-28.md) (the code; 4 unenforced guarantees, fixed in package v0.1.0). Registry and boundary checks are **built and green**. Still outstanding: the traceability check, the §15/§16 supersession sweep, and a round by a reader with **no prior context** — the third has now been outstanding across all five defect classes and remains the single most valuable open item |
 
 Every row above is a **documentation** workstream, numbered 0–11. The two items below are **implementation** work, numbered by PRD §12.1 phase, and they do not queue behind the table — mixing the two numbering schemes in one column previously made "depends on 5" ambiguous between Workstream 5 and Phase 5.
 
 | Concurrent technical work | Depends on | Status |
 |---------------------------|------------|--------|
 | **Phase 2a — data feasibility spike** (PRD §5.5) | Workstream 5 (documentation of data requirements) — *not* on step 12 completing | **Not started — highest-value technical action.** Vendor lead times are weeks, and a negative result rewrites PRD §4 |
-| **PRD §21.1 fixture suite** — worked examples, boundary/worst-case, parameter-registry lint, rounding-direction assertions | Workstream 11's registry check is *satisfied by* building this, not a precondition for it | **Not started — should be the first code committed.** It converts four rounds of hard-won invariants into executable form, and it closes the gap [REVIEW-v1.2](REVIEW-v1.2.md) §8.4 identifies: verification so far has been ad-hoc scripts that were never committed, so every reviewer restarts from zero |
+| **PRD §21.1 fixture suite** — worked examples, boundary/worst-case, parameter-registry lint, rounding-direction assertions | Workstream 11's registry check is *satisfied by* building this, not a precondition for it | **Done** (package v0.0.1–v0.1.0). 153 cases, 99% line and branch coverage, 47/47 mutations caught. Plus the three §20 computations that need no feed — §20.4 flagpole geometry, §20.10 composite score, §20.14 quote validity — and `python -m tradipy demo`, which replays the three §3 worked examples end to end and fails if any derived value disagrees with the tables |
 
-**Documentation is no longer the binding constraint.** Each review round has grown the PRD (1,050 → 1,712 → 2,200+ lines) while the marginal finding has shrunk, and the remaining items are enumerable. The two rows above are where effort now belongs.
+**Why the fixture suite was built before the spike, which this plan ranked first.** The ordering was not an oversight and is recorded here because it was previously undocumented. The spike is blocked on external lead times and cannot start and finish inside one work session; the fixture suite could, and it is the precondition for trusting any number the spike comes back with. That said, **it has now deferred the spike twice**, and the argument does not survive a third use.
+
+**Documentation is no longer the binding constraint, and neither is code.** Each review round grew the PRD (1,050 → 1,712 → 2,280 lines) while the marginal finding shrank; the invariant layer is now built, tested and runnable. **Data is the binding constraint.** Every threshold in the registry is calibrated against three hand-authored worked examples, and the suite proves they are used *consistently* — it cannot say whether `max_spread_r` = 0.15 admits 90% of qualifying setups or 5%. The Phase 2a spike is the only remaining work that can answer that.
 
 ---
 
@@ -309,6 +327,9 @@ The PRD is complete when all of the following are true. **Note: the checkmarks b
 | D23 | Revision history | **Extracted to [CHANGELOG.md](CHANGELOG.md)**; one inline note retained | ~20 passages of inline correction narrative had accumulated in the PRD. It kept reversals auditable but forced implementers to distinguish current rules from retracted ancestors inside sections whose purpose is to be unambiguous. The flag-volume note stays inline because `≤ 70%` reads as a typo to anyone expecting `≥` |
 | D24 | Institutional-ownership filter | **Disabled by default** | Stated two ways (`≥ 80%` in §4.2, `> 80%` in §15) and, more importantly, unsourced and probably inert: ≥80% institutional ownership in a ≤20M-float universe is rare. Rejected alternative: deleting it outright — kept as an off-by-default hypothesis so Phase 4b can test it rather than silently losing the idea (A22) |
 | D25 | Rounding-rule polarity | **Split D19 by constraint polarity**: minimums round up, maximums round down, and every rounded maximum is clamped to at least one tick (PRD §20.13, §3.1.3) | D19 asserted that rounding gate thresholds up was "conservative in every case." It is conservative for a floor you must exceed and the *reverse* for a ceiling you must stay under — so D20's spread cap, which inherited `ceil_to_tick` by analogy, was admitting spreads the unrounded threshold rejected while the prose claimed the opposite. §3.1.3's own tables had already been computed with `floor`, so the document contradicted itself and the tables were the correct half. The clamp is separate and load-bearing: `floor_to_tick(0.15 × R)` is `$0.00` for `R < $0.067`, which an unclamped gate would turn into a total silent outage reported as `SPREAD_TOO_WIDE` on every trade. Today's `min_stop_distance` keeps R above that line, but §2.0 permits values that do not (A25). Rejected alternative: flipping D19 wholesale to "round down," which would have fixed the spread gate and broken every floor in §3.1 |
+| D26 | `room_gate_multiple` lower bound | **2.0 is legal**; the `room_gate_multiple > t1_r_multiple` coupling check is removed | The check made the value §1, §2.0, §3.1.1 and §7 all declare legal raise, and cited §3.1.1's *"cannot go below 2.0"* — which is `≥`, not `>`. It was also unnecessary: `min_separation` is a MINIMUM-polarity threshold over a strictly positive quantity (`sep_cost_multiple ≥ 1.0`, `est_round_trip_cost_per_share ≥ 0.001`), so it is at least one tick at every legal configuration; §3.1.2's separation term therefore strictly exceeds `t1_r_multiple × R` and is what actually guarantees `entry < T1 < T2`. **Not** via `min_sep_r × R > 0`, which a first draft of this decision argued in six places — §2.0 permits `min_sep_r = 0.0`, so that product is exactly zero at a legal configuration. The conclusion survived; the reasoning did not, and in six copies. Caught by the verification round on [REVIEW-2026-07-28](REVIEW-2026-07-28.md). At 2.0 the proportional term is **inert, not unsafe** — which is the state it is already in at its 2.5 default, a separate finding that remains open. Rejected: amending four PRD sections to exclude 2.0, hard-coding a bound the separation floor already makes unnecessary. Found by [REVIEW-2026-07-28](REVIEW-2026-07-28.md) F11 |
+| D27 | Risk-setting configurability | **`max_risk_per_trade_pct` (0.25–2%), `daily_loss_pct` (1–5%), `max_open_positions` (1–3) and `max_consecutive_losses` (2–5) are registered parameters**; `MODE_PRESETS` becomes an overlay bundle on top of them | §2 declares all four user-configurable within stated ranges. No configuration path existed, and none of the bounds was in code — so the column was false. Worse, §7's "non-bypassable cap" was checked against `MODE_PRESETS`, a module constant no supported path could change: the guarantee was enforced against something immovable while the legal range beneath it did not exist. `validate_couplings` now checks the **effective** value. The §7 cap and the §2 ceiling are the same number in two places, held together by a test rather than by hope — and that test is also the alarm for the day a ceiling is raised above a cap, at which point the coupling check stops being redundant. **Changes trading behaviour** only for anyone who overrides; the defaults are unmoved. Found by F6 |
+| D28 | `mode` default | **`beginner`**, as PRD §2.0 declares (was `experienced` in code) | The document's declared default disagreed with the code, and the PRD disagreed with itself: every §2.2/§3.2/§3.3/§3.4 worked example computes risk as 1% × $30,000, which is the *experienced* preset. Resolved in favour of the §2.0 row on two grounds — a risk system should default to the conservative setting, and a definition outranks an illustration. **Changes trading behaviour for every caller of `Config.default()`**: risk-per-trade 1.0% → 0.5%, daily loss 3% → 2%, open positions 3 → 1, consecutive losses 3 → 2, and every §3 share count halves. The examples now state which preset they use, and `python -m tradipy demo` runs in `experienced` for exactly that reason. Rejected: amending §2.0 to `experienced`, which would have made the safer setting the one you have to ask for. Found by F5 |
 
 ---
 
@@ -325,18 +346,22 @@ The PRD is complete when all of the following are true. **Note: the checkmarks b
 | Discretionary gap (tape reading) | Proxy via volume/price-action rules; document in Known Limitations |
 | Halt/LULD backtest complexity | Defer full halt simulation to Phase 7; MVP uses simplified model |
 | News catalyst automation | MVP uses manual verification + keyword NLP soft filter |
-| **Spec drift between sections** | Four rounds of internal contradictions have been found, each of a class invisible to the previous fix (see Workstream 11). Mitigated by the parameter registry, PRD §21.1's worked-example, boundary and rounding-direction fixtures, and §20 being declared normative — but **none of those mitigations is built**, and v1.3.1 has not been read by anyone without prior context. The pattern so far is that each round finds something the last one could not |
+| **Spec drift between sections** | Five rounds of contradictions have been found, each of a class invisible to the previous fix (see Workstream 11). The parameter registry, the §21.1 worked-example / boundary / rounding-direction fixtures, and the enforcement fixtures are now **all built and green**, and §20 is declared normative. What remains unmitigated: the §15/§16 supersession sweep is prose comparison and does not mechanize, and **no version of this document has been read by anyone without prior context**. The pattern is that each round finds something the last one could not, and the fifth class was predicted here and still needed a fresh reader to find |
+| **Drift between the spec and the code that implements it** | New in v0.1.0, and the fifth defect class. Four guarantees the documentation asserted were not enforced by the mechanism built for them, including one — `Config.polarity()` — that had zero callers while being documented as the thing deciding rounding direction. Mitigated by `tests/test_enforcement.py`, whose rule is: for every documented guarantee, write the test that performs the violation it forbids. **Residual risk is high**, because this class is created by ordinary maintenance — a mechanism silently stops being called and nothing but a purpose-built test notices |
 | Cost estimates are estimates | `est_round_trip_cost_per_share` ($0.015) drives the D17 separation floor, and `impact_coefficient` (1.0) drives D22's slippage term. Both are unmeasured. Calibrate from real paper fills in Phase 4b before trusting any expectancy figure |
 
 ---
 
 ## What This Plan Does NOT Include
 
-- Python project scaffolding (`pyproject.toml`, modules)
+Two of these have since been built and are struck through; the reason each was un-deferred is given.
+
+- ~~Python project scaffolding (`pyproject.toml`, modules)~~ — **built.** `pyproject.toml`, `uv.lock`, Ruff, BasedPyright, CI and a tag-driven release workflow
+- ~~The invariant layer~~ — **built** (package v0.1.0). Not a change of scope so much as a recognition that the §21.1 fixture suite could not exist without the rules it tests being executable. It carries the parameter registry, tick rounding, the pre-entry gates, the three §20 computations that need no feed, and `python -m tradipy` as a runnable proof of concept
 - IBKR API integration code
 - Backtester or scanner implementation
 - Desktop GUI implementation
 
-These are deferred until the PRD passes Section 8 acceptance criteria and implementation is explicitly requested.
+The remaining three are deferred until the Phase 2a spike reports. A scanner built against a data source that turns out not to exist is the specific waste PRD §5.5 warns about.
 
-**One exception worth naming:** the Phase 2a data spike is investigative code, not implementation, and it should start now rather than waiting on the documentation queue. It answers whether a §4.2-matching candidate list is obtainable at all, at what cost, and with what spread distribution — three questions that between them determine whether the rest of this plan is buildable.
+**One exception worth naming:** the Phase 2a data spike is investigative code, not implementation, and it should start now rather than waiting on the documentation queue. It answers whether a §4.2-matching candidate list is obtainable at all, at what cost, and with what spread distribution — three questions that between them determine whether the rest of this plan is buildable. **It has now been deferred twice**, both times in favour of work that could be finished in one sitting. That is a real reason and it does not get to be used a third time.

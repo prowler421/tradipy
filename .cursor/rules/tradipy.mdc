@@ -6,17 +6,23 @@ alwaysApply: true
 # tradipy — assistant rules
 
 tradipy is the **invariant layer** of a Ross Cameron momentum trading system. Its whole
-reason to exist is that four review rounds of `docs/PRD.md` each found a defect class the
-previous check could not see. The code makes the PRD's rules executable. Treat the PRD as
-normative: `docs/PRD.md §20` (Computation Semantics) governs on any conflict with code.
+reason to exist is that five review rounds each found a defect class the previous check
+could not see — four in `docs/PRD.md`, and a fifth in the code that implements it. The code
+makes the PRD's rules executable. Treat the PRD as normative: `docs/PRD.md §20` (Computation
+Semantics) governs on any conflict with code. **If code and PRD diverge, that is a spec
+question — raise it, do not resolve it silently in code.**
 
 ## Preserve the architecture
 - A registered threshold is defined **once** in `src/tradipy/params.py` and read by name.
   Never write a numeric literal for a registered threshold anywhere else — the registry
   test enforces this against the PRD prose too.
 - Rounding direction is a property of the **constraint's polarity** (`Polarity.MINIMUM`
-  rounds up, `MAXIMUM` rounds down and clamps to one tick), not of the call site. Route all
-  threshold rounding through `round_threshold`.
+  rounds up, `MAXIMUM` rounds down and clamps to one tick), not of the call site. In
+  `gates.py` that means `_rounded(cfg, value, *governed_by)`, which reads polarity from the
+  registry. Do not import `Polarity` into `gates.py`; a test asserts the import is absent,
+  because naming a member at a call site gives direction a second definition.
+- A bound the PRD does not state must mark itself `(bounds: code)` in `Param.source`. §2,
+  §3.1.1, §3.4, §20.10 and §20.14 have no Bounds column.
 - All money is `Decimal`. Never introduce `float` where a value is compared to a tick
   boundary or accumulated into P&L (PRD §9.2).
 
@@ -32,14 +38,27 @@ normative: `docs/PRD.md §20` (Computation Semantics) governs on any conflict wi
   literal `×` in the PRD to find unregistered thresholds.
 
 ## Don't
-- Do not add dependencies casually — the runtime is intentionally stdlib-only.
-- Do not add abstractions, frameworks, Docker, a CLI, or logging unless a concrete need
-  exists. This is a pure library.
-- Do not "fix" a documented open finding by silently enforcing it; several couplings are
-  deliberately surfaced rather than enforced (see `validate_couplings` and its docstring).
+- Do not add dependencies. The runtime is stdlib-only; `uv add` is deliberately not in the
+  pre-approved command list in `.claude/settings.json`, so adding one should require asking.
+- Do not add abstractions, frameworks, Docker, or logging unless a concrete need exists.
+  `python -m tradipy` exists because the rules needed to be exercisable by hand; it is a thin
+  argparse layer over the library and is not licence for more surface.
+- Do not "fix" a documented open finding by silently enforcing it. The couplings that are
+  deliberately surfaced rather than enforced are documented on
+  `min_tradeable_price_from_stop_bounds` and `signal_cap_ticks_at_min_r` — not on
+  `validate_couplings`, which documents what *is* enforced. `tests/README.md` lists all five.
 
 ## Always
 - Add or update tests for any behavior change (`tests/`), and keep assertions written
-  against the **derivation**, not a magic value.
-- Update `CHANGELOG.md` (Keep a Changelog) and relevant `docs/` when behavior changes.
+  against the **derivation**, not a magic value. Use the `spec`, `boundary` and `polarity`
+  markers where they apply — `--strict-markers` is on.
+- **For every guarantee, write the test that breaks it.** Not the happy path — the test that
+  performs the violation the guarantee forbids and asserts it fails. This is the fifth defect
+  class: four guarantees were unenforced at once in v0.0.1, three with a passing test right
+  beside the hole. See `tests/test_enforcement.py`.
+- Update the **root** `CHANGELOG.md` (Keep a Changelog, under `[Unreleased]`) for code,
+  tooling and packaging. Spec corrections and reversals go in `docs/CHANGELOG.md`, which is
+  grouped by PRD version — the two files are not interchangeable.
+- Regenerate the registry baseline only deliberately, via
+  `uv run python scripts/regen_registry_baseline.py`, and read the diff.
 - Run `make check` (lint + format check + typecheck + test) before considering work done.

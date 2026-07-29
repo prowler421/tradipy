@@ -40,9 +40,17 @@ def main() -> int:
         env=os.environ | {"REGEN_REGISTRY_BASELINE": "1"},
         check=False,
     )
+    if result.returncode != 0:
+        # Said "Done. Review the diff" unconditionally until v0.1.0, including when pytest
+        # had failed to collect and no baseline was written. The exit code was right and the
+        # message was the opposite of it, which is the wrong way round for a tool whose
+        # output is the thing you act on.
+        print("\npytest exited non-zero — the baseline was NOT regenerated.")
+        return result.returncode
+
     print("\nDone. Review the diff before committing:")
     print("    git diff -- tests/registry_baseline.json")
-    return result.returncode
+    return 0
 
 
 if __name__ == "__main__":

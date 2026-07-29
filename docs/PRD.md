@@ -92,6 +92,13 @@ These were referenced in Sections 6, 7 and 2.2 without ever being given a defaul
 | `max_open_positions` | 1 | 3 (hard ceiling 3) |
 | `max_consecutive_losses` | 2 | 3 |
 
+> **The §3 worked examples are computed at the `experienced` preset.** Every one of them
+> states risk as 1% × $30,000 — that is `experienced`, while the declared default above is
+> `beginner`. The default is deliberately the safer of the two, so reproducing the §3 tables
+> means asking for the other one: `Config.default(mode="experienced")`, or
+> `python -m tradipy demo`, which does exactly that and says so in its header. At the
+> `beginner` default every share count in §3 halves. Decided as [PLAN](PLAN.md) **D28**.
+
 ### 2.1 RVOL Calculation Specification
 
 ```
@@ -485,7 +492,7 @@ Per the canonical ladder (§3.1.1):
 >
 > | HOD | Room available | Binding term | Required | Outcome |
 > |-----|---------------|-------------|----------|---------|
-> | $4.05 | $0.22 | proportional (2.5 × $0.10 = $0.25) | $0.28 | Rejected — insufficient room (what A15 fixed) |
+> | $4.05 | $0.22 | separation (2R + $0.08 = $0.28) | $0.28 | Rejected — insufficient room (what A15 fixed) |
 > | $4.09 | $0.26 | separation (2R + $0.08 = $0.28) | $0.28 | Rejected — T1 and T2 collapse into one economic exit |
 > | $4.15 | $0.32 | — | $0.28 | **Traded** |
 >
@@ -1884,9 +1891,11 @@ No real money should be committed until, at minimum: backtest and paper trading 
 | Spread/separation joint calibration | ✓ v1.3 (§3.1.3), with the worst-case invariant now a fixture |
 | Independent review of v1.3 | ✓ [REVIEW-v1.3.md](REVIEW-v1.3.md) — 6 defects, one blocking (rounding direction); addressed in v1.3.1 |
 | Independent review of v1.3.1 | ☐ **outstanding** — no round has yet been run by a reader with no prior context |
-| Machine-checkable example fixtures | ☐ outstanding (§21.1 — the durable fix) |
-| Parameter registry check | ☐ outstanding (PLAN WS11 — the durable fix for the recurring class) |
-| Rounding-direction assertions | ☐ outstanding (§21.1 — the durable fix for the generalization class) |
+| Machine-checkable example fixtures | ✓ built and green (`tests/test_worked_examples.py`, `tests/test_poc.py`; §3.2 driven from a bar series via §20.4) |
+| Parameter registry check | ✓ built and green (`tests/test_parameter_registry.py`, `tradipy.params`) |
+| Rounding-direction assertions | ✓ built and green (`tests/test_boundary.py` polarity marks; direction is read from the registry, not named at the call site) |
+| Independent review of the **code** | ✓ [REVIEW-2026-07-28.md](REVIEW-2026-07-28.md) — four unenforced guarantees, all reproduced by execution; fixed in package v0.1.0. See [CHANGELOG](CHANGELOG.md) v1.3.2 |
+| Enforcement fixtures (fifth defect class) | ✓ `tests/test_enforcement.py` — for each documented guarantee, the test that performs the violation it forbids |
 
 **Four defect classes, not one.** The self-assessment below has been wrong in a different way each round, and the pattern is worth stating plainly because it bears on how much the checkmarks are worth:
 

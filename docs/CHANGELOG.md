@@ -10,6 +10,49 @@ Corrections and reversals to [PRD.md](PRD.md), extracted so the spec itself can 
 
 ---
 
+## v1.3.2 — package v0.1.0
+
+Driven by [REVIEW-2026-07-28.md](REVIEW-2026-07-28.md), the first review of the **code** rather than of this document. Three of these change trading behaviour and are recorded as decisions D26–D28 in [PLAN](PLAN.md).
+
+The distinctive thing about this round: every finding was a place where the *document was right and the code was not*, which is the reverse of the previous four. Four review rounds hardened the prose; nothing had yet checked whether the implementation of that prose enforced it. Three of the four highest-severity findings sat directly beneath a sentence asserting the opposite, and that sentence is what stopped anyone looking.
+
+### Strategy behaviour
+
+| Section | Was | Is | Why |
+|---------|-----|-----|-----|
+| §2.0 `mode` (**D28**) | Code defaulted to `experienced` while the §2.0 row says `beginner` | Code defaults to **`beginner`**, as stated | The document's declared default won over its own worked examples, which are all computed at 1% × $30,000 and are therefore *experienced*. Two reasons: a risk system should default to the conservative preset, and the examples are illustrations while the §2.0 row is a definition. **Changes every default share count** — §3.2's Bull Flag is 1,250 shares at the default and 2,500 at the preset the tables use. The examples now say so, and `python -m tradipy demo` runs in experienced mode for exactly this reason. Rejected: amending §2.0 to `experienced`, which would have made the safer setting the one you have to ask for |
+| §1, §2.0, §3.1.1, §7 `room_gate_multiple` (**D26**) | All four sections state 2.0 is legal; `validate_couplings` rejected it | 2.0 is legal, and inert | The code's justification cited §3.1.1's *"cannot go below 2.0"* — which is `≥ 2.0`, not `> 2.0` — so the cited section did not support the check, and the deviation was declared nowhere. It was also unnecessary: `min_separation` is a MINIMUM-polarity threshold over a strictly positive quantity (`sep_cost_multiple ≥ 1.0`, `est_round_trip_cost_per_share ≥ 0.001`), so it is at least one tick at every legal configuration and §3.1.2's separation term `t1_r_multiple × R + min_separation` strictly exceeds `t1_r_multiple × R`. **Not** via `min_sep_r × R > 0`, which a first draft argued in six places — §2.0 permits `min_sep_r = 0.0`, so that product is exactly zero at a legal configuration; the v1.3.1 class (a rule generalized past its justification) restated the v1.2 way (in more than one copy), inside the fix for a finding about unenforced guarantees. The `entry < T1 < T2` ordering never came from the proportional multiple. Rejected: amending four PRD sections to exclude 2.0, which would have hard-coded a bound the separation floor already makes unnecessary. The separate finding that the multiple is **inert at its 2.5 default** is unaffected and still open |
+| §2 risk settings (**D27**) | §2 states three settings are user-configurable within ranges; no configuration path existed and none of the four bounds was in code | `max_risk_per_trade_pct` (0.25–2%), `daily_loss_pct` (1–5%), `max_open_positions` (1–3) and `max_consecutive_losses` (2–5) are registered parameters; `MODE_PRESETS` is an overlay bundle on top of them | §7's "non-bypassable cap" was being checked against `MODE_PRESETS`, a module constant that no supported path could change — so the guarantee was enforced against something immovable while the legal range beneath it did not exist. The check now reads the **effective** value. The §7 cap and the §2 ceiling are the same number stated twice; `test_hard_caps_match_the_registry_ceilings` holds them together and is also the alarm that fires if a registry ceiling is ever raised above a §7 cap, at which point the coupling check stops being redundant |
+
+### Corrections to this document
+
+| Section | Change | Why |
+|---------|--------|-----|
+| §3.4 sensitivity table | The `$4.05` row labelled its binding term "proportional" while showing `$0.28`, which is the *separation* term's value | At R = $0.10 the proportional term is $0.25 and does not bind. This is the same fact `test_room_gate_multiple_can_never_strictly_bind_at_defaults` pins from the other direction: at the 2.5 default the proportional term can tie the separation term but never exceed it |
+| §19 status table | Three rows marked ☐ outstanding — machine-checkable example fixtures, the parameter registry check, rounding-direction assertions | All three were built and green. A status table that under-reports is not a harmless error: §19's own preamble argues that *"a self-certified checklist is not evidence"*, and a checklist that is wrong in the pessimistic direction erodes the same trust as one that is wrong in the optimistic one |
+| §2.0 mode presets | Added a note that §3's worked examples are computed at the `experienced` preset | Consequence of D28. Without it the tables and `Config.default()` disagree with no explanation, which is precisely the drift this file exists to prevent |
+
+### Thresholds the PRD states in prose but never defines
+
+Recorded rather than fixed, because giving each a §2.0-style row is a spec edit and this round was a code review. All are now registered in `tradipy.params` with code-originated bounds, and every such bound is marked `(bounds: code)` in its `source` so a reader can tell a transcribed bound from an invented one.
+
+| Threshold | Where the PRD states it | Registered as |
+|---|---|---|
+| Premarket volume floor, 100,000 shares | §2, prose only | `min_premarket_volume` |
+| VWAP extension in the first 30 minutes, 5% | §2, the second branch of a two-branch rule whose first branch *was* registered | `max_vwap_extension_open_pct` |
+| HOD proximity trigger, 0.5% | §2, prose only | `hod_proximity_pct` |
+| Composite-score weights and normalization caps (nine values) | §20.10 code block; §20.10 calls the caps "configurable" | `score_weight_*`, `score_cap_*` |
+| Catalyst midpoint, 0.5 for headline-only | §20.10 code block | `score_catalyst_headline` |
+| Conviction gate, 0.7 | §14.2 | `min_conviction_score` |
+| VWAP stop band, `VWAP × 0.99` | §3.4 | `vwap_stop_band_pct` (open since v0.0.1) |
+
+Two further observations for a future spec round:
+
+- **§2 has no Bounds column.** Roughly half of the registry's `lo`/`hi` pairs are therefore this implementation's judgement rather than specification. That is unavoidable — something has to constrain the range — but it was previously undeclared, and `params.py` claimed all bounds were transcribed from the document.
+- **`score_cap_float` (§20.10) and `max_float_shares` (§2) are both 20,000,000.** §20.10 states its normalizer independently of §2's scanner ceiling, so they are two parameters rather than one restated; but they mean nearly the same thing and will drift. Pinned by `test_score_float_cap_currently_equals_the_scan_filter`.
+
+---
+
 ## v1.3.1
 
 Driven by the independent review in [REVIEW-v1.3.md](REVIEW-v1.3.md). One change alters trading behaviour: the spread gates now round the other way, and are clamped.

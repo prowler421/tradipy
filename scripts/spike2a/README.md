@@ -2,7 +2,8 @@
 
 **Throwaway investigative code.** Scope, method and the binding pre-registration are in
 [docs/PHASE-2A-SPIKE.md](../../docs/PHASE-2A-SPIKE.md). This file says how to run it and what it
-is not.
+is not. For the two collectors that need a live IBKR paper connection instead of the fabricated
+input below, see [TEST_SETUP.md](TEST_SETUP.md).
 
 ## What this is not
 

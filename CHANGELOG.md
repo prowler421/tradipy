@@ -31,6 +31,15 @@ All notable changes to the tradipy **package** are documented here. This file fo
   there was fabricated locally. Everything it writes is synthetic and it writes a `PROVENANCE.txt`
   beside the files saying so; no number computed from its output answers Q1–Q4. Four defects in it
   are fixed under *Fixed* below, one of which changed a §7 verdict.
+- **`scripts/spike2a/q3_collect.py` and `scripts/spike2a/q4_collect_real_data.py`** — the two
+  collectors that talk to a live IBKR paper gateway instead of reading a CSV: the first measures
+  real signal-to-order latency via `whatIf` preview round-trips, the second fetches real
+  historical NBBO ticks for a symbol list and date range into `quotes_real.csv`. Both merged with
+  no changelog entry, which is H14 recurring in the commit after the one that found it. Neither
+  is imported by `src/tradipy/`; both lazy-import `ib_insync` behind the same
+  `# pyright: ignore[reportMissingImports]` pattern as `feeds.IbkrHistoricalTicksFeed`; neither
+  stores an IBKR credential anywhere — see `scripts/spike2a/TEST_SETUP.md` (moved and corrected
+  under *Fixed*).
 - **`PreOpenFacts.check_units()`** — rejects `gap_premarket_pct`, `gap_daily_pct` or
   `missing_nbbo_pct` above `1`, because the registry stores gap thresholds as fractions and a CSV
   supplying `12` for a 12% gap compares `12 >= 0.04` — true for every row, so the gap filter stops
@@ -132,9 +141,11 @@ enforced and three of them that the tree was clean; everything below is in `scri
   five from a hand-built AST check that had no `B007` rule; they are fixed by underscore-prefixing
   the five pre-open facts a signal bar does not use, dropping a redundant `enumerate`, and marking
   `_r` unused in the quote generator, where reading R would manufacture the correlation Q4 exists to
-  measure. **`ruff format --check` still fails on this file** and is left to `make format`:
-  `CLAUDE.md` forbids hand-formatting, and guessing at a formatter's output is the same class of
-  mistake as approximating its linter.
+  measure. *(This entry claimed `ruff format --check` still failed on this file. It did not — the
+  claim was produced by running `ruff format --check --isolated` against a copy outside the repo,
+  which drops `pyproject.toml`'s `line-length = 100` and reformats against ruff's default of 88.
+  Checked in place, the file was already correctly formatted. Corrected here rather than restated
+  elsewhere, since the file this mistake describes is the file the mistake was made in.)*
 - **`signal_bars.r` was computed by hand** — `price × 0.97` and friends — in a module whose own
   docstring said it used the library's stop functions, and which imported
   `gates.apply_stop_floor_and_ceiling` without calling it. R is the denominator of the §3.1.3
@@ -176,6 +187,20 @@ enforced and three of them that the tree was clean; everything below is in `scri
   are seven, `docs/README.md` said six documents where there are seven plus the index, and neither
   `CLAUDE.md`'s nor `docs/development.md`'s layout block mentioned `scripts/spike2a/` or `data/`.
   Extending the doc-count test to cover them is recommended and not done here.
+- **`q4_collect_real_data.py` wrote `age_seconds: "0"` for every real tick** — the same defect
+  H6 found in the synthetic path, in the collector merged the same day H6 was written. A written
+  `0` asserts every quote was fresh at the signal instant, which this collector cannot know (it
+  has no signal instant), and makes the one §20.14 staleness branch that could fire on real data
+  unreachable. `age_seconds` is optional in the schema; the column is no longer written.
+- **`SPIKE2A_TEST_SETUP.md`**, merged at the repository root with no changelog entry, reported a
+  synthetic Q4 run — `154 signal bars, 0.00%, INERT` — as "already ran and analyzed" with no
+  synthetic label, over the same hand-derived R the fix above corrects (the current number is
+  `CALIBRATED`, `2/147`, cheapest decile `14.29%`). That is H7 in a new document the same day H7
+  was fixed in the old one. It also instructed running `q4_spreads.py` against the synthetic
+  `quotes.csv` immediately after collecting real data into `quotes_real.csv`, which would silently
+  re-measure the synthetic sample and label it real. Moved to
+  `scripts/spike2a/TEST_SETUP.md`, rewritten to state plainly what is real and what is fabricated,
+  and corrected to note that no generator produces a real `signal_bars.csv`.
 - *(Round 6)* `tests/README.md` heading read "Four open spec discrepancies" above a list of six.
 - *(Round 6)* `tests/test_boundary.py` said eleven surviving rounding mutations where
   `tests/README.md`, this file and `docs/reviews/REVIEW-2026-07-28.md` all say twelve. **Round 7

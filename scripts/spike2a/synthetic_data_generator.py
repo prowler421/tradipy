@@ -133,10 +133,34 @@ def generate_preopen_facts(
 
     # Generate ~8 gappers per window date
     symbols = [
-        "AXTI", "CLVS", "CBAK", "CRTX", "DGLY", "DNLI", "FARO", "GMGI",
-        "HALO", "ILAG", "JMIA", "KOSS", "LBPH", "MIST", "NVFY", "ORCL",
-        "PPSI", "QRVO", "RMED", "SGMA", "TELL", "UACL", "VERU", "WKSP",
-        "XELA", "YEXT", "ZBH", "AiM",
+        "AXTI",
+        "CLVS",
+        "CBAK",
+        "CRTX",
+        "DGLY",
+        "DNLI",
+        "FARO",
+        "GMGI",
+        "HALO",
+        "ILAG",
+        "JMIA",
+        "KOSS",
+        "LBPH",
+        "MIST",
+        "NVFY",
+        "ORCL",
+        "PPSI",
+        "QRVO",
+        "RMED",
+        "SGMA",
+        "TELL",
+        "UACL",
+        "VERU",
+        "WKSP",
+        "XELA",
+        "YEXT",
+        "ZBH",
+        "AiM",
     ]
 
     for session in window_dates:
@@ -172,15 +196,13 @@ def generate_preopen_facts(
                 and min_price <= price <= max_price
                 and adv >= min_adv
             ):
-                facts.append(
-                    (session, symbol, price, gap_pm, gap_daily, rvol, adv, float_shares)
-                )
+                facts.append((session, symbol, price, gap_pm, gap_daily, rvol, adv, float_shares))
 
     return facts
 
 
 def generate_signal_bars(
-    preopen: list[tuple[date, str, Decimal, Decimal, Decimal, Decimal, Decimal, Decimal]]
+    preopen: list[tuple[date, str, Decimal, Decimal, Decimal, Decimal, Decimal, Decimal]],
 ) -> list[tuple[str, date, str, Decimal, Decimal]]:
     """Generate signal bars for the three MVP setups.
 
@@ -311,9 +333,7 @@ def generate_nbbo_quotes(
             bid_size = Decimal(random.randint(100, 10000))
             ask_size = Decimal(random.randint(100, 10000))
 
-            quotes.append(
-                (symbol, captured_at, bid, ask, bid_size, ask_size)
-            )
+            quotes.append((symbol, captured_at, bid, ask, bid_size, ask_size))
 
     return quotes
 
@@ -393,8 +413,14 @@ def main() -> None:
         # treats them as optional, and the README's schema marks them so. Leaving them out states
         # the gap; writing them blank hid it.
         [
-            "session", "symbol", "price", "gap_premarket_pct", "gap_daily_pct",
-            "rvol", "adv_shares", "float_shares",
+            "session",
+            "symbol",
+            "price",
+            "gap_premarket_pct",
+            "gap_daily_pct",
+            "rvol",
+            "adv_shares",
+            "float_shares",
         ],
     )
     print(f"   → {len(all_preopen)} total symbol-sessions written\n")

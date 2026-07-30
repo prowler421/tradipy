@@ -5,10 +5,11 @@ Guidance for Claude Code (and other AI assistants) contributing to **tradipy**.
 ## What this project is
 
 tradipy is the **invariant layer** of a Ross Cameron momentum day-trading system. It is
-deliberately *not* the strategy engine. It exists because five review rounds each surfaced a
+deliberately *not* the strategy engine. It exists because six review rounds each surfaced a
 distinct defect class that the check designed for the previous round could not catch — four
-in `docs/PRD.md`, and a fifth in the code implementing it. This code turns the PRD's rules
-into executable, tested invariants.
+in `docs/PRD.md`, a fifth in the code implementing it, and a sixth in the code that *measures*
+it, which every check built for the first five was pointed away from. This code turns the PRD's
+rules into executable, tested invariants.
 
 `docs/PRD.md` is **normative**. Section §20 (Computation Semantics) governs on any conflict
 between prose, comments, and code. Read it before changing behavior.
@@ -56,6 +57,10 @@ docs/               # start at docs/README.md (index)
   api.md architecture.md development.md
   reviews/          #   every independent review round, kept unedited as the record
 scripts/            # maintenance helpers — registry baseline, link checker
+  spike2a/          #   the Phase 2a spike. Throwaway (PHASE-2A-SPIKE §8) but **inside** the
+                    #   registry lint's scope, and the source of the sixth defect class
+data/spike2a/       # spike inputs — gitignored, empty on a clean clone. Anything generated
+                    # locally is synthetic; the generator writes a PROVENANCE.txt saying so
 .claude/skills/     # guarantee-test, review-round (mirrored as .cursor/rules/*.mdc)
 .github/workflows/  # CI and release; dependabot.yml covers Actions only
 ```
@@ -95,7 +100,7 @@ scripts/            # maintenance helpers — registry baseline, link checker
 8. **Fix trivial findings; do not disposition them.** A review finding that is fixable in one
    line, has no spec implication and changes no behaviour gets **fixed in the same change**,
    listed in one line in the review, and gets no `docs/CHANGELOG.md` entry, no decision, and no
-   disposition block. Six rounds of review machinery exist for defects that recur or that
+   disposition block. Seven rounds of review machinery exist for defects that recur or that
    require a spec call; a heading that says "four" above a list of six needs neither, and
    putting it through the full apparatus costs more than the defect. **The judgement is the
    convention's weak point** — when unsure whether a finding is trivial, disposition it. A

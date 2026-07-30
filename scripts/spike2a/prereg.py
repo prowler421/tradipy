@@ -11,9 +11,16 @@ Putting them in :mod:`tradipy.params` would give the registry rows with no §2/�
 which :func:`tests.test_parameter_registry.test_every_registered_param_is_cited_to_the_prd`
 correctly forbids.
 
-**On the numeric coincidences.** Several values here collide with registered defaults —
-30 (%) with ``rvol_lookback_days`` (sessions), 2 (%) with the beginner ``daily_loss_pct``,
-20 (%) with ``score_cap_rvol``, 500 ($) with nothing but adjacent to ``min_adv_shares``. They
+**On the numeric coincidences.** Every value here that collides with a registered default, listed
+by computation rather than from memory: **30** (``Q2_MAX_FLOAT_AGE_DAYS`` in days,
+``Q3_MAX_DATA_TO_SIGNAL_P95_SECONDS`` in seconds, ``Q4_RECALIBRATE_ABOVE_PCT`` in percent) with
+``rvol_lookback_days`` (30 sessions); **5** (``MAX_MISSING_NBBO_PCT`` in percent,
+``Q4_CHEAP_STOCK_CEILING_USD`` in dollars) with ``min_rvol`` (5.0, a multiple of ADV); **2**
+(``Q3_MAX_SIGNAL_TO_ORDER_P95_SECONDS``, ``Q4_INERT_BELOW_PCT``) with ``t1_r_multiple`` (2.0) and
+``quote_stale_seconds`` (2). ``500`` ($, Q1's monthly ceiling) collides with nothing registered,
+though it is adjacent to ``min_adv_shares``. Review round 7 found this list naming a collision on
+**20**, which no constant in this module has, and omitting the two on **5** — a list whose whole
+purpose is to spare a reader the check had not had the check run on it. They
 are held as ``int`` percents, seconds and counts, converted at the comparison site, precisely so
 that no ``Decimal("0.30")`` appears in this package to be confused with a threshold restatement.
 The collisions are unit collisions in the ``TICK_SIZE`` sense: same digits, different quantity.

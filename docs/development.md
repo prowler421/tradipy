@@ -30,9 +30,12 @@ src/tradipy/
     gates.py        pre-entry gates and position sizing         (§2.2, §3.1.x)
     poc.py          composition: one candidate through every gate
     __main__.py     the `python -m tradipy` CLI entry point
-tests/              six pytest files (see below) + registry_baseline.json
-docs/               PRD.md (normative), PLAN, CHANGELOG, reviews, these guides
-scripts/            regen_registry_baseline.py
+tests/              seven pytest files (see below) + registry_baseline.json
+docs/               PRD.md (normative), PLAN, CHANGELOG, PHASE-2A-SPIKE,
+                    reviews/, these guides
+scripts/            regen_registry_baseline.py, check_links.py
+    spike2a/        the Phase 2a spike — throwaway, in the registry lint's scope
+data/spike2a/       spike inputs. Gitignored; empty on a clean clone
 .github/workflows/  ci.yml, release.yml
 ```
 
@@ -49,7 +52,7 @@ leaving the enum in `gates` would have made `quotes` depend on `gates`.
 
 | Command | What it does |
 | --- | --- |
-| `make check` | Lint, format check, type check, test — the gate CI runs. Run before committing. |
+| `make check` | Lint, format check, type check, **links**, test — the gate CI runs. Run before committing, and read the output: review round 7 found this gate red at `3545adf`, tripped by the commit before it, with four documents asserting the guardrail was enforced. Note that **pre-commit does not run `pytest`**, so the hooks passing is not this gate passing. |
 | `make test` | Run the pytest suite. |
 | `make coverage` | Tests with a coverage report (term + `coverage.xml`). |
 | `make lint` | `ruff check src tests scripts`. |
@@ -252,8 +255,9 @@ Assertions are written against the **derivation** of a value, not the value itse
 `assert cap == Decimal("0.01")` passes under a wrong rounding rule that happens to agree at
 that input, while `assert cap == floor_to_tick(x) and cap <= x` does not.
 
-Six files. The first four each defend a defect class that the check built for the previous
-one could not see; the last two cover the §20 computations and the PoC.
+Seven files. The first four each defend a defect class that the check built for the previous
+one could not see; the next two cover the §20 computations and the PoC; the seventh defends the
+documentation's own counts.
 
 - `test_worked_examples.py` — **arithmetic**: an example that violates its own rules. PRD
   v1.0 shipped four, and all four passed a fully-ticked acceptance checklist.
@@ -275,6 +279,12 @@ one could not see; the last two cover the §20 computations and the PoC.
 - `test_poc.py` — the PoC chain and the CLI, including that the demo's self-check is not
   vacuous. A demo that silently stops checking is worse than no demo, because its green
   output is what people trust instead of reading the code.
+- `test_documentation.py` — the **documentation's own counts**: registered parameters, frozen
+  baseline entries, library modules, the re-exported count in `__all__`, every `Reject` member
+  documented, every declared marker documented and applied. The v1.2 class applied to prose.
+  Note what it does not range over, because review round 7 found all four drifted: the number of
+  test files, the number of test cases, the number of documents in `docs/`, and the composition of
+  `scripts/`.
 
 Three markers, declared in `pyproject.toml` and enforced by `--strict-markers`:
 

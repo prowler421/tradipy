@@ -202,7 +202,12 @@ pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/visualstudiocode
 
-# Phase 2a spike datasets. D5 keeps the raw sample so every number in D1-D4 is recomputable,
-# but the files are large and vendor-licensed; the report carries their checksum and provenance
-# instead. See docs/PHASE-2A-SPIKE.md §5.
+# Phase 2a spike datasets. D5 keeps the raw sample so every number in D1-D4 is recomputable, but
+# real vendor extracts will be large and licensed, so the report carries their checksum and
+# provenance instead of the files. See docs/PHASE-2A-SPIKE.md §5.
+#
+# Until a vendor answers, the only files that have ever appeared here are SYNTHETIC, written by
+# scripts/spike2a/synthetic_data_generator.py together with a PROVENANCE.txt saying so. This
+# comment claimed they were "large and vendor-licensed" until review round 7, which is a
+# description of files that do not exist yet attached to the directory holding fabricated ones.
 data/spike2a/

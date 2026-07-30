@@ -13,15 +13,24 @@ All notable changes to the tradipy **package** are documented here. This file fo
 
 - **`scripts/spike2a/`** — the Phase 2a data feasibility spike, instrumented. Throwaway
   investigative code per PHASE-2A-SPIKE.md §8: not imported by `src/tradipy/`, no coverage
-  obligation, and Phase 3 gets written fresh against the PRD rather than grown from it. Eight
+  obligation, and Phase 3 gets written fresh against the PRD rather than grown from it. Seven
   modules — `prereg.py` (§7's pre-registration table, so the pass thresholds are read rather than
   re-typed), `windows.py` (the VIX window rule), `universe.py` (the §7 selection rule and its
-  three exclusions), `feeds.py` (the swappable NBBO fetch layer), `q4_spreads.py`, `q2_float.py`,
-  `q3_latency.py`. Stdlib-only and CSV-driven, so the whole pipeline runs with no broker and no
+  exclusions), `feeds.py` (the swappable NBBO fetch layer), `q4_spreads.py`, `q2_float.py`,
+  `q3_latency.py` — plus `__init__.py`, and `synthetic_data_generator.py` below. Stdlib-only and
+  CSV-driven, so the whole pipeline runs with no broker and no
   subscription; `ib_insync` is imported lazily inside one constructor and is deliberately not a
   package dependency. Q4 computes its caps with `gates.spread_caps` and its spread with
   `quotes.spread_at_signal` rather than reimplementing either (§4.3). **No `src/tradipy/` change
   and no new dependency.**
+- **`scripts/spike2a/synthetic_data_generator.py`** — fabricates `vix.csv`, `preopen.csv`,
+  `signal_bars.csv` and `quotes.csv` under a fixed seed so the Q4 pipeline can be exercised before
+  a vendor answers. It had no changelog entry until review round 7, which is how a 381-line module
+  reached `main` unrecorded; `.gitignore`'s note on `data/spike2a/` is corrected with it, having
+  described the directory's contents as "large and vendor-licensed" when everything ever written
+  there was fabricated locally. Everything it writes is synthetic and it writes a `PROVENANCE.txt`
+  beside the files saying so; no number computed from its output answers Q1–Q4. Four defects in it
+  are fixed under *Fixed* below, one of which changed a §7 verdict.
 - **`PreOpenFacts.check_units()`** — rejects `gap_premarket_pct`, `gap_daily_pct` or
   `missing_nbbo_pct` above `1`, because the registry stores gap thresholds as fractions and a CSV
   supplying `12` for a 12% gap compares `12 >= 0.04` — true for every row, so the gap filter stops
@@ -35,29 +44,6 @@ All notable changes to the tradipy **package** are documented here. This file fo
   is reached; `test_the_lint_catches_a_planted_literal` asserts the detection half fires on a file
   in a subdirectory. Two tests because the roots can be right while the offender construction
   drops every hit, which is the failure mode the `normalize()` blind spot actually had.
-
-### Changed
-
-- **`[tool.ruff.lint.isort] known-first-party` gains `"scripts"`** (`pyproject.toml`). Ruff's
-  default `src` is `[".", "src"]`; this project overrides it to `["src", "tests"]`, dropping `.`,
-  so `scripts.spike2a.*` resolved as third-party and isort wanted a section break before
-  `tradipy.*`. Every spike module importing from both — which is every module that reads a
-  registered threshold — tripped `I001`. Declared here rather than by adding a `src` root, because
-  the declaration does not depend on filesystem detection and matches how `tradipy` is already
-  declared.
-- **The registry lint now scans `scripts/` recursively**, not `src/tradipy/*.py` alone
-  (`test_parameter_registry.lint_roots()`). PHASE-2A-SPIKE.md §8 called this a prerequisite rather
-  than an improvement: the spike's central task is measuring whether `max_spread_r` is calibrated,
-  its code lives in `scripts/spike2a/`, and until now the only thing keeping a second definition of
-  `max_spread_r` out of the code that measures `max_spread_r` was a sentence in a document.
-  Verified by mutation — `Decimal("0.15")` planted in `scripts/spike2a/q4_spreads.py` fails with a
-  message naming `max_spread_r`. Two related changes: the `params.py`/`__init__.py` filename
-  exemption now applies **inside `src/tradipy/` only**, because exempting a filename exempts
-  whatever anyone later puts in it; and offenders are labelled by repo-relative path rather than
-  bare filename, since `scripts/` has subdirectories and two files called `sample.py` would
-  otherwise report identically. The six live statements of convention 1's scope (`CLAUDE.md`,
-  `CONTRIBUTING.md`, `params.py`, `api.md`, `architecture.md`, `.cursor/rules/tradipy.mdc`) are
-  updated to match, per the rule F8 established.
 
 - **`tests/test_documentation.py`** — asserts that counts stated in prose match the code:
   registered parameters, frozen-baseline entries, library-module count, the re-exported count in
@@ -83,6 +69,27 @@ All notable changes to the tradipy **package** are documented here. This file fo
 
 ### Changed
 
+- **`[tool.ruff.lint.isort] known-first-party` gains `"scripts"`** (`pyproject.toml`). Ruff's
+  default `src` is `[".", "src"]`; this project overrides it to `["src", "tests"]`, dropping `.`,
+  so `scripts.spike2a.*` resolved as third-party and isort wanted a section break before
+  `tradipy.*`. Every spike module importing from both — which is every module that reads a
+  registered threshold — tripped `I001`. Declared here rather than by adding a `src` root, because
+  the declaration does not depend on filesystem detection and matches how `tradipy` is already
+  declared.
+- **The registry lint now scans `scripts/` recursively**, not `src/tradipy/*.py` alone
+  (`test_parameter_registry.lint_roots()`). PHASE-2A-SPIKE.md §8 called this a prerequisite rather
+  than an improvement: the spike's central task is measuring whether `max_spread_r` is calibrated,
+  its code lives in `scripts/spike2a/`, and until now the only thing keeping a second definition of
+  `max_spread_r` out of the code that measures `max_spread_r` was a sentence in a document.
+  Verified by mutation — `Decimal("0.15")` planted in `scripts/spike2a/q4_spreads.py` fails with a
+  message naming `max_spread_r`. Two related changes: the `params.py`/`__init__.py` filename
+  exemption now applies **inside `src/tradipy/` only**, because exempting a filename exempts
+  whatever anyone later puts in it; and offenders are labelled by repo-relative path rather than
+  bare filename, since `scripts/` has subdirectories and two files called `sample.py` would
+  otherwise report identically. The six live statements of convention 1's scope (`CLAUDE.md`,
+  `CONTRIBUTING.md`, `params.py`, `api.md`, `architecture.md`, `.cursor/rules/tradipy.mdc`) are
+  updated to match, per the rule F8 established — **and a seventh, `docs/CHANGELOG.md`'s record of
+  the F8 fix, was missed and is annotated there rather than rewritten.**
 - **`docs/` reorganized**: the five review documents moved to `docs/reviews/`. They are the only
   part of the documentation set that grows by one file per round. All 120 relative links updated
   and verified by the new link checker; review filenames left as they are, because
@@ -91,9 +98,11 @@ All notable changes to the tradipy **package** are documented here. This file fo
 - **`make check` now includes `make links`**, and `make docs` shows the index rather than a bare
   directory listing.
 - **`CLAUDE.md` convention 1 and five other statements of the no-literal rule** now carry the
-  registry lint's actual scope (`src/tradipy/*.py` non-recursive, skipping `params.py` and
-  `__init__.py`, exempting undistinctive values, `scripts/` not scanned). The unqualified form
-  was finding F8, reported closed and not closed.
+  registry lint's actual scope. The unqualified form was finding F8, reported closed and not
+  closed. *(This entry read "…exempting undistinctive values, `scripts/` not scanned" until review
+  round 7. The scope was extended to `scripts/` by the entry two items above, in the same
+  `[Unreleased]` section — so the file asserted both. The scope is now stated in one place per
+  document and described here by reference rather than restated.)*
 - **`CLAUDE.md` gains convention 8**: a finding fixable in one line, with no spec implication and
   no behaviour change, gets fixed in the same change rather than dispositioned. Six rounds of
   review machinery exist for defects that recur or need a spec call.
@@ -103,10 +112,75 @@ All notable changes to the tradipy **package** are documented here. This file fo
 
 ### Fixed
 
-- `tests/README.md` heading read "Four open spec discrepancies" above a list of six.
-- `tests/test_boundary.py` said eleven surviving rounding mutations where `tests/README.md`, this
-  file and `docs/reviews/REVIEW-2026-07-28.md` all say twelve.
-- A stale citation in this file pointing at the pre-move review path.
+Driven by [`docs/reviews/REVIEW-2026-07-30.md`](docs/reviews/REVIEW-2026-07-30.md) except where
+noted. **`make check` was red at `3545adf`** while four documents said the guardrail it trips was
+enforced and three of them that the tree was clean; everything below is in `scripts/spike2a/`, and
+**no `src/tradipy/` behaviour changes.**
+
+- **The registry lint was failing on five literals** in `synthetic_data_generator.py` —
+  `Decimal("3")` and `Decimal("0.7")` (read as `sep_cost_multiple` and `min_conviction_score`) in
+  `MarketRegime` fields no caller read; `Decimal("5")` (`min_rvol`) as a price band; and
+  `Decimal("0.01")` twice, which was a genuine second definition of the tick. The dead fields
+  (`vix_mean`, `vix_std`, `volume_ratio`) and the unused `regime` parameter of
+  `generate_preopen_facts` are removed, the price bands are `int` dollars as in `prereg.py`, and
+  the tick comes from `rounding.TICK_SIZE` with `ceil_to_tick` — the direction
+  `quotes.estimated_spread` already uses, because understating a spread weakens both constraints
+  that consume it. Ruff had twelve findings in the same file: two unused imports and one
+  placeholder-free f-string (`F401`×2, `F541`), one `zip()` without `strict=` (`B905`), and **seven
+  `B007`s** — loop control variables unpacked and never used — plus two lines over the 100-character
+  limit. The `B007`s were found by running real `ruff`, *after* review round 7 reported the other
+  five from a hand-built AST check that had no `B007` rule; they are fixed by underscore-prefixing
+  the five pre-open facts a signal bar does not use, dropping a redundant `enumerate`, and marking
+  `_r` unused in the quote generator, where reading R would manufacture the correlation Q4 exists to
+  measure. **`ruff format --check` still fails on this file** and is left to `make format`:
+  `CLAUDE.md` forbids hand-formatting, and guessing at a formatter's output is the same class of
+  mistake as approximating its linter.
+- **`signal_bars.r` was computed by hand** — `price × 0.97` and friends — in a module whose own
+  docstring said it used the library's stop functions, and which imported
+  `gates.apply_stop_floor_and_ceiling` without calling it. R is the denominator of the §3.1.3
+  signal-time cap, so every cap in a Q4 run was derived from a stop the shipped rule would not
+  place: all 154 R values were off the tick grid and 7 were below `min_stop_distance`. The stop now
+  goes through the library, entry and price are tick-aligned, and bars the library rejects are
+  dropped — six of the 154 raw stops were `STOP_TOO_WIDE` under the shipped rule, so six bars existed
+  that the rule would never have produced. Across the other 148 the hand-rolled R was 0.014% to 7.7%
+  low, median 1.4%. **This changed the answer** — on the same generator the §7 Q4 verdict moved from
+  INERT to CALIBRATED, with the cheapest decile at 14.29% on VWAP Reclaim, which is A21's stated
+  worst case. Both verdicts are statements about the generator, which is the point of the next item.
+- **Half of every generated quote file was silently discarded.** The sample timestamp was
+  `f"09:{30+minute:02d}"` over 60 minutes, so rows 30–59 of each bar were `09:60`–`09:89`;
+  `datetime.fromisoformat` rejected 4,620 of 9,240 rows and `CsvQuoteFeed.unparsed` counted them —
+  a counter that existed for exactly this purpose and that **no caller read**. Fixed with `divmod`;
+  `q4_spreads.main` now prints the unparsed share, and `CsvQuoteFeed` gained `rows_read` so it can
+  be reported as a share rather than a bare count.
+- **`verdict()`'s fall-through message could state a falsehood** (H15). With a low aggregate held out
+  of INERT by one hot decile — again, A21's case — it reported `aggregate 1.36% inside the 2%-30% dead
+  band` for a rate below 2%. It now names the clause that decided the verdict and the worst decile.
+- **Provenance** (H7's code half; the §7 amendment question it raises stays open in
+  `docs/CHANGELOG.md`). The generator writes `data/spike2a/PROVENANCE.txt` naming itself, its seed
+  and its windows, because four plausible CSVs and a documented command are otherwise indistinguishable
+  from a vendor extract. Its windows now come from `windows.select_windows` over the VIX series it
+  writes, not from calendar recency: the §7 rule selected two windows containing 77 of its 156 rows,
+  with the quiet window empty, so every downstream number described a sample §7 would not have drawn.
+- `prereg.py`'s list of numeric coincidences with registered defaults named one on **20**, which no
+  constant in the module has, and omitted the two on **5**. Recomputed, and the same list in
+  `docs/PHASE-2A-SPIKE.md` §8 corrected with it.
+- Two `### Changed` headings in this `[Unreleased]` section (H14), with six `Added` items under the
+  first of them, and this section's own statement of the registry lint's scope contradicting an entry
+  nine bullets above it (H11).
+- **`scripts/spike2a/README.md`** (H8) now leads with the generator, marks its four output files
+  synthetic, and says which two documented inputs — `floats.csv`, `latency.csv` — have no generator
+  and why, so a clean clone no longer has five run commands that all fail with `FileNotFoundError`.
+  It also records that `universe.py` does not filter to the selected windows.
+- **Four documentation counts that had drifted** (H12), none of them covered by
+  `tests/test_documentation.py`: `docs/development.md` said six test files in two places where there
+  are seven, `docs/README.md` said six documents where there are seven plus the index, and neither
+  `CLAUDE.md`'s nor `docs/development.md`'s layout block mentioned `scripts/spike2a/` or `data/`.
+  Extending the doc-count test to cover them is recommended and not done here.
+- *(Round 6)* `tests/README.md` heading read "Four open spec discrepancies" above a list of six.
+- *(Round 6)* `tests/test_boundary.py` said eleven surviving rounding mutations where
+  `tests/README.md`, this file and `docs/reviews/REVIEW-2026-07-28.md` all say twelve. **Round 7
+  notes the enumeration in `tests/README.md` lists eleven, not twelve** — see `docs/CHANGELOG.md`.
+- *(Round 6)* A stale citation in this file pointing at the pre-move review path.
 
 ## [0.1.0] - 2026-07-29
 
@@ -215,7 +289,9 @@ returned.
   is stated, has a mechanism, is believed to be enforced, and is not. Invisible to all four
   earlier checks by construction.
 - `tests/test_computations.py` and `tests/test_poc.py`.
-- The suite is 153 cases (was 63) at 99% line and branch coverage (was 91%), verified against
+- The suite is 153 cases (was 63) at 99% line and branch coverage (was 91%) *as measured at this
+  release; nine test functions have been added since and review round 7 could not reproduce either
+  figure — see `docs/reviews/REVIEW-2026-07-30.md`*, verified against
   47 mutations, 47 caught. Twelve of those forty-seven survived a release candidate — every
   rounding direction and truncation outside the five gate thresholds was unenforced, because
   all three §3 worked examples are numerically degenerate. See `tests/README.md`.

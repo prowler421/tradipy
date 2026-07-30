@@ -21,8 +21,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 
-from tradipy.gates import apply_stop_floor_and_ceiling
-from tradipy.params import PARAMS, Config
+from tradipy.params import Config
 
 
 @dataclass(frozen=True)
@@ -112,14 +111,38 @@ def generate_preopen_facts(
 
     # Generate ~8 gappers per window date
     symbols = [
-        "AXTI", "CLVS", "CBAK", "CRTX", "DGLY", "DNLI", "FARO", "GMGI",
-        "HALO", "ILAG", "JMIA", "KOSS", "LBPH", "MIST", "NVFY", "ORCL",
-        "PPSI", "QRVO", "RMED", "SGMA", "TELL", "UACL", "VERU", "WKSP",
-        "XELA", "YEXT", "ZBH", "AiM",
+        "AXTI",
+        "CLVS",
+        "CBAK",
+        "CRTX",
+        "DGLY",
+        "DNLI",
+        "FARO",
+        "GMGI",
+        "HALO",
+        "ILAG",
+        "JMIA",
+        "KOSS",
+        "LBPH",
+        "MIST",
+        "NVFY",
+        "ORCL",
+        "PPSI",
+        "QRVO",
+        "RMED",
+        "SGMA",
+        "TELL",
+        "UACL",
+        "VERU",
+        "WKSP",
+        "XELA",
+        "YEXT",
+        "ZBH",
+        "AiM",
     ]
 
     for session in window_dates:
-        for i, symbol in enumerate(symbols[:8]):
+        for _i, symbol in enumerate(symbols[:8]):
             # Price: mostly $1–$20 (small caps)
             price = Decimal(random.uniform(1.5, 18.5))
 
@@ -148,15 +171,13 @@ def generate_preopen_facts(
                 and min_price <= price <= max_price
                 and adv >= min_adv
             ):
-                facts.append(
-                    (session, symbol, price, gap_pm, gap_daily, rvol, adv, float_shares)
-                )
+                facts.append((session, symbol, price, gap_pm, gap_daily, rvol, adv, float_shares))
 
     return facts
 
 
 def generate_signal_bars(
-    preopen: list[tuple[date, str, Decimal, Decimal, Decimal, Decimal, Decimal, Decimal]]
+    preopen: list[tuple[date, str, Decimal, Decimal, Decimal, Decimal, Decimal, Decimal]],
 ) -> list[tuple[str, date, str, Decimal, Decimal]]:
     """Generate signal bars for the three MVP setups.
 
@@ -164,9 +185,8 @@ def generate_signal_bars(
     The R value is computed using the library's own stop functions, per §4.3.
     """
     bars: list[tuple[str, date, str, Decimal, Decimal]] = []
-    cfg = Config.default()
 
-    for session, symbol, price, gap_pm, gap_daily, rvol, adv, float_shares in preopen:
+    for session, symbol, price, _gap_pm, _gap_daily, _rvol, _adv, _float_shares in preopen:
         # Decide which setups fire (each has ~30% chance)
         setups = []
         if random.random() < 0.35:
@@ -221,7 +241,7 @@ def generate_nbbo_quotes(
         "vwap_reclaim": regime.spread_bps_mean + 3,  # Wider (less liquid)
     }
 
-    for symbol, session, setup, price, r in signal_bars:
+    for symbol, session, setup, price, _r in signal_bars:
         # Base spread from regime and setup
         base_bps = setup_spread_bps.get(setup, regime.spread_bps_mean)
 
@@ -248,7 +268,7 @@ def generate_nbbo_quotes(
 
         for minute in range(samples_per_bar):
             # Use +00:00 instead of Z for Python 3.10 fromisoformat compatibility
-            captured_at = f"{base_time}T09:{30+minute:02d}:00+00:00"
+            captured_at = f"{base_time}T09:{30 + minute:02d}:00+00:00"
 
             # Mid-price walks randomly; bid/ask around it
             mid = price + Decimal(str(random.gauss(0, float(price * Decimal("0.002")))))
@@ -259,9 +279,7 @@ def generate_nbbo_quotes(
             bid_size = Decimal(random.randint(100, 10000))
             ask_size = Decimal(random.randint(100, 10000))
 
-            quotes.append(
-                (symbol, captured_at, bid, ask, bid_size, ask_size)
-            )
+            quotes.append((symbol, captured_at, bid, ask, bid_size, ask_size))
 
     return quotes
 
@@ -278,7 +296,7 @@ def write_csv(
         writer.writeheader()
         for row in rows:
             if isinstance(row, tuple):
-                writer.writerow(dict(zip(fieldnames, row)))
+                writer.writerow(dict(zip(fieldnames, row, strict=True)))
             else:
                 writer.writerow(row)
 
@@ -332,8 +350,16 @@ def main() -> None:
         data_dir / "preopen.csv",
         all_preopen,
         [
-            "session", "symbol", "price", "gap_premarket_pct", "gap_daily_pct",
-            "rvol", "adv_shares", "float_shares", "halted_before_open", "missing_nbbo_pct",
+            "session",
+            "symbol",
+            "price",
+            "gap_premarket_pct",
+            "gap_daily_pct",
+            "rvol",
+            "adv_shares",
+            "float_shares",
+            "halted_before_open",
+            "missing_nbbo_pct",
         ],
     )
     print(f"   → {len(all_preopen)} total symbol-sessions written\n")
@@ -350,7 +376,9 @@ def main() -> None:
 
     # 5. NBBO quotes
     print("5. Generating NBBO quotes...")
-    print(f"   - Active regime: {ACTIVE_REGIME.label} (spread ~{ACTIVE_REGIME.spread_bps_mean} bps)")
+    print(
+        f"   - Active regime: {ACTIVE_REGIME.label} (spread ~{ACTIVE_REGIME.spread_bps_mean} bps)"
+    )
     print(f"   - Quiet regime: {QUIET_REGIME.label} (spread ~{QUIET_REGIME.spread_bps_mean} bps)")
 
     # Generate quotes for ALL signal bars, partitioning by window
@@ -372,8 +400,10 @@ def main() -> None:
     print(f"   → {len(all_quotes)} NBBO samples generated\n")
 
     print(f"✓ All synthetic data written to {data_dir}/")
-    print(f"\nReady to run spike measurement code:")
-    print(f"  uv run python -m scripts.spike2a.q4_spreads {data_dir}/signal_bars.csv {data_dir}/quotes.csv")
+    print("\nReady to run spike measurement code:")
+    print(
+        f"  uv run python -m scripts.spike2a.q4_spreads {data_dir}/signal_bars.csv {data_dir}/quotes.csv"
+    )
 
 
 if __name__ == "__main__":

@@ -48,6 +48,25 @@ All notable changes to the tradipy **package** are documented here. This file fo
   `classify()` and deliberately not from `from_csv_row`, which folds `ValueError` into an
   unparsable-row count where a `UnitError` would vanish. It caught a real instance immediately —
   the synthetic fixture used to smoke-test the module had `missing_nbbo_pct=9`.
+- **`scripts/spike2a/sample.py`** — joins the two halves of §7's sample definition that H5 found
+  nothing composing: `windows.select_windows` (the VIX-based window rule) and
+  `universe.select_sample` (the §4.2 filter rule). Restricts a pre-open file to the sessions in
+  the two selected windows, then applies the filter rule to what remains, reporting sessions
+  outside the windows as their own count rather than folding them into a filter rejection or a
+  §7 exclusion — split further into `span_gap` (a session inside a window's calendar range but
+  missing from the VIX series the window was computed from — a source disagreement) and
+  `out_of_span` (genuinely not a candidate), so the two are not counted as one thing. Every parsed
+  row is unit-checked regardless of which population it ends up in, since a malformed row that
+  happens to fall outside the windows is otherwise never seen by `universe.classify`, the guard's
+  only other caller. `windows.py` is unchanged; `universe.py`'s module docstring gains two
+  sentences stating that its own CLI applies the filter rule alone, which `sample.py` and
+  `scripts/spike2a/README.md` both already claimed of it. See `docs/CHANGELOG.md`'s "Decided"
+  section under Unreleased for why a composing module was chosen over the other two options H5
+  named, including the accretion risk the finding itself raised against this option.
+  `tests/test_spike2a_sample.py` exercises the join's central guarantee — each of its three
+  assertions was confirmed to fail with the corresponding guard removed, per `CLAUDE.md`
+  convention 6 — even though `scripts/spike2a/` carries no coverage obligation (PHASE-2A-SPIKE.md
+  §8; narrowing that exemption is H2, open).
 - **Two guard tests on the registry lint's new roots** —
   `test_the_lint_scans_scripts_recursively` asserts `scripts/` is in scope and that a nested file
   is reached; `test_the_lint_catches_a_planted_literal` asserts the detection half fires on a file

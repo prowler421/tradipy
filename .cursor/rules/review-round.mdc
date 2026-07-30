@@ -38,7 +38,7 @@ passes, the second finding three errors created by the first.
    attribution; then repeat after correcting, because corrections introduce errors. Record the
    error rate in the appendix — it is evidence about the method.
 9. **Wire it in.** `docs/README.md` review table, `docs/PLAN.md` companion table and Workstream 11
-   checklist. Add to the five-defect-classes table **only for a genuinely new class**; a new
+   checklist. Add to the defect-classes table **only for a genuinely new class**; a new
    population of an existing one is a subsection.
 
 ## Two claims a review here must not make

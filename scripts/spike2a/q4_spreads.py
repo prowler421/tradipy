@@ -224,6 +224,21 @@ def verdict(overall: Rate, deciles: list[Rate]) -> tuple[str, str]:
     if all((d.rate or Decimal(0)) < inert_below for d in deciles) and rate < inert_below:
         return Q4_INERT, f"every decile below {Q4_INERT_BELOW_PCT}% — the gate is decoration"
 
+    # The fall-through said "aggregate X% inside the 2%-30% dead band", which is false whenever a
+    # low aggregate is held out of INERT by a single hot decile — the case A21 is *about*. Round 7
+    # reached it on the first corrected run: 1.36% aggregate, 14.29% in the cheapest decile, and a
+    # message asserting 1.36% was inside a band starting at 2%. A verdict has to name the clause
+    # that decided it, or the next reader recalibrates against a sentence rather than a rule.
+    if rate < inert_below:
+        hot = [d for d in deciles if (d.rate or Decimal(0)) >= inert_below]
+        worst = max(hot, key=lambda d: d.rate or Decimal(0)) if hot else None
+        detail = "" if worst is None else f"; worst {worst.label} at {(worst.rate or 0) * 100:.2f}%"
+        return (
+            Q4_CALIBRATED,
+            f"aggregate {rate * 100:.2f}% is below {Q4_INERT_BELOW_PCT}% but {len(hot)} "
+            f"decile(s) are not — not inert, so calibrated by elimination{detail}",
+        )
+
     return (
         Q4_CALIBRATED,
         f"aggregate {rate * 100:.2f}% inside the "
@@ -346,6 +361,15 @@ def main(argv: list[str]) -> int:
     rows = [classify(b, cfg) for b in bars]
 
     print(report(rows, missing))
+    # `CsvQuoteFeed.unparsed` exists so a malformed quote file cannot read as a vendor coverage
+    # failure. It was written and never read: the first generated sample had 4,620 of 9,240 rows
+    # timestamped 09:60-09:89, exactly half the tape was dropped, and the run printed a clean
+    # verdict. A counter nothing prints is not a diagnostic.
+    if feed.unparsed:
+        print(
+            f"WARNING  {feed.unparsed} of {feed.rows_read} quote rows did not parse and were "
+            f"not measured — fix the file, not the verdict"
+        )
     by_reason: dict[str, int] = defaultdict(int)
     for c in rows:
         by_reason[c.reason] += 1

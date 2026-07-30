@@ -6,8 +6,10 @@ alwaysApply: true
 # tradipy — assistant rules
 
 tradipy is the **invariant layer** of a Ross Cameron momentum trading system. Its whole
-reason to exist is that five review rounds each found a defect class the previous check
-could not see — four in `docs/PRD.md`, and a fifth in the code that implements it. The code
+reason to exist is that six review rounds each found a defect class the previous check
+could not see — four in `docs/PRD.md`, a fifth in the code that implements it, and a sixth in
+the code that measures it (`scripts/spike2a/`, which every earlier check was aimed away from).
+The code
 makes the PRD's rules executable. Treat the PRD as normative: `docs/PRD.md §20` (Computation
 Semantics) governs on any conflict with code. **If code and PRD diverge, that is a spec
 question — raise it, do not resolve it silently in code.**

@@ -2,7 +2,8 @@
 
 **Throwaway investigative code.** Scope, method and the binding pre-registration are in
 [docs/PHASE-2A-SPIKE.md](../../docs/PHASE-2A-SPIKE.md). This file says how to run it and what it
-is not.
+is not. For the two collectors that need a live IBKR paper connection instead of the fabricated
+input below, see [TEST_SETUP.md](TEST_SETUP.md).
 
 ## What this is not
 
@@ -28,10 +29,20 @@ default.
 
 ## Running it
 
-Every module is stdlib-only and takes CSV input, so the whole pipeline runs with no broker, no
-subscription and no network. Run from the repository root:
+Every measurement module is stdlib-only and takes CSV input, so the whole pipeline runs with no
+broker, no subscription and no network. Run from the repository root.
+
+**`data/spike2a/` is gitignored and empty on a clean clone**, so nothing below runs until the
+files exist. `synthetic_data_generator.py` fabricates four of the six, which is enough to exercise
+Q4 and nothing more — it writes a `PROVENANCE.txt` beside them saying so, and no number computed
+from its output answers Q1–Q4. `floats.csv` and `latency.csv` have no generator: Q2 and Q3 are
+blocked on a second float provider and a paper connection, so their inputs are hand-authored when
+those arrive.
 
 ```bash
+# Fabricate vix.csv, preopen.csv, signal_bars.csv, quotes.csv + PROVENANCE.txt. Synthetic.
+uv run python -m scripts.spike2a.synthetic_data_generator
+
 # The two §7 sample windows, chosen by the VIX rule. Input: date,close
 uv run python -m scripts.spike2a.windows data/spike2a/vix.csv 2026-07-29
 
@@ -41,12 +52,19 @@ uv run python -m scripts.spike2a.universe data/spike2a/preopen.csv
 # Q4 — the measurement that matters
 uv run python -m scripts.spike2a.q4_spreads data/spike2a/signal_bars.csv data/spike2a/quotes.csv
 
-# Q2 — float staleness (and disagreement, once a second provider exists)
+# Q2 — float staleness (and disagreement, once a second provider exists). No generator; needs
+# a real provider extract.
 uv run python -m scripts.spike2a.q2_float data/spike2a/floats.csv 2026-07-29
 
-# Q3 — latency percentiles
+# Q3 — latency percentiles. No generator; needs a measured run.
 uv run python -m scripts.spike2a.q3_latency data/spike2a/latency.csv
 ```
+
+**`universe.py` does not filter to the windows `windows.py` selects** — §7 defines the sample as
+every qualifying symbol-session *in the two windows*, and joining the two halves is an open
+finding from review round 7, not a step you can run today. Until it is joined, `universe.py`
+reports on whatever `preopen.csv` contains, and it is the caller's job to have restricted the file
+to the selected sessions.
 
 `IbkrHistoricalTicksFeed` needs `ib_insync`, which is **not** a package dependency and must not
 become one — install it into a throwaway environment. Its default port is 7497, the TWS *paper*
@@ -85,12 +103,26 @@ it before anything else. `rvol` is *not* a fraction — `min_rvol` is a plain mu
 
 ## The guardrail
 
-Convention 1 — no literal for a registered threshold — **is now mechanical here.** The registry
+Convention 1 — no literal for a registered threshold — **is mechanical here.** The registry
 lint's roots were extended from `src/tradipy/*.py` to include `scripts/` recursively, which
 §8 called the prerequisite for this guardrail being a test rather than a policy. Planting
 `Decimal("0.15")` in any module in this directory fails
 `tests/test_parameter_registry.py::test_no_registered_literal_hardcoded_in_source` with a message
 naming `max_spread_r`.
+
+**Mechanical is not the same as green, and this file previously implied it was.** The commit after
+the one that extended the lint added `synthetic_data_generator.py`, which tripped it five times; the
+gate was red for two commits while four documents — this one among them — said the rule was
+enforced, three statements across two of them going further and saying the tree was clean. Review
+round 7 found it by running the test. The lesson is not about the lint, which
+worked: run `make check` and read the output, because a sentence saying a check exists is not the
+check's result.
+
+The second obligation below is guarded by nothing at all, and it was the round-7 defect with teeth:
+`synthetic_data_generator.py` claimed in its own docstring to derive R from the library's stop
+functions while multiplying by a hand-written percentage. Correcting it moved the §7 Q4 verdict on
+the same synthetic sample from INERT to CALIBRATED — so an R computed by hand is not a hygiene
+matter, it changes the answer.
 
 Spike-only acceptance thresholds — §7's 30%, 2%, 95%, p95 seconds — live in `prereg.py` as `int`
 percents and counts. They are **not** registered parameters and must not become any: a registered

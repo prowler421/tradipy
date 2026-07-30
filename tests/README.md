@@ -1,7 +1,7 @@
 # Invariant fixture suite
 
 This was the first code in the project, and it is deliberately not the strategy engine.
-PRD §21.1 and PLAN Workstream 11 call for it because five review rounds have each found a
+PRD §21.1 and PLAN Workstream 11 call for it because six review rounds have each found a
 defect class invisible to the check designed for the previous one. These fixtures make the
 rules executable.
 

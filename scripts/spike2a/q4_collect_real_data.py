@@ -11,6 +11,14 @@ Example (past 5 trading days):
 
 Output: data/spike2a/quotes_real.csv in the format q4_spreads expects
 
+**Does not write `age_seconds`.** That column is the quote's age at the *signal instant*
+(§20.14), and this collector has no signal instant — it dumps a symbol's raw tick history for a
+date range, independent of any signal_bars.csv. `feeds.CsvQuoteFeed` treats the column as
+optional and defaults a missing one to 0, same as a written "0" would — but a written "0" reads
+as a measurement and an absent column does not, which is the distinction review round 7's H6 and
+H10 both turn on. Joining a real tick file to real signal instants is the same open question as
+H4/H6 for the synthetic path, and is not resolved here.
+
 Prerequisites:
     - TWS or IB Gateway running on localhost:7497 (paper mode)
     - ib_insync installed: pip install ib_insync
@@ -93,6 +101,16 @@ def fetch_historical_nbbo(
 
                 for tick in ticks:
                     if hasattr(tick, "bid") and hasattr(tick, "ask"):
+                        # `age_seconds` is deliberately not written. §20.14 staleness is the
+                        # quote's age *at the signal instant*, which this collector does not
+                        # know — it dumps a session's raw tick history independent of any
+                        # particular signal_bars.csv, and the join between the two is the open
+                        # question review round 7 raised as H4/H6. Writing "0" here would assert
+                        # every tick was fresh at signal time, which makes the one §20.14 branch
+                        # that could fire on real data unreachable, the same defect H6 found in
+                        # the synthetic path. `age_seconds` is optional in the schema
+                        # (`feeds.CsvQuoteFeed`); omitting the column states the gap instead of
+                        # hiding it.
                         sample = {
                             "symbol": symbol,
                             "captured_at": tick.time.isoformat()
@@ -102,7 +120,6 @@ def fetch_historical_nbbo(
                             "ask": str(tick.ask),
                             "bid_size": tick.bidSize if hasattr(tick, "bidSize") else 100,
                             "ask_size": tick.askSize if hasattr(tick, "askSize") else 100,
-                            "age_seconds": "0",
                         }
                         all_samples.append(sample)
 
@@ -119,7 +136,7 @@ def fetch_historical_nbbo(
             print("  3. IBKR has historical data for these symbols")
             return 1
 
-        # Write CSV
+        # Write CSV. No `age_seconds` column — see the comment where samples are built.
         with output_path.open("w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(
                 f,
@@ -130,7 +147,6 @@ def fetch_historical_nbbo(
                     "ask",
                     "bid_size",
                     "ask_size",
-                    "age_seconds",
                 ],
             )
             writer.writeheader()

@@ -97,10 +97,14 @@ class CsvQuoteFeed:
     def __init__(self, path: Path) -> None:
         self.name = f"csv:{path.name}"
         self.unparsed = 0
+        #: Rows seen, so a caller can report ``unparsed`` as a share rather than a bare count.
+        #: "4,620 unparsed" and "4,620 of 9,240 unparsed" are different findings.
+        self.rows_read = 0
         self._by_key: dict[tuple[str, str], list[QuoteSample]] = {}
 
         with path.open(newline="", encoding="utf-8") as fh:
             for row in csv.DictReader(fh):
+                self.rows_read += 1
                 sample = self._parse(row)
                 if sample is None:
                     self.unparsed += 1

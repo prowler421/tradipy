@@ -1,9 +1,17 @@
 # Phase 2a — Data Feasibility Spike
 
-**Status: instrumented, not yet run. Scope and pre-registration both committed 2026-07-29 — §7 is
-filled and binding. The code that answers Q2, Q3 and Q4 is written and exercised against synthetic
-input (`scripts/spike2a/`, see its README). What is missing is data, and the blocking actions are
-external to this repository.**
+**Status: instrumented, not run against real data. Scope and pre-registration both committed
+2026-07-29 — §7 is filled and binding. The code that answers Q2, Q3 and Q4 is written and
+exercised against synthetic input (`scripts/spike2a/`, see its README). What is missing is data,
+and the blocking actions are external to this repository.**
+
+**"Not yet run" is the wrong phrase and was corrected in review round 7.** The Q4 pipeline *has*
+been run end to end, on fabricated input, and it printed a §7 verdict — twice, with different
+answers, before and after a defect in the generator's R derivation was fixed. A synthetic run
+exercises the instrument and answers nothing; the distinction matters because a verdict looks the
+same either way on the terminal. Two consequences, both binding: the generator writes a
+`PROVENANCE.txt` beside its output, and **a synthetic run is not a data pull** for the purposes of
+§7's amendment clause — see the open question in [CHANGELOG.md](CHANGELOG.md) under Unreleased.
 
 | Question | Blocked on |
 |---|---|
@@ -256,12 +264,25 @@ Two further guardrails:
   naming `max_spread_r`. The `__init__.py` exemption is deliberately **not** extended to
   `scripts/`: exempting a filename exempts whatever anyone later puts in it.
 
+  **It caught something on its first real outing, and nobody read the result.** The next commit
+  added `synthetic_data_generator.py` with five registered-threshold literals, and the lint failed
+  for two commits while four documents — this one, `scripts/spike2a/README.md`,
+  `scripts/spike2a/__init__.py` and two rows of [PLAN.md](PLAN.md) — said the guardrail was
+  enforced, three statements across two of them going further and saying the tree was clean. Review
+  round 7 reproduced it by executing the test. Extending a lint's roots is a prerequisite for the
+  guardrail; running the suite is the guardrail. Note also that `pre-commit` does not run `pytest`,
+  so this lint is reachable only from `make check` or CI.
+
   Spike-only acceptance thresholds are a separate matter and live in `scripts/spike2a/prereg.py`
   as `int` percents and counts. They are not registered parameters and must not become any — a
   registered parameter is a tunable of the trading system; these are the acceptance thresholds of
   one investigation, and registering them would create rows with no §2/§2.0 citation. Their
-  numeric coincidences with registered defaults (30, 2, 20, 500) are listed in that module's
-  docstring so no reader has to work out whether one is a restatement.
+  numeric coincidences with registered defaults (**30**, **5**, **2**) are listed in that module's
+  docstring so no reader has to work out whether one is a restatement. That list read "30, 2, 20,
+  500" until review round 7 recomputed it: no constant in the module is 20, 500 collides with
+  nothing registered, and the two collisions on 5 — `MAX_MISSING_NBBO_PCT` and
+  `Q4_CHEAP_STOCK_CEILING_USD` against `min_rvol` — were missing. A list whose purpose is to spare
+  a reader the check is worth exactly what the check that produced it was worth.
 - **No `datetime` import into `src/tradipy/`.** §20.1 is the natural first implementation task
   *after* this spike, precisely because a `Bar` that knows when it closed should be shaped by the
   feed that was chosen. Adding a timestamp during the spike commits the bar model to whichever

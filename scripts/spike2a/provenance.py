@@ -26,8 +26,8 @@ docs/PHASE-2A-SPIKE.md §7 binds its thresholds to measured data and states that
 is not a data pull. §7 is untouched by D30 — :attr:`Provenance.answers_prereg` is how callers
 ask, so that the distinction lives in one place instead of in each report's wording.
 
-Run as a script to declare hand-authored input, which is how ``floats.csv`` and ``latency.csv``
-get past the gate — they have no generator, so without this they could not be read at all::
+Run as a script to declare hand-authored input that is not covered by a regeneration — for
+example a measured ``latency.csv`` added beside the generator's seven files::
 
     python -m scripts.spike2a.provenance data/spike2a/latency.csv
 """
@@ -292,8 +292,8 @@ _BY_HAND = "scripts/spike2a/provenance.py (declared by hand)"
 def declare(*paths: Path, detail: str = "hand-authored") -> Path:
     """Declare ``paths`` ``SIMULATED``, merging into any existing marker in their directory.
 
-    For input with no generator — ``floats.csv`` and ``latency.csv``, whose sources are a second
-    float provider and a measured run.
+    For input the generator does not cover — a measured ``latency.csv`` merged beside generated
+    files, for example.
 
     **What merging does and does not cover.** Adding a file leaves the entries already declared
     alone, *and* leaves the existing header alone — the generator's name, seed and description

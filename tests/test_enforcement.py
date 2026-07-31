@@ -808,6 +808,16 @@ _PREOPEN_CSV = "session,symbol,price,gap_premarket_pct\n"
         ("windows", [("vix.csv", _VIX_CSV)]),
         ("universe", [("preopen.csv", _PREOPEN_CSV)]),
         ("q2_float", [("floats.csv", "symbol,provider,float_shares,as_of\n")]),
+        (
+            "q1_vendors",
+            [
+                (
+                    "vendors.csv",
+                    "provider,monthly_cost_usd,concurrent_symbols,refresh_seconds,"
+                    "sample_coverage_pct,hard_filters_expressible\n",
+                )
+            ],
+        ),
         ("sample", [("vix.csv", _VIX_CSV), ("preopen.csv", _PREOPEN_CSV)]),
     ],
 )
@@ -937,11 +947,12 @@ def test_declaring_cannot_relabel_honestly_declared_real_data(tmp_path: Path) ->
 
 
 @pytest.mark.spec
-def test_the_declare_cli_unblocks_input_that_has_no_generator(tmp_path: Path) -> None:
-    """``floats.csv`` and ``latency.csv`` have no generator, so without this they are unreadable.
+def test_the_declare_cli_unblocks_input_the_generator_does_not_cover(tmp_path: Path) -> None:
+    """Hand-authored files still need ``provenance declare`` when added beside generated ones.
 
-    A gate with no supported way past it is not a gate, it is an outage — and the documented Q2
-    and Q3 commands both failed with exit 3 until this existed.
+    The generator now covers ``floats.csv`` and ``latency.csv``, but ``declare`` remains the path
+    for any input added later — and a gate with no supported way past it is not a gate, it is an
+    outage.
     """
     latency = tmp_path / "latency.csv"
     latency.write_text("kind,seconds\ndata_to_signal,0.4\n", encoding="utf-8")

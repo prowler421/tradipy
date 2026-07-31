@@ -7,32 +7,42 @@ together. `PRD.md §20` (Computation Semantics) is normative and governs on any 
 
 ## Module structure
 
-Eight library modules plus a CLI entry point, with a strict one-way dependency graph:
+Nine library modules plus a CLI entry point, with a strict one-way dependency graph:
 
 ```
-rounding.py  ◄── params.py ◄──┬── quotes.py ──┐
-                              ├── score.py  ──┤
-rejects.py   ◄────────────────┴── gates.py  ──┼── poc.py ◄── __main__.py
-                                              │
-bars.py  ─────────────────────────────────────┘
+rounding.py  ◄── params.py ◄──┬── quotes.py ──────────────┐
+                              ├── score.py  ──┐           │
+rejects.py   ◄────────────────┴── gates.py  ──┴─ scanner.py ── poc.py ◄── __main__.py
+                                                            │
+bars.py  ───────────────────────────────────────────────────┘
 ```
 
 `rounding`, `rejects` and `bars` depend on nothing but the standard library. `params` depends
 only on `rounding`; `quotes` and `gates` depend on `params` and `rejects`; `score` on
-`params`. `bars` is standalone because §20.4 is pure geometry over candles — it reads no
-threshold, which is also why §3.2 criterion 2 arrives as a caller-supplied predicate.
+`params`; `scanner` on `params`, `rejects`, `score` and `gates`. `bars` is standalone because
+§20.4 is pure geometry over candles — it reads no threshold, which is also why §3.2
+criterion 2 arrives as a caller-supplied predicate.
 
 The ordering is deliberate: rounding is the most primitive concept, thresholds are defined in
-terms of it, and the gates are defined in terms of thresholds. `poc` sits above all of them
-and only `__main__` depends on `poc` — nothing in the library does.
+terms of it, and the gates are defined in terms of thresholds. `scanner` sits on top of the
+library layer because §4.3 ranks with §20.10 and §4.2's spread row is §3.1.3's scan-time cap
+— it reuses both rather than restating either. `poc` sits above all of them and only
+`__main__` depends on `poc` — nothing in the library does.
 
-`Reject` lives in its own module rather than in `gates` because two layers raise it —
-`gates` for the pre-entry gates and `quotes` for §20.14 validity — and a quote is the lower
-level construct. Keeping the enum in `gates` would have made `quotes` depend on `gates`,
-inverting the layering for no reason. It is re-exported from `tradipy.gates`, so
-`from tradipy.gates import Reject` still works.
+`Reject` lives in its own module rather than in `gates` because three layers raise it —
+`gates` for the pre-entry gates, `quotes` for §20.14 validity, and `scanner` for §4.2's hard
+filters — and a quote is the lower level construct. Keeping the enum in `gates` would have
+made `quotes` depend on `gates`, inverting the layering for no reason. It is re-exported from
+`tradipy.gates`, so `from tradipy.gates import Reject` still works.
 
-`tradipy/__init__.py` imports the seven library modules so the names it advertises resolve as
+That module also holds a **second** enum, `SoftFlag`, for §4.2's seven Soft rows. §4.2 lists
+all fourteen rows under one "Rejection Code" column, and round 10's finding K5 is what that
+invites: a reader sizing the scanner from it builds all fourteen as rejection paths, and
+`INST_OWN_HIGH` — which D24 keeps deliberately inert — becomes a filter that throws
+candidates away. Two unrelated types make that a compile-time error instead. `ScanResult.reject`
+is `Reject | None` and will not accept a flag.
+
+`tradipy/__init__.py` imports the eight library modules so the names it advertises resolve as
 attributes. It deliberately does **not** import `poc`: the composition layer is not part of
 what `import tradipy` means, and `import tradipy.poc` is the honest way to reach it.
 
@@ -102,16 +112,48 @@ separation floor and unified room requirement (`min_separation`, `required_room`
 (`apply_stop_floor_and_ceiling`, `vwap_reclaim_stop`), and sizing (`position_size`).
 
 No numeric threshold appears as a literal in this module — and no rounding *direction*
-either. Every rounded threshold goes through `_rounded(cfg, value, *governed_by)`, which
+either. Every rounded threshold goes through `Config.round_for(value, *governed_by)`, which
 reads the polarity from the parameters that govern it. Naming a `Polarity` member at the
 call site gave direction two definitions that nothing reconciled, which is the v1.3.1 defect
 reproduced inside the mechanism built to close it. `gates.py` no longer imports `Polarity`.
+`round_for` lived here as `_rounded` until Phase 3, when `scanner` needed the same
+resolution; the two ways to share it were a private cross-module import or a second module
+naming directions, and direction is registry data, so it moved onto the registry object.
+
+`scan_spread_cap(price, cfg)` is the scan-time half of §3.1.3, split out because §4.2 makes
+it a hard scanner filter and at scan time no setup has formed, so no R exists to compute the
+signal-time cap from. `spread_caps` delegates to it rather than deriving the same quantity
+twice.
+
+### `tradipy.scanner`
+
+PRD §4: the seven §4.2 hard filters (`HARD_FILTERS`), the seven §4.2 soft flags
+(`SOFT_FILTERS`), and §4.3's ranked watchlist (`scan`, `evaluate_candidate`). Same two rules
+as `gates`: no threshold literal, no rounding direction at a call site.
+
+It applies §4.2 to a universe it is **given**. §4.1's pipeline begins with an external
+screening provider and includes a manual catalyst check; both are inputs here. There is no
+feed, no file read and no network call — PLAN **D30** puts the project on the `SIMULATED`
+rung of the data ladder, and the test suite backs this module with an *allowlist* of imports
+rather than the repository-wide denylist, because §4.2 is arithmetic over inputs and needs
+nothing else.
+
+The hard/soft split is structural, not conventional: a `HardFilter` carries a `Reject` and a
+`SoftFilter` carries a `SoftFlag`, and `ScanResult.reject` is typed `Reject | None`. Round
+10's finding K5 is the failure this prevents.
+
+Nothing here is *calibrated*. D29 gates calibration on Phase 2a Q1 answered on measured data;
+**D32** opened the phase on simulated data with that explicitly outstanding. The filters are
+correct applications of §4.2's thresholds, and whether those thresholds are the right numbers
+— or even obtainable — is still open. See [PHASE-3-READINESS.md](PHASE-3-READINESS.md).
 
 ### `tradipy.poc`
 
-Composes the gates into one `evaluate(candidate, cfg)` in the order §3.1 states them, and
-carries the three §3 worked examples. It is **not** the strategy engine: it takes a candidate
-that has already been found. `python -m tradipy` is the front end.
+Composes the gates into one `evaluate(candidate, cfg)` in the order §3.1 states them, carries
+the three §3 worked examples, and holds `simulated_universe(cfg)` — fourteen synthetic
+candidates behind `python -m tradipy scan`. It is **not** the strategy engine: it takes a
+candidate that has already been found, and filters a universe it constructed rather than one
+it sourced. `python -m tradipy` is the front end.
 
 ## Design invariants
 

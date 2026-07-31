@@ -104,8 +104,10 @@ _REGISTRY_COUNT = re.compile(
 )
 
 # Lines that describe what ``tradipy/__init__.py`` re-exports rather than what the package
-# contains. Seven modules are re-exported and eight exist, because ``poc`` is deliberately not
-# part of what ``import tradipy`` means — so both counts are true and each needs its own test.
+# contains. One fewer is re-exported than exists, because ``poc`` is deliberately not part of
+# what ``import tradipy`` means — so both counts are true and each needs its own test. Neither
+# number is written here: this file exists to catch counts stated in prose that drift from the
+# code, and it had two of its own wrong within one change of the package growing a module.
 _REEXPORT_CONTEXT = ("re-export", "imports", "advertis", "__all__", "binds")
 
 
@@ -190,11 +192,11 @@ def test_documented_baseline_size_matches_the_baseline_file() -> None:
 
 @pytest.mark.spec
 def test_documented_module_count_matches_the_package() -> None:
-    """Validate "Eight library modules" count matches the package.
+    """Every stated count of *library modules* equals what ``src/tradipy/`` contains.
 
     ``architecture.md`` and ``api.md`` both open with this count and draw a dependency
     graph beneath it. The graph is what a reader trusts; the count tells them whether
-    it is complete.
+    it is complete. The count itself is derived below, never written here.
     """
     actual = len(_library_modules())
     word = WORDS[actual]
@@ -221,12 +223,13 @@ def test_documented_module_count_matches_the_package() -> None:
 
 @pytest.mark.spec
 def test_the_re_exported_module_count_matches_package_all() -> None:
-    """Validate "the seven library modules" count in __all__ excludes poc.
+    """Every stated count of *re-exported* modules equals ``len(tradipy.__all__)``.
 
-    Two different true counts sit two paragraphs apart in ``architecture.md``: eight modules
-    exist, seven are re-exported, because ``poc`` is deliberately not part of what
+    Two different true counts sit two paragraphs apart in ``architecture.md``: every library
+    module exists, one fewer is re-exported, because ``poc`` is deliberately not part of what
     ``import tradipy`` means. Both are correct; the pair exactly matches the configuration
-    that invites someone to "fix" one of them.
+    that invites someone to "fix" one of them — which is why the numbers are derived and not
+    named here.
     """
     import tradipy
 

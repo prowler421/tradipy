@@ -1,6 +1,6 @@
-"""``python -m tradipy`` — the Phase 1 proof of concept.
+"""``python -m tradipy`` — the runnable proof of concept.
 
-Two subcommands:
+Three subcommands:
 
 ``demo``
     Replay the three PRD §3 worked examples through every gate and self-check the derived
@@ -10,6 +10,12 @@ Two subcommands:
 ``evaluate``
     Run one candidate of your own through the same chain and print accept/reject with the
     binding reason code.
+
+``scan``
+    Run a **simulated** universe through PRD §4.2's seven hard filters and seven soft flags
+    and print the §4.3 ranked watchlist. Simulated because PLAN D30 puts the project on the
+    ``SIMULATED`` rung of the data ladder; the universe is constructed in
+    :func:`tradipy.poc.simulated_universe`, not read from anywhere.
 
 Stdlib only — ``argparse`` and ``decimal``. The package has no runtime dependencies and this
 does not add one.
@@ -29,10 +35,12 @@ from tradipy.poc import (
     bull_flag_geometry,
     check_against_prd,
     evaluate,
+    simulated_universe,
 )
 from tradipy.poc import worked_examples as prd_examples
 from tradipy.quotes import Quote
 from tradipy.rounding import TICK_SIZE
+from tradipy.scanner import ScanReport, scan
 from tradipy.score import Catalyst, ScoreInputs, composite_score, meets_conviction_gate
 
 PASS, FAIL = "PASS", "FAIL"
@@ -125,6 +133,68 @@ def _run_demo(cfg: Config, mode: Mode) -> int:
     return 0
 
 
+def _print_scan_report(report: ScanReport, cfg: Config, *, verbose: bool) -> None:
+    q4 = _dp(4)
+    print(f"\n§4.2 evaluation — {len(report.results)} candidate(s), 7 hard filters, 7 soft flags:")
+    for result in report.results:
+        sym = result.candidate.symbol
+        if result.passed and result.score is not None:
+            head = f"  PASS    {sym:<8} score {result.score.total.quantize(q4)}"
+        else:
+            reject = result.reject
+            head = f"  REJECT  {sym:<8} {reject.value if reject else ''}"
+        flags = ", ".join(f.value for f in result.flags)
+        print(head + (f"   flags: {flags}" if flags else ""))
+        if not verbose:
+            # One line of evidence for a rejection, so the verdict is never unexplained.
+            for hard in result.hard:
+                if not hard.passed:
+                    print(f"            {hard.filter:<22} {hard.detail}")
+            continue
+        for hard in result.hard:
+            mark = PASS if hard.passed else FAIL
+            print(f"      {mark}  {hard.filter:<22} {hard.detail}")
+        for soft in result.soft:
+            mark = "FLAG" if soft.raised else "  · "
+            print(f"      {mark}  {soft.filter:<22} {soft.detail}")
+
+    print(f"\n§4.3 watchlist — top {cfg['watchlist_size']} of {len(report.survivors)} survivor(s):")
+    if not report.watchlist:
+        print("  (empty)")
+    for rank, result in enumerate(report.watchlist, start=1):
+        score = result.score
+        if score is None:
+            # Unreachable: the watchlist holds survivors and §4.1 scores every survivor. Kept
+            # as a raise rather than an `assert`, which `python -O` strips — a display layer
+            # that silently prints nothing is how a missing value stops being noticed.
+            raise RuntimeError(
+                f"{result.candidate.symbol} reached the watchlist without a §20.10 score"
+            )
+        print(
+            f"  {rank}.  {result.candidate.symbol:<8} {score.total.quantize(q4)}   "
+            f"pct_change {score.pct_change.quantize(q4)}  rvol {score.rvol.quantize(q4)}  "
+            f"float {score.float_inverse.quantize(q4)}  "
+            f"pm_vol {score.premarket_vol.quantize(q4)}  "
+            f"catalyst {score.catalyst.quantize(q4)}"
+        )
+
+
+def _run_scan(cfg: Config, mode: Mode, *, verbose: bool) -> int:
+    print(RULE)
+    print("tradipy Phase 3 — PRD §4.2 scanner over a simulated universe")
+    print(RULE)
+    print(f"mode={mode}  watchlist_size={cfg['watchlist_size']}")
+    print(
+        "\nData origin: SIMULATED (PLAN D30). This universe is constructed, not read — no\n"
+        "file, feed or network is touched. D32 opened Phase 3 on simulated data, so the\n"
+        "filters below are applied correctly but none of their thresholds is calibrated:\n"
+        "Phase 2a Q1 (is §4.2's input contract obtainable from real data?) is unanswered.\n"
+        "See docs/PHASE-3-READINESS.md."
+    )
+    _print_scan_report(scan(simulated_universe(cfg), cfg), cfg, verbose=verbose)
+    return 0
+
+
 def _run_evaluate(args: argparse.Namespace, cfg: Config) -> int:
     spread = args.spread
     quote = Quote(
@@ -210,6 +280,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="replay the three PRD §3 worked examples and self-check",
     )
 
+    sc = sub.add_parser(
+        "scan",
+        parents=[common],
+        help="run a simulated universe through the PRD §4.2 filters (Phase 3)",
+    )
+    sc.add_argument(
+        "--verbose",
+        action="store_true",
+        help="show all 14 §4.2 rows per candidate, not only the failing ones",
+    )
+
     ev = sub.add_parser(
         "evaluate", parents=[common], help="run one candidate through the gate chain"
     )
@@ -285,6 +366,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if command == "demo":
         return _run_demo(cfg, mode)
+    if command == "scan":
+        return _run_scan(cfg, mode, verbose=args.verbose)
     return _run_evaluate(args, cfg)
 
 

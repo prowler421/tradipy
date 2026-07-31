@@ -50,6 +50,7 @@ like logic bugs (PRD §9.2).
 | `test_enforcement.py` (D30 block) | **A prohibition its own subject satisfies** — the same class, reached through wording rather than wiring | PHASE-2A-SPIKE §3.2 forbade *live trading* while two committed scripts read real IBKR ticks, correctly reasoning that reading is not trading. Also the provenance half: a `PROVENANCE.txt` written by the generator, read by nothing, beside a pipeline printing "§7 verdict" over fabricated quotes |
 | `test_computations.py` | The three PRD §20 rules that need no feed — §20.4 flagpole geometry, §20.10 composite score, §20.14 quote validity | All three were fully specified and entirely absent. §20.14 had a registered parameter and two `Reject` members that no code returned |
 | `test_poc.py` | A self-checking demo that has stopped checking | `python -m tradipy demo` is what people will run instead of reading the code, so its self-check needs its own test — including `test_demo_self_check_would_catch_spec_drift`, which asserts the check can still fail |
+| `test_scanner.py` | **Spec drift in a table the code re-implements** — §4.2's fourteen filters, parsed out of `docs/PRD.md` and compared to `HARD_FILTERS`/`SOFT_FILTERS` in both directions: name, rejection code, hard/soft classification, and order. Finding G3 was that nothing compared the `Reject` enum to the spec's rejection-code namespace either way; round 10's K5 was the same gap read from the other end, a gate document sizing Phase 3 at all fourteen rows with nothing mechanical to contradict it. Plus a `boundary` mark per filter and the `polarity` proof that the price range's two ends round in opposite directions |
 | `test_documentation.py` | **Consistency, applied to the documentation's own counts** — a number stated in prose that no longer matches the code | The registry solved this for thresholds; nothing solved it for the counts the docs quote about themselves. It recurred at v0.1.0 inside this very file: the heading below read "Four open spec discrepancies" above a list of six, while a fixture comment said eleven surviving mutations where three other documents said twelve |
 | `test_spike2a_instrumentation.py` | **Unvalidated instrument** — spike code that produces spec-deciding numbers while restating the library | Review round 7 in `scripts/spike2a/synthetic_data_generator.py`: hand-derived R under a docstring claiming library stop functions. AST and runtime checks that `generate_signal_bars` calls `apply_stop_floor_and_ceiling`, that `R = entry − stop`, and that `q4_spreads` imports the shipped cap/spread functions |
 
@@ -68,7 +69,7 @@ and 12 that survived a release candidate and drove the fixture that now catches 
 |---|---|
 | `MAXIMUM` rounds `ceil` instead of `floor` (the v1.3.1 defect) | 4 |
 | One-tick clamp removed (the A25 outage) | 2 |
-| Polarity forced to `MAXIMUM` at every `_rounded` call site (the v0.0.1 defect) | 10 |
+| Polarity forced to `MAXIMUM` at every rounding call site (the v0.0.1 defect; `gates._rounded` then, `Config.round_for` now) | 10 |
 | `MODE_PRESETS` unfrozen | 1 |
 | Range validation removed from `__post_init__` | 2 |
 | `mode` default back to `experienced` | 1 |

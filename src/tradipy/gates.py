@@ -12,7 +12,9 @@ code rather than aspirational in prose.
 call named a :class:`~tradipy.rounding.Polarity` member directly, so polarity had two
 definitions — the registry field and the literal here — and nothing reconciled them.
 Flipping a registry polarity broke no test. Every rounded threshold below now goes through
-:func:`_rounded`, which reads the direction from the parameter that governs it.
+:meth:`tradipy.params.Config.round_for`, which reads the direction from the parameter that
+governs it. That method lived here as ``_rounded`` until Phase 3 added a second consumer;
+see its docstring for why sharing it as a private import was the wrong of the two options.
 """
 
 from __future__ import annotations
@@ -22,13 +24,14 @@ from decimal import Decimal
 
 from tradipy.params import Config
 from tradipy.rejects import Reject
-from tradipy.rounding import TICK_SIZE, ceil_to_tick, floor_to_tick, round_threshold
+from tradipy.rounding import TICK_SIZE, ceil_to_tick, floor_to_tick
 
 __all__ = [
     "Reject",
     "SpreadCaps",
     "RoomRequirement",
     "Ladder",
+    "scan_spread_cap",
     "spread_caps",
     "check_spread",
     "min_separation",
@@ -40,28 +43,6 @@ __all__ = [
     "vwap_reclaim_stop",
     "apply_stop_floor_and_ceiling",
 ]
-
-
-def _rounded(cfg: Config, value: Decimal, *governed_by: str) -> Decimal:
-    """Round ``value`` in the direction the registry declares for its governing parameters.
-
-    PRD §20.13 requires a threshold to be classified as a minimum or a maximum *before* a
-    rounding function is chosen. Passing the governing parameter names rather than a
-    :class:`~tradipy.rounding.Polarity` member makes that classification the single source of
-    truth: change the registry and the arithmetic here follows.
-
-    A threshold built from several parameters must have one classification. ``max(min_sep_r *
-    R, sep_cost_multiple * cost)`` is a minimum because *both* of its terms are; if they ever
-    disagree the threshold is not classifiable and this raises rather than guessing.
-    """
-    polarities = {cfg.polarity(n) for n in governed_by}
-    if len(polarities) != 1:
-        raise ValueError(
-            f"threshold governed by {governed_by} has conflicting polarities "
-            f"{sorted(p.name for p in polarities)}; PRD §20.13 requires exactly one "
-            "classification per rounded threshold"
-        )
-    return round_threshold(value, polarities.pop())
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +60,20 @@ class SpreadCaps:
         return min(self.scan, self.signal)
 
 
+def scan_spread_cap(price: Decimal, cfg: Config) -> Decimal:
+    """The scan-time half of §3.1.3, which PRD §4.2 makes a hard scanner filter::
+
+        max_spread_scan = max(tick, floor_to_tick(min(max_spread_abs, max_spread_pct * price)))
+
+    Split out from :func:`spread_caps` for Phase 3. §4.2's Liquidity/Spread row is evaluated
+    over the whole universe, where no setup has formed and therefore no R exists, so the
+    scanner cannot call :func:`spread_caps` without inventing one. Deriving the cap twice —
+    once here, once there — is the v1.2 defect class, so :func:`spread_caps` delegates.
+    """
+    raw = min(cfg["max_spread_abs"], cfg["max_spread_pct"] * price)
+    return cfg.round_for(raw, "max_spread_abs", "max_spread_pct")
+
+
 def spread_caps(price: Decimal, r: Decimal, cfg: Config) -> SpreadCaps:
     """Return the scan-time and signal-time spread caps.
 
@@ -93,11 +88,10 @@ def spread_caps(price: Decimal, r: Decimal, cfg: Config) -> SpreadCaps:
     time R does not exist yet — the setup has not formed — which is why there are two gates
     rather than one.
     """
-    scan_raw = min(cfg["max_spread_abs"], cfg["max_spread_pct"] * price)
     signal_raw = cfg["max_spread_r"] * r
     return SpreadCaps(
-        scan=_rounded(cfg, scan_raw, "max_spread_abs", "max_spread_pct"),
-        signal=_rounded(cfg, signal_raw, "max_spread_r"),
+        scan=scan_spread_cap(price, cfg),
+        signal=cfg.round_for(signal_raw, "max_spread_r"),
     )
 
 
@@ -133,7 +127,7 @@ def min_separation(r: Decimal, spread: Decimal, cfg: Config) -> Decimal:
     """
     round_trip = spread + cfg["est_round_trip_cost_per_share"]
     raw = max(cfg["min_sep_r"] * r, cfg["sep_cost_multiple"] * round_trip)
-    return _rounded(cfg, raw, "min_sep_r", "sep_cost_multiple", "est_round_trip_cost_per_share")
+    return cfg.round_for(raw, "min_sep_r", "sep_cost_multiple", "est_round_trip_cost_per_share")
 
 
 @dataclass(frozen=True)
@@ -177,13 +171,13 @@ def required_room(r: Decimal, spread: Decimal, cfg: Config) -> RoomRequirement:
     # caller can see the tie for itself.
     if separation > proportional:
         return RoomRequirement(
-            _rounded(cfg, separation, "t1_r_multiple"),
+            cfg.round_for(separation, "t1_r_multiple"),
             Reject.TARGETS_TOO_CLOSE,
             proportional,
             separation,
         )
     return RoomRequirement(
-        _rounded(cfg, proportional, "room_gate_multiple"),
+        cfg.round_for(proportional, "room_gate_multiple"),
         Reject.INSUFFICIENT_ROOM,
         proportional,
         separation,

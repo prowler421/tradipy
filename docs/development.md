@@ -20,17 +20,19 @@ Everything else runs through `uv run`, so you never activate the environment by 
 
 ```
 src/tradipy/
-    __init__.py     imports and re-exports the seven library modules
+    __init__.py     imports and re-exports the eight library modules
     rounding.py     tick arithmetic, Polarity, round_threshold        (§20.13)
-    rejects.py      the Reject enum, shared by gates and quotes
+    rejects.py      the Reject and SoftFlag enums, raised by three layers
     params.py       the parameter registry, Config, coupling validator (§2, §2.0)
     bars.py         flagpole geometry and measured move                (§20.4)
     quotes.py       NBBO quote validity and spread_at_signal           (§20.14)
     score.py        composite score and the conviction gate      (§20.10, §14.2)
     gates.py        pre-entry gates and position sizing         (§2.2, §3.1.x)
-    poc.py          composition: one candidate through every gate
+    scanner.py      the §4.2 hard filters, soft flags and ranking  (§4.1-§4.3)
+    poc.py          composition: one candidate through every gate, plus the
+                    simulated universe behind `scan`
     __main__.py     the `python -m tradipy` CLI entry point
-tests/              nine pytest files (see below) + registry_baseline.json
+tests/              eleven pytest files (see below) + registry_baseline.json
 docs/               PRD.md (normative), PLAN, CHANGELOG, PHASE-2A-SPIKE,
                     reviews/, these guides
 scripts/            regen_registry_baseline.py, check_links.py
@@ -195,18 +197,57 @@ $ uv run python -m tradipy evaluate --entry 6.48 --stop 6.34 --resistance 7.00 \
 `_pct` parameter in the registry is a fraction, so this is the one place the two conventions
 meet.
 
+### `scan`
+
+Runs a **simulated** universe through PRD §4.2's seven hard filters and seven soft flags and
+prints the §4.3 ranked watchlist. The universe is `tradipy.poc.simulated_universe` — fourteen
+constructed candidates, seven that survive and seven that each fail exactly one hard row, so
+every filter is visibly reachable and the `watchlist_size` truncation is visible too.
+
+```console
+$ uv run python -m tradipy scan
+──────────────────────────────────────────────────────────────────────────────
+tradipy Phase 3 — PRD §4.2 scanner over a simulated universe
+──────────────────────────────────────────────────────────────────────────────
+mode=beginner  watchlist_size=5
+
+Data origin: SIMULATED (PLAN D30). ...
+
+§4.2 evaluation — 14 candidate(s), 7 hard filters, 7 soft flags:
+  PASS    SYNA     score 0.8090   flags: HIGH_SHORT_INTEREST
+  ...
+  REJECT  SYNLLD   NEAR_LULD   flags: HIGH_SHORT_INTEREST
+            Circuit Breakers       nearest band 0.01 (up 0.01, down 1.4875) vs required 0.43
+
+§4.3 watchlist — top 5 of 7 survivor(s):
+  1.  SYNB     0.8160   pct_change 0.8200  rvol 0.9000  float 0.6900  ...
+```
+
+`--verbose` prints all fourteen §4.2 rows for every candidate rather than only the failing
+ones, which is the quickest way to see that a soft flag on a passing name is advisory: the
+flags are listed and the verdict is still `PASS`.
+
+**Simulated is a policy position, not a shortcut.** PLAN **D30** puts the project on the
+`SIMULATED` rung of the data ladder, and **D32** opened Phase 3 without advancing it. The
+universe is constructed rather than read, so it touches no file and needs no `PROVENANCE.txt`
+— the provenance gate constrains reads, and there are none. Consequently the filters are
+applied correctly and no threshold is *calibrated*: Phase 2a Q1 is unanswered. See
+[PHASE-3-READINESS.md](PHASE-3-READINESS.md).
+
 ### Exit codes
 
 | Code | Meaning |
 | --- | --- |
-| 0 | Success — the demo self-check passed, or the candidate was ACCEPTed |
+| 0 | Success — the demo self-check passed, the scan ran, or the candidate was ACCEPTed |
 | 1 | The demo self-check disagreed with the PRD tables |
 | 2 | Usage error (argparse) |
 | 3 | The candidate was REJECTed |
 
 3 rather than 2 for a rejection: argparse already owns 2, and a rejected candidate is a
-correct answer rather than a failure to run. `demo` only ever returns 0 or 1, so it can be
-wired into CI as a smoke test with no extra interpretation.
+correct answer rather than a failure to run. `demo` only ever returns 0 or 1 and `scan` only
+ever 0, so both can be wired into CI as smoke tests with no extra interpretation. Note that
+`scan` returning 0 says the pipeline ran, not that anything reached the watchlist — an empty
+watchlist is a correct answer.
 
 ## Dependency management
 

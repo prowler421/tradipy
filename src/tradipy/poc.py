@@ -34,8 +34,17 @@ from tradipy.params import Config
 from tradipy.quotes import Quote, spread_at_signal
 from tradipy.rejects import Reject
 from tradipy.rounding import TICK_SIZE
+from tradipy.scanner import ScanCandidate
+from tradipy.score import Catalyst
 
-__all__ = ["Candidate", "GateResult", "Evaluation", "evaluate", "worked_examples"]
+__all__ = [
+    "Candidate",
+    "GateResult",
+    "Evaluation",
+    "evaluate",
+    "worked_examples",
+    "simulated_universe",
+]
 
 D = Decimal
 
@@ -368,6 +377,141 @@ def worked_examples() -> list[Candidate]:
                 "shares": 3000,
             },
         ),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# A simulated universe for the §4 scanner
+# ---------------------------------------------------------------------------
+#: How far the simulated LULD bands sit from the reference price, as a fraction. Comfortably
+#: outside ``min_luld_distance_pct`` so a fixture only fails §4.2's Circuit Breakers row when
+#: it says it does.
+_SIM_LULD_BAND = D("0.35")
+
+
+#: The clean baseline every simulated candidate starts from: passes all seven §4.2 hard
+#: filters and raises **no** soft flag, so each fixture below raises exactly the flags it asks
+#: for. Hoisted to module constants rather than written into ``_sim``'s signature because
+#: ``Decimal("0.18")`` in a default is a call, which ruff's ``B008`` forbids — and because
+#: reading the baseline in one block is easier than reading it down a parameter list.
+_SIM_PRICE = D("4.25")
+_SIM_PREMARKET_GAP_PCT = D("0.18")
+_SIM_DAILY_GAP_PCT = D("0.22")
+_SIM_RVOL = D("12")
+_SIM_FLOAT_SHARES = D("6200000")
+_SIM_ADV_SHARES = D("1400000")
+_SIM_BID_SIZE = 800
+_SIM_PREMARKET_VOLUME = D("450000")
+_SIM_MARKET_CAP = D("180000000")
+_SIM_ATR = D("0.42")
+_SIM_AVG_ATR = D("0.19")
+#: Below ``min_short_interest_pct``. It was above it, which made ``HIGH_SHORT_INTEREST`` fire
+#: on all fourteen candidates and drowned out every other flag in the demo output — a
+#: fixture that says nothing because it says the same thing everywhere. Not ``0.01``, which
+#: the registry lint reads as a restatement of ``max_pct_of_adv``.
+_SIM_SHORT_INTEREST_PCT = D("0.012")
+
+
+def _sim(
+    symbol: str,
+    *,
+    price: Decimal = _SIM_PRICE,
+    premarket_gap_pct: Decimal = _SIM_PREMARKET_GAP_PCT,
+    daily_gap_pct: Decimal = _SIM_DAILY_GAP_PCT,
+    rvol: Decimal = _SIM_RVOL,
+    float_shares: Decimal = _SIM_FLOAT_SHARES,
+    adv_shares: Decimal = _SIM_ADV_SHARES,
+    luld_upper: Decimal | None = None,
+    spread: Decimal = TICK_SIZE,
+    bid_size: int = _SIM_BID_SIZE,
+    premarket_volume: Decimal = _SIM_PREMARKET_VOLUME,
+    catalyst: Catalyst = Catalyst.CONFIRMED,
+    market_cap: Decimal | None = _SIM_MARKET_CAP,
+    atr: Decimal | None = _SIM_ATR,
+    avg_atr: Decimal | None = _SIM_AVG_ATR,
+    sessions_since_halt: int | None = None,
+    short_interest_pct: Decimal | None = _SIM_SHORT_INTEREST_PCT,
+) -> ScanCandidate:
+    """A candidate that passes all seven §4.2 hard filters, with named defects applied.
+
+    Every field starts from a clean value and each fixture states only what it changes, so a
+    rejection in the demo output is attributable to the argument that caused it.
+
+    The LULD bands **follow the price** unless ``luld_upper`` is given explicitly. Without
+    that, moving a fixture's price out of §4.2's range would also move it inside the band and
+    the demo would report two rejections where one is the point.
+    """
+    return ScanCandidate(
+        symbol=symbol,
+        price=price,
+        premarket_gap_pct=premarket_gap_pct,
+        daily_gap_pct=daily_gap_pct,
+        rvol=rvol,
+        float_shares=float_shares,
+        adv_shares=adv_shares,
+        luld_upper=luld_upper if luld_upper is not None else price * (Decimal(1) + _SIM_LULD_BAND),
+        luld_lower=price * (Decimal(1) - _SIM_LULD_BAND),
+        spread=spread,
+        bid_size=bid_size,
+        premarket_volume=premarket_volume,
+        catalyst=catalyst,
+        market_cap=market_cap,
+        atr=atr,
+        avg_atr=avg_atr,
+        sessions_since_halt=sessions_since_halt,
+        short_interest_pct=short_interest_pct,
+    )
+
+
+def simulated_universe(cfg: Config) -> list[ScanCandidate]:
+    """Fourteen synthetic candidates: seven that survive §4.2, seven that each fail one row.
+
+    **Simulated, and that is a policy position rather than a convenience.** PLAN **D30** puts
+    the project on the ``SIMULATED`` rung of the data ladder, and D32 opened Phase 3 without
+    advancing it, so this universe is *constructed* rather than read. It touches no file,
+    which is why it needs no ``PROVENANCE.txt``: the provenance gate constrains what may be
+    read, and nothing here reads anything.
+
+    What it demonstrates is that the pipeline runs end to end and that each of §4.2's seven
+    hard filters is reachable. What it cannot demonstrate is that any threshold is calibrated
+    — that is Phase 2a Q1, on measured data, and it is still unanswered.
+
+    The seven survivors differ in the §20.10 inputs so the watchlist ordering is a real
+    ranking rather than input order, and there are seven of them against a
+    ``watchlist_size`` of five so the truncation is visible. They also raise **one soft flag
+    each**, so the demo shows what a flag looks like on an accepted name without any one flag
+    firing everywhere. The baseline raises none — see ``_SIM_SHORT_INTEREST_PCT``.
+
+    **Boundary values are derived from the registry, not written.** ``cfg["min_rvol"] - 1``
+    rather than ``4``: a demo is not a test, so it should follow the configuration rather than
+    silently stop exercising a filter when a threshold moves. Tests do the opposite — they
+    state literals, because asserting a derivation against a value the registry supplied
+    proves nothing (convention 4).
+    """
+    return [
+        # --- seven that survive; each raises one soft flag, or none -------
+        _sim("SYNA", rvol=D("31"), float_shares=D("2100000"), short_interest_pct=D("0.31")),
+        _sim("SYNB", rvol=D("18"), daily_gap_pct=D("0.41"), premarket_volume=D("620000")),
+        _sim("SYNC", rvol=D("9"), catalyst=Catalyst.HEADLINE_ONLY, atr=D("0.21")),
+        _sim("SYND", rvol=D("22"), float_shares=D("3800000"), sessions_since_halt=1),
+        _sim("SYNE", rvol=D("7"), daily_gap_pct=D("0.13"), catalyst=Catalyst.NONE),
+        _sim("SYNF", rvol=D("11"), market_cap=D("4300000000")),
+        _sim("SYNG", rvol=D("6"), premarket_volume=D("38000"), short_interest_pct=None),
+        # --- seven that each fail exactly one hard row --------------------
+        # SYNGAP carries a soft flag as well as its rejection, deliberately: the demo should
+        # show at least one line where a flag sits beside a REJECT and changes nothing.
+        _sim(
+            "SYNGAP",
+            premarket_gap_pct=cfg["min_gap_premarket_pct"] / Decimal(2),
+            daily_gap_pct=cfg["min_gap_daily_pct"] / Decimal(2),
+            short_interest_pct=D("0.44"),
+        ),
+        _sim("SYNRVL", rvol=cfg["min_rvol"] - Decimal(1)),
+        _sim("SYNFLT", float_shares=cfg["max_float_shares"] * Decimal(3)),
+        _sim("SYNPRC", price=cfg["max_price"] + Decimal(5)),
+        _sim("SYNADV", adv_shares=cfg["min_adv_shares"] / Decimal(5)),
+        _sim("SYNLLD", luld_upper=_SIM_PRICE + TICK_SIZE),
+        _sim("SYNSPR", spread=cfg["max_spread_abs"] * Decimal(4)),
     ]
 
 

@@ -16,37 +16,46 @@ between prose, comments, and code. Read it before changing behavior.
 
 ## Architecture
 
-Eight small, pure modules under `src/tradipy/`, plus a CLI:
+Nine small, pure modules under `src/tradipy/`, plus a CLI:
 
 - `rounding.py` — tick arithmetic and polarity-aware threshold rounding. The governing
   principle is *"rounding must never weaken a constraint."* `Polarity.MINIMUM` rounds up;
   `Polarity.MAXIMUM` rounds down and clamps to one tick.
-- `rejects.py` — the `Reject` reason codes. Separate from `gates` so `quotes` need not depend
-  on `gates`; re-exported from `tradipy.gates` for compatibility.
+- `rejects.py` — the `Reject` reason codes and, separately, the `SoftFlag` codes for §4.2's
+  seven Soft rows. Two enums, not one: a soft row flags and never rejects, and splitting the
+  namespace makes mixing them a type error rather than a review finding (round 10, K5).
+  Separate from `gates` so `quotes` need not depend on `gates`; `Reject` is re-exported from
+  `tradipy.gates` for compatibility.
 - `params.py` — the parameter registry: the single source of truth for every tunable
   threshold, each with its legal range, source citation, and polarity. Also holds the §2.0
-  mode presets (an overlay on the registry defaults), the §7 hard caps, and the
-  cross-parameter coupling validator.
+  mode presets (an overlay on the registry defaults), the §7 hard caps, the cross-parameter
+  coupling validator, and `Config.round_for()`, which resolves a rounding direction from the
+  registry for every consumer that rounds.
 - `bars.py` — PRD §20.4 flagpole geometry and the measured move.
 - `quotes.py` — PRD §20.14 NBBO spread and quote validity.
 - `score.py` — PRD §20.10 composite score and §14.2's conviction gate.
 - `gates.py` — pre-entry gates and position sizing (spread caps, separation floor, room
   requirement, exit ladder, stop construction, sizing). No numeric threshold literal appears
   here, and no rounding direction either; both are read from the registry by name.
+- `scanner.py` — PRD §4: the seven §4.2 hard filters, the seven §4.2 soft flags, and §4.3's
+  ranked watchlist. Same two rules as `gates` — no threshold literal, no rounding direction.
+  Pure: it applies §4.2 to a universe it is *given*, and sources nothing (D30).
 - `poc.py` / `__main__.py` — the proof of concept. `poc` composes the gates into one
-  evaluation; `__main__` is `python -m tradipy demo` / `evaluate`, argparse and nothing else.
-  Explicitly not the strategy engine: it gates a candidate, it does not find one.
+  evaluation and holds the simulated scanner universe; `__main__` is
+  `python -m tradipy demo` / `evaluate` / `scan`, argparse and nothing else. Explicitly not
+  the strategy engine: it gates a candidate and filters a universe it was handed, it does not
+  find one.
 
 Data flows one way. `rounding`, `rejects` and `bars` import only the standard library;
 `params` imports `rounding`; `quotes` and `gates` import `params` and `rejects`; `score`
-imports `params`; `poc` imports the lot, and only `__main__` imports `poc`. Everything is
-`Decimal`.
+imports `params`; `scanner` imports `params`, `rejects`, `score` and `gates`; `poc` imports
+the lot, and only `__main__` imports `poc`. Everything is `Decimal`.
 
 ## Repository layout
 
 ```
-src/tradipy/        # the library (rounding, rejects, params, bars, quotes, score, gates)
-                    # plus poc.py and __main__.py — the runnable proof of concept
+src/tradipy/        # the library (rounding, rejects, params, bars, quotes, score, gates,
+                    # scanner) plus poc.py and __main__.py — the runnable proof of concept
 tests/              # pytest suite — worked examples, registry, boundary/polarity marks,
                     # enforcement fixtures, and doc-count consistency
 docs/               # start at docs/README.md (index)
@@ -77,10 +86,13 @@ data/spike2a/       # spike inputs — gitignored, empty on a clean clone. Every
    value set. `tests/` is not scanned, deliberately — fixtures must state literals (convention
    4). State the rule with that scope wherever it appears; an unqualified version of it is what
    F8 was about.
-2. **Polarity, not the call site, decides rounding.** In `gates.py` this means
-   `_rounded(cfg, value, *governed_by)`, which reads the direction from the registry. Do not
-   import `Polarity` into `gates.py` and do not name a member at a call site: that gives
-   direction two definitions, and a test proves the import is absent.
+2. **Polarity, not the call site, decides rounding.** Every module that rounds routes through
+   `Config.round_for(value, *governed_by)`, which reads the direction from the registry. Do
+   not import `Polarity` into any of them and do not name a member at a call site: that gives
+   direction two definitions. `gates.py`, `quotes.py` and `scanner.py` are the three, and a
+   test proves the import is absent from each **and** derives that list from the source, so a
+   fourth cannot be added outside it. It lived in `gates.py` as `_rounded` until Phase 3 added
+   a second consumer; direction is registry data, so it moved onto the registry object.
 3. **`Decimal` everywhere money is compared to a tick or summed into P&L** (PRD §9.2). No
    `float`.
 4. **Assertions test the derivation, not the value.** `assert cap == floor_to_tick(x) and
@@ -166,7 +178,7 @@ it, do not resolve it silently in code.
 
 - [ ] No new literal for a registered threshold; any bound the PRD does not state is marked
       `(bounds: code)` in its `Param.source`.
-- [ ] Rounding goes through `_rounded`, with the polarity read from the registry.
+- [ ] Rounding goes through `Config.round_for`, with the polarity read from the registry.
 - [ ] `Decimal` used for all price/P&L comparisons.
 - [ ] Tests added/updated and assert the derivation, with the right marker.
 - [ ] Every new guarantee has a test that performs the violation it forbids.

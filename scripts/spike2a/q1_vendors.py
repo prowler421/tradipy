@@ -11,6 +11,11 @@ and applies §7's Q1 pass thresholds from :mod:`scripts.spike2a.prereg`, the sam
 
 On ``SIMULATED`` input the outcome is a **pipeline outcome, not a §7 verdict**, for the same
 reason as Q2–Q4: fabricated numbers must not license a D7 disposition or a Phase 3 go-ahead.
+
+Zero trials — an empty or wholly-unparsable ``vendors.csv`` — is reported as **unanswered**, not
+as a Q1 negative, on either origin. Q2, Q3 and Q4 each guard the empty-sample case in one line;
+this module's guard is the same shape, added after a review found the branch reachable with no
+trials at all (review round 10, K3).
 """
 
 from __future__ import annotations
@@ -104,6 +109,28 @@ def report(trials: list[VendorTrial], prov: Provenance) -> str:
                 lines.append(f"    - {f}")
         if trial.notes:
             lines.append(f"    note: {trial.notes}")
+
+    # An empty or wholly-unparsable vendors.csv must not read as a Q1 negative. Q2 prints
+    # "UNANSWERED — needs two independent providers, have {n}"; Q3 prints "no measurements —
+    # unanswered, not passed"; Q4 returns CALIBRATED with "no gated bars — nothing measured, so
+    # nothing is claimed". Q1 had no equivalent, so zero trials on measured input fell straight
+    # into the "no provider passes" branch below and printed the spike's largest possible
+    # consequence — a PRD §4 rewrite — from a file with nothing in it (review round 10, K3).
+    if not trials:
+        headline = (
+            "UNANSWERED — no vendor trials recorded, have 0"
+            if prov.answers_prereg
+            else "pipeline outcome (NOT a §7 verdict): no vendor trials recorded"
+        )
+        lines += ["", headline]
+        if not prov.answers_prereg:
+            lines += [
+                "",
+                "This run exercises the pipeline. It does not answer Q1, and no PRD §4 rewrite",
+                "follows from it: §7's thresholds bind against measured vendor trials, and a",
+                "synthetic matrix is not a trial. See docs/PHASE-2A-SPIKE.md §7 and PLAN D30.",
+            ]
+        return "\n".join(lines)
 
     headline = (
         "§7 verdict: at least one provider passes Q1"

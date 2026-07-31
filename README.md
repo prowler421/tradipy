@@ -37,6 +37,19 @@ uv run python -m tradipy evaluate --entry 4.00 --stop 3.90 --resistance 4.26
 #   ->  REJECT  TARGETS_TOO_CLOSE
 ```
 
+Or run a **simulated** universe through PRD §4.2's scanner:
+
+```bash
+uv run python -m tradipy scan
+#   PASS    SYNB     score 0.8160   flags: HIGH_SHORT_INTEREST
+#   REJECT  SYNLLD   NEAR_LULD
+#             Circuit Breakers  nearest band 0.01 (up 0.01, down 1.4875) vs required 0.43
+```
+
+Simulated by policy, not by convenience: PLAN D30 keeps the project on the `SIMULATED` rung
+of the data ladder, so the filters are applied correctly and **no threshold is calibrated** —
+see [`docs/PHASE-3-READINESS.md`](docs/PHASE-3-READINESS.md).
+
 Exit codes: `0` accept, `1` demo self-check failed, `2` usage error, `3` candidate rejected.
 
 ## Architecture
@@ -47,13 +60,14 @@ depend on nothing but the standard library, and only `__main__` depends on `poc`
 | Module | Responsibility |
 | --- | --- |
 | `tradipy.rounding` | Tick arithmetic and polarity-aware threshold rounding. *Rounding must never weaken a constraint.* |
-| `tradipy.rejects` | The `Reject` reason codes, each citing the PRD section that defines it. |
+| `tradipy.rejects` | The `Reject` reason codes, each citing the PRD section that defines it — and `SoftFlag`, a *separate* enum for §4.2's seven soft rows, so a flag cannot become a rejection. |
 | `tradipy.params` | The parameter registry — the single source of truth for every threshold: default, legal range, source citation, and polarity. Plus mode presets, hard caps, and the coupling validator. |
 | `tradipy.bars` | PRD §20.4 — flagpole detection, height, measured move, retrace. |
 | `tradipy.quotes` | PRD §20.14 — NBBO spread, quote validity, staleness, crossed markets. |
 | `tradipy.score` | PRD §20.10 / §14.2 — the normalized composite score and the conviction gate. |
 | `tradipy.gates` | Pre-entry gates and sizing: spread caps, separation floor, room requirement, exit ladder, stop construction, position size. No threshold literal appears here, and no rounding direction either — both are read from the registry by name. |
-| `tradipy.poc` | Composes the gates into one evaluation. Explicitly *not* the strategy engine: it takes a candidate that has already been found. |
+| `tradipy.scanner` | PRD §4.1–§4.3 — the seven §4.2 hard filters, the seven soft flags, and the ranked watchlist. Same two rules as `gates`. Sources nothing: it filters a universe it is given. |
+| `tradipy.poc` | Composes the gates into one evaluation, and holds the simulated universe behind `scan`. Explicitly *not* the strategy engine: it takes a candidate that has already been found. |
 
 Everything that touches money uses `Decimal`. See [`docs/architecture.md`](docs/architecture.md)
 for the full picture and the design invariants.

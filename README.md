@@ -6,7 +6,9 @@ makes them executable and tested, rather than prose. It is deliberately *not* th
 engine — it is the layer that guarantees the strategy engine cannot violate its own
 specification.
 
-- **Status:** Phase 1 (invariant layer + runnable PoC). Alpha.
+- **Status:** Phases 1, 3, 4 and 5's pure half built (invariant layer, §4.2 scanner, §3 setups,
+  §7 pre-order risk and §6 order construction) — all on **simulated** data, nothing calibrated,
+  and no path to a broker. Alpha.
 - **Runtime dependencies:** none. Standard library only (`Decimal`, `dataclasses`, `enum`).
 - **Python:** 3.13+.
 
@@ -50,6 +52,23 @@ Simulated by policy, not by convenience: PLAN D30 keeps the project on the `SIMU
 of the data ladder, so the filters are applied correctly and **no threshold is calibrated** —
 see [`docs/PHASE-3-READINESS.md`](docs/PHASE-3-READINESS.md).
 
+Or take those signals through PRD §7's pre-order risk rules to a §6.1 bracket:
+
+```bash
+uv run python -m tradipy risk
+#   BULL_FLAG  2,500 shares  ->  APPROVE
+#     PASS  Max risk per trade (§7 row 1, NON-BYPASSABLE)  ... $300.00 vs budget $300.00
+#   HOD_BREAKOUT  2,000 shares  ->  BLOCK  RiskBlock.MAX_RISK_EXCEEDED
+#     FAIL  Max risk per trade (§7 row 1, NON-BYPASSABLE)  ... $600.00 vs budget $300.00
+```
+
+**Nothing is submitted, and that is the design rather than a limitation.** §6.2's lifecycle is
+`Signal → PreTradeRiskCheck → OrderDraft → Submit`, and D30 refuses the fourth arrow — so this
+prints a draft and stops. The second signal's block is also not a bug: §7 caps *total* open risk
+at the same budget §2.2 sizes a *single* position to, which makes `max_open_positions` > 1
+unreachable at full size. Raised, not resolved — see
+[`docs/PHASE-5-DESIGN.md`](docs/PHASE-5-DESIGN.md) §6.
+
 Exit codes: `0` accept, `1` demo self-check failed, `2` usage error, `3` candidate rejected.
 
 ## Architecture
@@ -67,6 +86,11 @@ depend on nothing but the standard library, and only `__main__` depends on `poc`
 | `tradipy.score` | PRD §20.10 / §14.2 — the normalized composite score and the conviction gate. |
 | `tradipy.gates` | Pre-entry gates and sizing: spread caps, separation floor, room requirement, exit ladder, stop construction, position size. No threshold literal appears here, and no rounding direction either — both are read from the registry by name. |
 | `tradipy.scanner` | PRD §4.1–§4.3 — the seven §4.2 hard filters, the seven soft flags, and the ranked watchlist. Same two rules as `gates`. Sources nothing: it filters a universe it is given. |
+| `tradipy.session` | PRD §20.1–§20.6 over an ordered series — session VWAP, HOD, the 9 EMA, the missing-bar gap rule, and `tighter`/`wider`. Carries **minutes from the open as an `int`**, never a timestamp: §21.1 forbids a clock in strategy code. |
+| `tradipy.setups` | PRD §3.2–§3.4 — Bull Flag, HOD Breakout and VWAP Reclaim as pure functions of a bar series and a trigger index, plus §20.11 arbitration and §3's post-entry rules as predicates. Same two rules as `gates`. |
+| `tradipy.positions` | PRD §20.12's position state machine as a transition table, §3.1.1's stop-to-breakeven and its 50/25/25 ladder split, and §7.1.1's scale-in legality. |
+| `tradipy.risk` | PRD §6.3's pre-trade checks and §7's rule table, returning §9.2's `RiskDecision` with every rule evaluated. State is handed in; nothing is sensed. |
+| `tradipy.orders` | PRD §6.1's bracket, §6.7's idempotency key, §6.4's partial-fill decision. **The boundary of the package:** it builds a draft and stops — D30 permits no submission. |
 | `tradipy.poc` | Composes the gates into one evaluation, and holds the simulated universe behind `scan`. Explicitly *not* the strategy engine: it takes a candidate that has already been found. |
 
 Everything that touches money uses `Decimal`. See [`docs/architecture.md`](docs/architecture.md)

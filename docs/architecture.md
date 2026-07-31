@@ -7,7 +7,7 @@ together. `PRD.md §20` (Computation Semantics) is normative and governs on any 
 
 ## Module structure
 
-Eleven library modules plus a CLI entry point, with a strict one-way dependency graph:
+Fourteen library modules plus a CLI entry point, with a strict one-way dependency graph:
 
 | Module | Imports (first-party) |
 |---|---|
@@ -19,8 +19,11 @@ Eleven library modules plus a CLI entry point, with a strict one-way dependency 
 | `scanner` | `params`, `rejects`, `score`, `gates` |
 | `session` | `bars`, `params` |
 | `setups` | `bars`, `session`, `params`, `rejects`, `rounding`, `gates` |
+| `positions` | `params`, `rejects`, `rounding` |
+| `risk` | `gates`, `params`, `positions`, `rejects`, `rounding`, `setups` |
+| `orders` | `params`, `positions`, `rounding`, `setups` |
 | `poc` | all of the above |
-| `__main__` | `poc`, `params`, `quotes`, `rounding`, `scanner`, `score`, `setups` |
+| `__main__` | `poc`, `orders`, `params`, `positions`, `quotes`, `risk`, `rounding`, `scanner`, `score`, `setups` |
 
 A table rather than a drawing, deliberately: an ASCII bus diagram was tried here for Phase 4's
 two new rows and, on inspection, implied that `quotes` does not depend on `rejects` — its branch
@@ -60,7 +63,7 @@ invites: a reader sizing the scanner from it builds all fourteen as rejection pa
 candidates away. Two unrelated types make that a compile-time error instead. `ScanResult.reject`
 is `Reject | None` and will not accept a flag.
 
-`tradipy/__init__.py` imports the ten library modules so the names it advertises resolve as
+`tradipy/__init__.py` imports the thirteen library modules so the names it advertises resolve as
 attributes. It deliberately does **not** import `poc`: the composition layer is not part of
 what `import tradipy` means, and `import tradipy.poc` is the honest way to reach it.
 

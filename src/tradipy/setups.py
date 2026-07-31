@@ -192,6 +192,29 @@ class Levels:
     breakout_high: Decimal
     #: The HOD established *before* the trigger bar (§20.3).
     prior_hod: Decimal
+    #: §20.1's ordinal minute of the trigger bar — §9.2's ``trigger_bar_ts``, in the
+    #: representation §21.1 permits. Added in Phase 5 because §6.7's idempotency key is derived
+    #: from the trigger bar's identity, and a key derived from anything else *"is unique by
+    #: construction, so a duplicate check against it can never fire."* It belongs on the signal
+    #: rather than being passed alongside it: the bar a signal fired on is a property of that
+    #: signal, and a caller free to supply a different one can produce two keys for one setup.
+    #:
+    #: **Required, with no default.** It carried ``= 0`` when it was added, and 0 is a
+    #: *legal-looking* value — minute 0 is the 09:30 bar — so a ``Levels`` built without it would
+    #: claim the open, pass §7's trading-hours check and hash into a §6.7 key for the wrong bar.
+    #: A default that lies is worse than a required argument.
+    trigger_minute: int
+
+    def __post_init__(self) -> None:
+        # §20.1 labels the 09:30 bar minute 0 and `SessionBar` refuses anything below it. This
+        # field is the one place that ordinal is copied out of a `SessionBar`, so it is where the
+        # same floor has to be re-imposed: without it a negative minute reaches §7's trading-hours
+        # check (which only tests the upper edge) and §6.7's key. Found by review, not by design.
+        if self.trigger_minute < 0:
+            raise ValueError(
+                f"trigger_minute={self.trigger_minute} is before the session open. PRD §20.1 "
+                "labels the 09:30 bar minute 0 and premarket is not representable here (G9)."
+            )
 
     @property
     def target_prices(self) -> tuple[Decimal, Decimal]:
@@ -539,6 +562,7 @@ def _assemble(
     spread: Decimal,
     breakout_high: Decimal,
     prior_hod: Decimal,
+    trigger_minute: int,
     cfg: Config,
     buying_power: Decimal | None,
     adv_shares: Decimal | None,
@@ -564,6 +588,7 @@ def _assemble(
         spread_at_signal=spread,
         breakout_high=breakout_high,
         prior_hod=prior_hod,
+        trigger_minute=trigger_minute,
     )
     outcome = SetupOutcome(symbol, setup_type, tuple(criteria), levels)
     if outcome.failures:
@@ -782,6 +807,7 @@ def evaluate_bull_flag(
         spread=spread,
         breakout_high=trigger.high,
         prior_hod=prior_hod,
+        trigger_minute=session.bars[i].minute,
         cfg=cfg,
         buying_power=buying_power,
         adv_shares=adv_shares,
@@ -959,6 +985,7 @@ def evaluate_hod_breakout(
         spread=spread,
         breakout_high=trigger.high,
         prior_hod=prior_hod,
+        trigger_minute=session.bars[i].minute,
         cfg=cfg,
         buying_power=buying_power,
         adv_shares=adv_shares,
@@ -1137,6 +1164,7 @@ def evaluate_vwap_reclaim(
         spread=spread,
         breakout_high=trigger.high,
         prior_hod=prior_hod,
+        trigger_minute=session.bars[i].minute,
         cfg=cfg,
         buying_power=buying_power,
         adv_shares=adv_shares,

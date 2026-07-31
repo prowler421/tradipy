@@ -1,6 +1,6 @@
 """``python -m tradipy`` — the runnable proof of concept.
 
-Three subcommands:
+Five subcommands:
 
 ``demo``
     Replay the three PRD §3 worked examples through every gate and self-check the derived
@@ -24,6 +24,14 @@ Three subcommands:
     resistance from the §3 tables and applies the gates, while this recognises the pattern
     and derives all four. Where the two disagree, the disagreement is the point — see §3.4.
 
+``risk``
+    Take the §3 signals through PRD §7's pre-order rule table (Phase 5) and, for each one the
+    account may take, build the §6.1 bracket. **Nothing is submitted** — PLAN D30 refuses
+    transport, so this prints a draft and stops, which is exactly where
+    :mod:`tradipy.orders` stops. Signals are approved *sequentially* because §7's first row
+    caps **total** open risk, and that is what makes the second signal's rejection the
+    interesting output rather than a bug.
+
 Stdlib only — ``argparse`` and ``decimal``. The package has no runtime dependencies and this
 does not add one.
 """
@@ -34,6 +42,7 @@ import argparse
 import sys
 from decimal import Decimal, InvalidOperation
 
+from tradipy.orders import OrderDraft, bracket, idempotency_key
 from tradipy.params import MODES, PARAMS, Config, Mode
 from tradipy.poc import (
     BULL_FLAG_BARS,
@@ -46,11 +55,13 @@ from tradipy.poc import (
     simulated_universe,
 )
 from tradipy.poc import worked_examples as prd_examples
+from tradipy.positions import PositionState, leg_quantities
 from tradipy.quotes import Quote
+from tradipy.risk import RiskDecision, RiskState, approve_all
 from tradipy.rounding import TICK_SIZE
 from tradipy.scanner import ScanReport, scan
 from tradipy.score import Catalyst, ScoreInputs, composite_score, meets_conviction_gate
-from tradipy.setups import SetupOutcome
+from tradipy.setups import SetupOutcome, SetupSignal
 
 PASS, FAIL = "PASS", "FAIL"
 RULE = "─" * 78
@@ -337,6 +348,146 @@ def _run_setups(cfg: Config, mode: Mode) -> int:
     return 0
 
 
+#: §6.7's key needs a session identifier and an account. Both are fixtures here, and both are
+#: fixed rather than generated: §6.7's whole argument is that a value unique by construction
+#: cannot serve as a dedupe key, so a demo that generated either would print a different key on
+#: every run and quietly demonstrate the opposite of the rule.
+_DEMO_SESSION_DATE = "2026-07-31"
+_DEMO_ACCOUNT_ID = "SIMULATED-PAPER-NONE"
+
+
+def _print_risk_decision(signal: SetupSignal, decision: RiskDecision) -> None:
+    verdict = "APPROVE" if decision.approved else f"BLOCK  {decision.reason}"
+    print(f"\n{signal.setup_type.value}  {signal.shares:,} shares  ->  {verdict}")
+    for rule in decision.rules_evaluated:
+        print(f"  {PASS if rule.passed else FAIL}  {rule.rule:<52} {rule.detail}")
+
+
+def _print_draft(draft: OrderDraft) -> None:
+    print(f"      §6.1 bracket  OCA {draft.oca_group}")
+    print(f"      §6.7 key      {draft.idempotency_key}")
+    for leg in draft.legs:
+        limit = f"limit {leg.limit_price}" if leg.limit_price is not None else ""
+        stop = f"stop {leg.stop_price}" if leg.stop_price is not None else ""
+        print(
+            f"        {leg.purpose.value:<9} {leg.side.value:<4} {leg.order_type.value:<11} "
+            f"{leg.quantity:>6,}  {limit} {stop}".rstrip()
+        )
+    q = draft.quantities
+    print(
+        f"        §3.1.1 ladder  T1 {q.t1:,} + T2 {q.t2:,} + T3 {q.t3:,} = {q.shares:,} "
+        "(T3 trails the 9 EMA — no leg, per D18)"
+    )
+
+
+def _run_risk(cfg: Config, mode: Mode) -> int:
+    """Take the §3 signals through §7's pre-order rules and build the drafts that survive."""
+    print(RULE)
+    print("tradipy Phase 5 — §7 pre-order risk, then the §6.1 bracket")
+    print(RULE)
+    print(f"mode={mode}  start_of_day_equity={cfg['start_of_day_equity']}")
+    print(
+        "\nData origin: SIMULATED (PLAN D30). Nothing below is submitted anywhere: the §6.2\n"
+        "lifecycle is Signal -> PreTradeRiskCheck -> OrderDraft -> Submit, and D30 refuses the\n"
+        "fourth arrow. There is no broker, no paper account and no §18.7 viability gate result.\n"
+        "D34 opened Phase 5's pure half only. See docs/PHASE-5-DESIGN.md."
+    )
+
+    # Built with an explicit loop rather than a walrus comprehension: the comprehension's element
+    # type is `SetupSignal | None` however the filter is written, and `approve_all` takes
+    # `Sequence[SetupSignal]`.
+    signals: list[SetupSignal] = []
+    for example in setup_examples():
+        outcome = example.evaluate(cfg)
+        if outcome.signal is not None:
+            signals.append(outcome.signal)
+    print(
+        f"\n{len(signals)} of 3 §3 examples produced a signal; §3.4 was rejected by §3.1.1's "
+        "room gate (Phase 4, unresolved)."
+    )
+
+    # §6.7's key is computed **before** the pre-trade check, not after it: that section requires it
+    # persisted before submission, and §6.3's eighth check is a check *on* it. Supplying it here is
+    # also what stops the duplicate-order row printing "not evaluated" — a demo whose audit trail
+    # is two rows shorter than a real caller's teaches the wrong thing about the trail.
+    keys = [
+        (
+            signal.symbol,
+            idempotency_key(
+                signal.symbol,
+                signal.setup_type,
+                _DEMO_SESSION_DATE,
+                signal.levels.trigger_minute,
+                _DEMO_ACCOUNT_ID,
+            ),
+        )
+        for signal in signals
+    ]
+
+    # Sequentially, sharing one RiskState: §7 row 1 caps *total* open risk across positions.
+    state = RiskState(start_of_day_equity=cfg["start_of_day_equity"])
+    decisions = approve_all(signals, state, cfg, keys=keys)
+    approved = 0
+    for signal, decision in zip(signals, decisions, strict=True):
+        _print_risk_decision(signal, decision)
+        if not decision.approved:
+            continue
+        approved += 1
+        _print_draft(
+            bracket(
+                signal, signal.levels.entry_price, _DEMO_SESSION_DATE, _DEMO_ACCOUNT_ID, cfg
+            )
+        )
+
+    print(f"\n{RULE}")
+    print(
+        "The second signal is blocked on purpose, and it is Phase 5's headline finding. §7 row 1\n"
+        "caps TOTAL open risk — across all positions, from their current live stops — at\n"
+        "start_of_day_equity x max_risk_per_trade_pct, which is the same budget §2.2 sizes a\n"
+        "SINGLE position to. So a second position is rejected whenever the first is still at full\n"
+        "risk, at every legal configuration, while §2 advertises up to 3 concurrent positions and\n"
+        f"max_open_positions is {cfg['max_open_positions']} here. §7.1.1 derives exactly this for\n"
+        "scale-ins and does not extend it to new positions. Raised in docs/CHANGELOG.md, not\n"
+        "resolved: see docs/PHASE-5-DESIGN.md §6 for the three candidate resolutions."
+    )
+
+    # The §20.12 path the approved drafts would follow, printed so the state machine is visible
+    # rather than only tested. `transition` refuses anything off this path.
+    path = " -> ".join(
+        s.value
+        for s in (
+            PositionState.IDLE,
+            PositionState.ARMED,
+            PositionState.PENDING_ENTRY,
+            PositionState.OPEN_FULL,
+            PositionState.T1_FILLED,
+            PositionState.T2_FILLED,
+            PositionState.TRAILING,
+            PositionState.CLOSED,
+        )
+    )
+    print(f"\n§20.12 happy path: {path}")
+    print(
+        "Only the transitions §20.12's table enumerates are permitted, plus IDLE -> ARMED and\n"
+        "the three exit states -> CLOSED, which its table omits and its diagram supplies. One\n"
+        "consequence: a §3 invalidation firing after T1 has no state to move to. That is a\n"
+        "contradiction inside §20.12, raised rather than patched."
+    )
+
+    if approved == 0:
+        print("\nSelf-check FAILED — no §3 signal reached a draft.")
+        return 1
+    # A blocked signal is a correct answer, so it is not a failure; but the ladder invariant is.
+    for signal, decision in zip(signals, decisions, strict=True):
+        if decision.approved:
+            q = leg_quantities(signal.shares, cfg)
+            if q.t1 + q.t2 + q.t3 != signal.shares:  # pragma: no cover - LegQuantities raises
+                print("\nSelf-check FAILED — ladder legs do not sum to the share count.")
+                return 1
+    print(f"\nSelf-check OK — {approved} draft(s) built, every leg a whole tick, ladder exact.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m tradipy",
@@ -381,6 +532,13 @@ def build_parser() -> argparse.ArgumentParser:
         "setups",
         parents=[common],
         help="replay the three PRD §3 worked examples from bar series (Phase 4)",
+    )
+
+    sub.add_parser(
+        "risk",
+        parents=[common],
+        help="run the §3 signals through §7 pre-order risk and build the §6.1 bracket "
+        "(Phase 5; submits nothing)",
     )
 
     ev = sub.add_parser(
@@ -451,8 +609,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     command = args.command or "demo"
-    # `demo` and `setups` both reproduce PRD tables computed at 1% x $30,000.
-    reproduces_tables = command in {"demo", "setups"}
+    # These three reproduce PRD tables computed at 1% x $30,000. `risk` is in the set because
+    # its §7 arithmetic is denominated in that equity figure and its §3 inputs are those tables'
+    # share counts — at `beginner` both halve and the finding it prints still holds, which is
+    # asserted in tests/test_enforcement.py rather than left to the reader.
+    reproduces_tables = command in {"demo", "setups", "risk"}
     mode: Mode = getattr(args, "mode", None) or ("experienced" if reproduces_tables else "beginner")
     cfg = Config.default(mode=mode)
 
@@ -462,6 +623,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_scan(cfg, mode, verbose=args.verbose)
     if command == "setups":
         return _run_setups(cfg, mode)
+    if command == "risk":
+        return _run_risk(cfg, mode)
     return _run_evaluate(args, cfg)
 
 

@@ -20,19 +20,24 @@ Everything else runs through `uv run`, so you never activate the environment by 
 
 ```
 src/tradipy/
-    __init__.py     imports and re-exports the ten library modules
+    __init__.py     imports and re-exports the thirteen library modules
     rounding.py     tick arithmetic, Polarity, round_threshold        (§20.13)
-    rejects.py      the Reject and SoftFlag enums, raised by three layers
+    rejects.py      Reject, SoftFlag, ExitReason, RiskBlock — four namespaces
     params.py       the parameter registry, Config, coupling validator (§2, §2.0)
     bars.py         flagpole geometry and measured move                (§20.4)
     quotes.py       NBBO quote validity and spread_at_signal           (§20.14)
     score.py        composite score and the conviction gate      (§20.10, §14.2)
     gates.py        pre-entry gates and position sizing         (§2.2, §3.1.x)
     scanner.py      the §4.2 hard filters, soft flags and ranking  (§4.1-§4.3)
+    session.py      VWAP, HOD, EMA and the gap rule over a series (§20.1-§20.6)
+    setups.py       the three MVP setups and §20.11 arbitration    (§3.2-§3.4)
+    positions.py    the §20.12 state machine and the §3.1.1 ladder split
+    risk.py         §6.3's pre-order checks and §7's rule table
+    orders.py       §6.1 bracket construction and §6.7's key — submits nothing
     poc.py          composition: one candidate through every gate, plus the
                     simulated universe behind `scan`
     __main__.py     the `python -m tradipy` CLI entry point
-tests/              eleven pytest files (see below) + registry_baseline.json
+tests/              thirteen pytest files (see below) + registry_baseline.json
 docs/               PRD.md (normative), PLAN, CHANGELOG, PHASE-2A-SPIKE,
                     reviews/, these guides
 scripts/            regen_registry_baseline.py, check_links.py

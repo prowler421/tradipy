@@ -59,9 +59,38 @@ from tradipy.gates import (
     scan_spread_cap,
     spread_caps,
 )
+from tradipy.orders import (
+    LegPurpose,
+    OrderLeg,
+    OrderSide,
+    OrderType,
+    bracket,
+    idempotency_key,
+)
 from tradipy.params import HARD_CAPS, MODE_PRESETS, PARAMS, Config, CouplingError
 from tradipy.poc import setup_examples
-from tradipy.rejects import ExitReason, Reject, SoftFlag
+from tradipy.positions import (
+    TRANSITIONS,
+    IllegalTransition,
+    LegQuantities,
+    PositionState,
+    leg_quantities,
+    scale_in_permitted,
+    transition,
+)
+from tradipy.rejects import ExitReason, Reject, RiskBlock, SoftFlag
+from tradipy.risk import (
+    EVALUATED_RULES,
+    UNREACHABLE_BLOCKS,
+    OpenPosition,
+    OrderIntent,
+    RiskState,
+    approve,
+    max_dollar_risk,
+    multi_day_drawdown_breached,
+    session_drawdown_breached,
+    total_open_risk,
+)
 from tradipy.rounding import TICK_SIZE, Polarity, ceil_to_tick, floor_to_tick
 from tradipy.scanner import (
     HARD_FILTERS,
@@ -109,7 +138,19 @@ POLARITY_DEFINING = ("params.py", "rounding.py")
 #: ``session.py`` deliberately did **not** — VWAP, HOD and EMA are inputs to a level rather than
 #: levels, and §20.13 puts rounding once, at level computation. The guard below derives the set
 #: from the source, so that distinction is checked rather than asserted here.
-ROUNDING_CONSUMERS = ("gates.py", "quotes.py", "scanner.py", "setups.py")
+#: ``positions.py`` and ``orders.py`` joined at Phase 5 — the first floors the §3.1.1 breakeven
+#: stop, the second rounds the §6.1 entry limit and stop-limit. ``risk.py`` deliberately did
+#: **not**: a risk budget is ``equity x pct`` and open risk is ``shares x (mark - stop)``, and
+#: neither is a price level compared against a tick, which is the condition ``round_for``'s own
+#: docstring states for rounding at all.
+ROUNDING_CONSUMERS = (
+    "gates.py",
+    "orders.py",
+    "positions.py",
+    "quotes.py",
+    "scanner.py",
+    "setups.py",
+)
 
 #: PRD §2.0's mode-preset table, transcribed here so the test compares against the document
 #: rather than against `MODE_PRESETS`, which is the thing under test.
@@ -1645,8 +1686,9 @@ def test_every_setup_can_reject_with_setup_not_present(setup: SetupType) -> None
     """The one code Phase 4 adds must be reachable for each setup, or it names nothing.
 
     A flat series has no flagpole, no consolidation above VWAP and no dip below it, so all three
-    patterns are absent. Reachability per code is what ``test_every_hard_filter_can_actually_reject``
-    does for §4.2, and the argument is the same: an unreachable code is a rule nothing enforces.
+    patterns are absent. Reachability per code is what
+    ``test_every_hard_filter_can_actually_reject`` does for §4.2, and the argument is the same: an
+    unreachable code is a rule nothing enforces.
     """
     flat = bar_sequence([Bar(D("5.00"), D("5.00"), D("5.00"), D("5.00"), 1000)] * 40)
     outcome = EVALUATORS[setup]("FLAT", flat, len(flat) - 1, TICK_SIZE, CFG)
@@ -1666,3 +1708,403 @@ def test_the_resistance_set_cannot_lose_its_only_unconditional_candidate() -> No
     assert resistance.source == "next whole dollar"
     assert resistance.level == D("6")
     assert [name for name, _ in resistance.candidates] == ["next whole dollar"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 (D34) — §6, §7 and §20.12's guarantees, each performed against
+# ---------------------------------------------------------------------------
+#
+# Same rule as every block above: for each sentence of the form "X cannot happen", the test that
+# attempts X. Two of these assert an **absence** rather than a presence, which is unusual and
+# deliberate: docs/PHASE-5-DESIGN.md §1.1 states that two §6 guarantees are *not* closed, and a
+# guarantee documented as unclosed and then quietly closed is as much a drift as the reverse.
+
+
+def _phase5_signal() -> SetupSignal:
+    """The §3.2 worked example's signal — the one Phase 5 fixture that must exist."""
+    signal = next(
+        outcome.signal
+        for example in setup_examples()
+        if (outcome := example.evaluate(CFG)).signal is not None
+    )
+    return signal
+
+
+@pytest.mark.spec
+def test_exit_leg_quantities_cannot_fail_to_cover_the_position() -> None:
+    """§21.6 makes an unprotected share a Sev-1, so the §3.1.1 split may not lose one.
+
+    The guarantee is on :class:`~tradipy.positions.LegQuantities`, not on the function that
+    builds it, precisely so that a *second* construction path cannot bypass it — which is what
+    made ``MODE_PRESETS`` mutable behind a frozen ``Config``. Performed by constructing the type
+    directly with legs that do not sum.
+    """
+    with pytest.raises(ValueError, match="sum to"):
+        LegQuantities(t1=500, t2=250, t3=249, shares=1000)
+    # And the real split never does, at any count the fractions do not divide.
+    for shares in (1, 2, 3, 7, 999, 2500):
+        q = leg_quantities(shares, CFG)
+        assert q.t1 + q.t2 + q.t3 == shares
+
+
+@pytest.mark.spec
+def test_a_bracket_cannot_be_built_for_a_position_with_no_shares() -> None:
+    """``position_size`` returns 0 for "no budget" *and* "skip", so 0 must not build a draft.
+
+    That ambiguity is a documented open finding on ``gates.position_size``. A bracket is where it
+    would become four legs of nothing, and the refusal comes from ``leg_quantities`` rather than
+    from a second check in ``bracket`` — one definition, per convention 1. This test therefore
+    also fails if that delegation is replaced by a local guard whose message drifts.
+    """
+    signal = _phase5_signal()
+    with pytest.raises(ValueError, match="shares must be positive"):
+        bracket(
+            SetupSignal("ZERO", signal.setup_type, signal.levels, 0),
+            signal.levels.entry_price,
+            "2026-07-31",
+            "ACC",
+            CFG,
+        )
+
+
+@pytest.mark.spec
+def test_no_draft_price_can_reach_a_broker_unrounded() -> None:
+    """§20.13: *"every price submitted to the broker … must be a whole tick."*
+
+    An ``OrderDraft`` is the last representation before submission, so this is where the
+    requirement binds. Performed on a sub-penny ask, which is the only input to
+    :func:`~tradipy.orders.bracket` that nothing upstream has rounded.
+    """
+    signal = _phase5_signal()
+    draft = bracket(signal, D("5.1637"), "2026-07-31", "ACC", CFG)
+    for leg in draft.legs:
+        for price in (leg.limit_price, leg.stop_price):
+            assert price is None or price % TICK_SIZE == 0, f"{leg.purpose} price {price}"
+    # And a leg constructed by hand with an unrounded price is refused, so the guarantee does not
+    # depend on `bracket` being the only builder.
+    with pytest.raises(ValueError, match="whole tick"):
+        OrderLeg(
+            side=OrderSide.SELL,
+            order_type=OrderType.STOP,
+            quantity=1,
+            purpose=LegPurpose.STOP,
+            stop_price=D("5.0449"),
+        )
+
+
+@pytest.mark.spec
+def test_the_state_machine_refuses_every_transition_section_twenty_twelve_omits() -> None:
+    """§20.12 is an enumeration, so the *complement* is what has to fail.
+
+    The happy-path walk passes against a machine that permits everything, which is the shape of
+    hole this whole file exists for. Every ordered pair outside :data:`TRANSITIONS` is attempted.
+    """
+    attempted = refused = 0
+    for src, dst in itertools.product(PositionState, repeat=2):
+        if dst in TRANSITIONS[src]:
+            continue
+        attempted += 1
+        with pytest.raises(IllegalTransition):
+            transition(src, dst)
+        refused += 1
+    assert attempted == refused
+    # Including the self-transition, which §20.12 lists for no state.
+    for state in PositionState:
+        with pytest.raises(IllegalTransition):
+            transition(state, state)
+    # And the two edges §20.12's table omits and its diagram supplies must be present, or the
+    # machine can neither start nor finish — the reading is load-bearing, not cosmetic.
+    assert PositionState.ARMED in TRANSITIONS[PositionState.IDLE]
+    for exit_state in (
+        PositionState.STOPPED_OUT,
+        PositionState.INVALIDATED,
+        PositionState.BAILED_OUT,
+    ):
+        assert TRANSITIONS[exit_state] == frozenset({PositionState.CLOSED})
+
+
+@pytest.mark.spec
+def test_a_second_position_at_full_risk_cannot_be_approved() -> None:
+    """§7 row 1 is NON-BYPASSABLE, so the total-risk cap must not be reachable around.
+
+    Performed three ways, because "non-bypassable" is a claim about every path: a second §3
+    signal in sequence, a hand-built open position at full risk, and an override attempting to
+    raise the cap past §7's hard ceiling.
+    """
+    signal = _phase5_signal()
+    budget = max_dollar_risk(CFG)
+
+    full = OpenPosition(
+        symbol="HELD",
+        shares=signal.shares,
+        mark=signal.levels.entry_price,
+        current_stop=signal.levels.stop_price,
+        state=PositionState.OPEN_FULL,
+        correlation_group="symbol:HELD",
+    )
+    state = RiskState(start_of_day_equity=CFG["start_of_day_equity"], positions=(full,))
+    assert total_open_risk(state) >= budget * D("0.99")
+    decision = approve(signal, state, CFG)
+    assert not decision.approved
+    assert decision.reason is RiskBlock.MAX_RISK_EXCEEDED
+    assert decision.approved_shares == 0, "§7 rejects rather than trims (§9.2 approved_shares)"
+
+    # The cap cannot be raised out of the way: `max_risk_per_trade_pct` is in HARD_CAPS.
+    with pytest.raises(ValueError):
+        CFG.with_overrides(max_risk_per_trade_pct=HARD_CAPS["max_risk_per_trade_pct"] * 2)
+
+
+@pytest.mark.spec
+def test_a_halted_account_cannot_be_approved_by_any_path() -> None:
+    """§7.2's kill switch and §7.1.2's lockout are NON-BYPASSABLE and have no bypassing config.
+
+    ``trading_halted`` is not a registered parameter, so there is nothing to override; the attempt
+    below is the closest reachable thing, and it must not help.
+    """
+    signal = _phase5_signal()
+    halted = RiskState(
+        start_of_day_equity=CFG["start_of_day_equity"],
+        trading_halted=True,
+        halt_reason="kill_switch",
+    )
+    assert approve(signal, halted, CFG).reason is RiskBlock.TRADING_HALTED
+    # Even as a REDUCE order the account is halted — but §7.2's action is *flatten*, so an exit is
+    # exactly what should be permitted. Asserted so the two rules are not conflated.
+    assert approve(signal, halted, CFG, intent=OrderIntent.REDUCE).approved
+    with pytest.raises(KeyError):
+        CFG.with_overrides(trading_halted=0)
+
+
+@pytest.mark.spec
+def test_scale_in_cannot_happen_before_t1_by_any_state() -> None:
+    """§7.1.1: *"adds are only ever legal after T1, never while … at full risk."*
+
+    Attempted from every §20.12 state with a zero projected risk, which is the most permissive
+    arithmetic there is — so anything that returns True here is the state filter failing.
+    """
+    permitted = {
+        state
+        for state in PositionState
+        if scale_in_permitted(state, Decimal(0), CFG)
+    }
+    assert permitted == {PositionState.T1_FILLED, PositionState.T2_FILLED}
+
+
+@pytest.mark.spec
+def test_two_different_trigger_bars_cannot_share_an_idempotency_key() -> None:
+    """§6.7: the key must be derived from signal identity, so no two signals may collide.
+
+    §6.7's own argument is that a UUID cannot serve: *"a freshly generated one is unique by
+    construction, so a duplicate check against it can never fire."* The converse guarantee is this
+    one, and the delimiter is the way it fails — so an embedded ``|`` is refused rather than
+    silently producing a shared key.
+    """
+    base = ("ABCD", SetupType.BULL_FLAG, "2026-07-31", 37, "ACC")
+    keys = {
+        idempotency_key(*base),
+        idempotency_key("ABCD", SetupType.BULL_FLAG, "2026-07-31", 38, "ACC"),
+        idempotency_key("ABCD", SetupType.HOD_BREAKOUT, "2026-07-31", 37, "ACC"),
+        idempotency_key("ABCD", SetupType.BULL_FLAG, "2026-08-03", 37, "ACC"),
+    }
+    assert len(keys) == 4
+    # The collision path a delimited join has, closed.
+    with pytest.raises(ValueError, match="separator"):
+        idempotency_key("AB|CD", SetupType.BULL_FLAG, "2026-07-31|37", 37, "ACC")
+
+
+@pytest.mark.spec
+def test_a_risk_block_cannot_land_where_a_reject_belongs_and_the_reverse() -> None:
+    """The fourth namespace, held apart from the other three by type — K5's argument again.
+
+    Performed rather than annotated, because a type hint is not a runtime guarantee. The
+    membership tests below are what a caller would actually get wrong.
+    """
+    for block in RiskBlock:
+        assert block not in set(Reject)
+        assert block not in set(SoftFlag)
+        assert block not in set(ExitReason)
+        with pytest.raises(ValueError):
+            Reject(block.value)
+    for reject in Reject:
+        with pytest.raises(ValueError):
+            RiskBlock(reject.value)
+    # And a §4.2 soft flag cannot become an account-level block either.
+    for flag in SoftFlag:
+        with pytest.raises(ValueError):
+            RiskBlock(flag.value)
+
+
+@pytest.mark.spec
+@pytest.mark.parametrize("module", ["positions.py", "risk.py", "orders.py"])
+def test_the_phase_5_layer_reads_nothing_and_imports_nothing_that_could(module: str) -> None:
+    """D30, extended to Phase 5's three modules — an allowlist, not a denylist.
+
+    The layer most likely to want a broker is the one that builds broker orders, so this is the
+    allowlist that matters most. ``hashlib`` is permitted for ``orders.py`` alone: §6.7 specifies
+    sha256 by name, and a hash is arithmetic. Note what is **absent** and would be the first thing
+    a transport implementation reached for — ``socket``, ``ib_insync``, ``sqlite3``, ``json``,
+    ``pathlib``, ``os`` — none of which is in the list below.
+    """
+    tree = ast.parse((SRC / module).read_text(encoding="utf-8"))
+    permitted = {
+        "__future__",
+        "collections.abc",
+        "dataclasses",
+        "decimal",
+        "enum",
+        "hashlib",
+        "types",
+        "typing",
+    }
+
+    roots: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            roots.add(node.module)
+        elif isinstance(node, ast.Import):
+            roots.update(a.name for a in node.names)
+    outside = {r for r in roots if not r.startswith("tradipy")} - permitted
+    assert not outside, f"{module} imports outside its allowlist: {sorted(outside)}"
+
+    reads = [
+        n.func.id
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "open"
+    ]
+    assert not reads, f"{module} opens a file; §7's state is supplied, not sensed (D30)"
+
+
+@pytest.mark.spec
+def test_the_two_guarantees_phase_5_cannot_make_are_still_absent() -> None:
+    """docs/PHASE-5-DESIGN.md §1.1 states two §6/§7 guarantees as **unclosed**. Pin the absence.
+
+    A guarantee documented as unclosed and then quietly closed is as much a documentation drift as
+    one documented as closed and never wired — which is the sixth defect class from the other
+    side. If either assertion below starts failing, the design document is what needs editing.
+
+    1. §6.7's *"the DB — not process memory — is the arbiter"*: there is no store, so the
+       duplicate check reads a set the caller supplies.
+    2. §7.1.2's *"the non-bypassable limits are meaningless if they reset on restart"*: nothing
+       persists, so :class:`RiskState` has no load path.
+    """
+    orders_src = (SRC / "orders.py").read_text(encoding="utf-8")
+    risk_src = (SRC / "risk.py").read_text(encoding="utf-8")
+
+    # No persistence of any kind in either module.
+    for name, src in (("orders.py", orders_src), ("risk.py", risk_src)):
+        for forbidden in ("sqlite3", "open(", "Path(", "json.dump", "pickle"):
+            assert forbidden not in src, f"{name} appears to persist ({forbidden})"
+
+    # The duplicate check's arbiter is a supplied argument, and omitting it does not silently pass
+    # as a real check.
+    signal = _phase5_signal()
+    decision = approve(signal, RiskState(start_of_day_equity=CFG["start_of_day_equity"]), CFG)
+    row = next(r for r in decision.rules_evaluated if r.rule.startswith("Duplicate order"))
+    assert row.passed and "not evaluated" in row.detail
+
+    # `RiskState` has no field that could hold a loaded row, and no classmethod that loads one.
+    assert not [n for n in dir(RiskState) if "load" in n or "from_" in n]
+
+
+@pytest.mark.spec
+def test_approve_evaluates_every_rule_and_cannot_silently_drop_one() -> None:
+    """§9.2's ``rules_evaluated`` is *"every rule checked, for audit"* — so *every* must bind.
+
+    The first version of this guarantee was `assert len(rules_evaluated) >= 10` against an actual
+    12, which passes with a rule missing. That is the fifth defect class exactly: a test adjacent
+    to the hole, confirming the happy path. `approve` now compares its own output against
+    :data:`~tradipy.risk.EVALUATED_RULES` and raises, and this performs the drop.
+    """
+    signal = _phase5_signal()
+    state = RiskState(start_of_day_equity=CFG["start_of_day_equity"])
+    decision = approve(signal, state, CFG)
+    assert tuple(r.rule for r in decision.rules_evaluated) == EVALUATED_RULES
+
+    # Perform the violation: a loop one rule short must not produce a decision.
+    with pytest.raises(AssertionError, match="did not evaluate"):
+        risk_module = importlib.import_module("tradipy.risk")
+        original = risk_module.EVALUATED_RULES
+        try:
+            risk_module.EVALUATED_RULES = (*original, "A rule nothing appends")
+            approve(signal, state, CFG)
+        finally:
+            risk_module.EVALUATED_RULES = original
+
+
+@pytest.mark.spec
+def test_the_two_drawdown_blocks_are_unreachable_until_phase_6() -> None:
+    """§7 rows 7 and 8 have a predicate and **no block path**, and that is asserted, not narrated.
+
+    §7 marks them *Continuous* and *End of day*; the loop is Phase 6's. An unreachable reason code
+    is normally a defect — ``test_every_hard_filter_can_actually_reject`` and
+    ``test_every_setup_can_reject_with_setup_not_present`` exist to catch it — so the two that are
+    unreachable **on purpose** need the opposite assertion, or the next reader cannot tell a
+    deliberate gap from an accidental one. When Phase 6 wires the loop, this fails.
+    """
+    assert UNREACHABLE_BLOCKS == {RiskBlock.SESSION_DRAWDOWN, RiskBlock.MULTI_DAY_DRAWDOWN}
+
+    # Neither is named anywhere in `src/` outside the enum that declares them and the set above.
+    for block in UNREACHABLE_BLOCKS:
+        naming = [
+            path.name
+            for path in SRC.glob("*.py")
+            if block.name in path.read_text(encoding="utf-8")
+        ]
+        assert sorted(naming) == ["rejects.py", "risk.py"], (
+            f"{block.name} is now named by {naming}; if a block path was added, PRD §7's "
+            "Continuous loop has arrived and docs/PHASE-5-DESIGN.md §1.1 needs editing"
+        )
+
+    # And no decision can carry one, at any state the predicates fire on.
+    signal = _phase5_signal()
+    equity = CFG["start_of_day_equity"]
+    deep = RiskState(
+        start_of_day_equity=equity,
+        realized_pnl=-equity * CFG["multi_day_dd_pct"] - Decimal(1),
+        session_equity_peak=equity * Decimal("1.5"),
+        multi_day_peak_equity=equity * Decimal("1.5"),
+    )
+    assert session_drawdown_breached(deep, CFG)
+    assert multi_day_drawdown_breached(deep, CFG)
+    assert approve(signal, deep, CFG).reason not in UNREACHABLE_BLOCKS
+
+
+@pytest.mark.boundary
+def test_every_phase_5_threshold_has_a_boundary_fixture() -> None:
+    """Guard on the guard: the boundary claim in ``docs/PHASE-5-DESIGN.md`` §8 must be *derived*.
+
+    That document says all nine Phase 5 thresholds are exercised at their own limit. Its first
+    draft said six of nine and named two things that are not registry rows, which is why the
+    coverage set is computed here from the source instead of counted by a reader — the same
+    argument :func:`test_every_module_that_rounds_is_in_the_polarity_check` makes about a
+    hand-maintained file list.
+
+    Scope, stated because an unqualified claim about a checker is what F8 was about: this asserts
+    that each name appears inside a ``@pytest.mark.boundary`` block. It cannot verify that the
+    fixture exercises the *limit* rather than merely mentioning the parameter; that is a review
+    judgement, and the enumeration in PHASE-5-DESIGN §8 is where it is recorded.
+    """
+    phase5_rows = frozenset(
+        {
+            "max_correlated_positions",
+            "session_last_entry_minute",
+            "entry_limit_offset_ticks",
+            "stop_limit_offset_ticks",
+            "t1_scale_out_pct",
+            "t2_scale_out_pct",
+            "min_partial_fill_pct",
+            "partial_fill_timeout_seconds",
+            "partial_fill_spread_widening_multiple",
+        }
+    )
+    assert phase5_rows <= set(PARAMS), "a name here is not registered — the list is stale"
+
+    suite = Path(__file__).resolve().parent / "test_phase5.py"
+    blocks = [
+        block
+        for block in suite.read_text(encoding="utf-8").split("\n@pytest.mark.")
+        if block.startswith("boundary")
+    ]
+    assert blocks, "no boundary-marked fixtures found — check the split, not the result"
+    covered = {row for row in phase5_rows for block in blocks if row in block}
+    assert covered == phase5_rows, f"no boundary fixture names: {sorted(phase5_rows - covered)}"

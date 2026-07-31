@@ -332,6 +332,52 @@ _REGISTRY: list[Param] = [
        polarity=Polarity.MAXIMUM),
     _p("min_quote_size", "100", "100", "10000", "shares", "PRD §20.14 (bounds: code)",
        polarity=Polarity.MINIMUM),
+
+    # --- §6 / §7 order construction and pre-order risk (D34) --------------
+    # Nine rows, and every one is `(bounds: code)` for the reason Phase 4's twenty were:
+    # §6.1, §6.3, §6.4 and §7 have no Bounds column, and §3.1.1's ladder table has none
+    # either. §6.5 is the one §6 table that *does* state bounds (`impact_coefficient`,
+    # 0.0–5.0) and it is deliberately absent — its only consumer is §8.2's fill model, which
+    # is Phase 4b's, and a registered threshold with no reader is the fifth defect class.
+    # §6.6's 60 s signal expiry and §6.8's retry count, backoff and rate limit are absent for
+    # the same reason one step further: they are transport rules and D30 refuses transport.
+    #
+    # FINRA's PDT constants are **not here** either. $25,000, "the 4th day trade" and the
+    # 5-business-day window are law, not tunables, so they are module constants in `risk.py`
+    # on the same argument `rounding.TICK_SIZE` makes from SEC Rule 612 — a registry row
+    # implies a legal range, and a regulation does not have one.
+    _p("max_correlated_positions", "1", "1", "3", "positions",
+       "PRD §7 / §7.1.3 / D21 (bounds: code)", polarity=Polarity.MAXIMUM),
+    # §7's window is "09:30-15:55 ET" and §21.1 forbids a clock in this layer, so the bound is
+    # expressed in §20.1's ordinal minutes from the open: 15:55 is 385 minutes after 09:30.
+    # There is no matching floor because minute 0 *is* 09:30 and a session bar cannot be
+    # earlier. §2.0's `premarket_trading_enabled` is therefore still unrepresentable (G9).
+    _p("session_last_entry_minute", "385", "1", "389", "minutes from open",
+       "PRD §7 trading-hours lockout / §20.1 (bounds: code)", polarity=Polarity.MAXIMUM),
+    # §6.1: "price = ask + 1 tick (buy) or bid - 1 tick (sell)" and "default: stop - 2 ticks
+    # for sells". Neither carries a polarity: an offset is a magnitude, not a constraint whose
+    # comparison has a direction, and both are whole ticks by construction so there is nothing
+    # to round. Compare `ema_period`, which is a period rather than a bound for the same reason.
+    _p("entry_limit_offset_ticks", "1", "0", "10", "ticks", "PRD §6.1 (bounds: code)"),
+    _p("stop_limit_offset_ticks", "2", "0", "10", "ticks", "PRD §6.1 (bounds: code)"),
+    # §3.1.1's ladder: T1 50%, T2 25%, T3 25%. Only the first two are registered — the third is
+    # the remainder, and registering all three would let them sum to something other than 1
+    # with every per-parameter bound still passing. `validate_couplings` enforces the sum.
+    # No polarity: these are allocation weights, like the §20.10 score weights, not gates.
+    _p("t1_scale_out_pct", "0.50", "0.10", "0.90", "fraction",
+       "PRD §3.1.1 ladder (bounds: code)"),
+    _p("t2_scale_out_pct", "0.25", "0.05", "0.90", "fraction",
+       "PRD §3.1.1 ladder (bounds: code)"),
+    # §6.4: "If partial fill < 50% of intended within 30 sec, cancel remainder and size stop to
+    # filled amount. If partial fill >= 50%, cancel remainder only if spread widens > 2x entry
+    # spread." The 30 s is a MAXIMUM on how long the fill may be waited out, which is the same
+    # classification `quote_stale_seconds` carries for the same shape of rule.
+    _p("min_partial_fill_pct", "0.50", "0.10", "1.00", "fraction",
+       "PRD §6.4 (bounds: code)", polarity=Polarity.MINIMUM),
+    _p("partial_fill_timeout_seconds", "30", "5", "300", "s", "PRD §6.4 (bounds: code)",
+       polarity=Polarity.MAXIMUM),
+    _p("partial_fill_spread_widening_multiple", "2.0", "1.0", "10.0", "x entry spread",
+       "PRD §6.4 (bounds: code)", polarity=Polarity.MAXIMUM),
 ]
 # fmt: on
 
@@ -670,4 +716,19 @@ def validate_couplings(cfg: Config) -> None:
             f"composite-score weights sum to {total}, not 1: "
             f"{', '.join(f'{n}={cfg[n]}' for n in sorted(weights))}. "
             "PRD §20.10 requires score in [0, 1] so it is comparable to the §14.2 gate."
+        )
+
+    # PRD §3.1.1 / D34: T3 is the *remainder* of the ladder, so the two registered scale-out
+    # fractions must leave some. At a sum of 1 or more the final tranche is empty, which
+    # silently deletes the ratcheting 9 EMA trail that §21.2 makes the protection of that
+    # tranche — while both parameters stay inside their own bounds and per-parameter validation
+    # passes. Same shape as A25: individually legal, jointly incoherent. Unlike A25 the shipped
+    # defaults satisfy it (0.50 + 0.25 = 0.75), so this one can be enforced rather than merely
+    # documented — see `min_tradeable_price_from_stop_bounds` for the case that cannot be.
+    scale_out = cfg["t1_scale_out_pct"] + cfg["t2_scale_out_pct"]
+    if scale_out >= Decimal(1):
+        raise CouplingError(
+            f"t1_scale_out_pct + t2_scale_out_pct = {scale_out} >= 1, which leaves PRD §3.1.1's "
+            "T3 tranche empty and removes the 9 EMA trail (§21.2) it is protected by. "
+            "The ladder is 50/25/25: the third leg is the remainder, not a third parameter."
         )

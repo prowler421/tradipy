@@ -37,6 +37,7 @@ __all__ = [
     "min_separation",
     "required_room",
     "check_room",
+    "t1_level",
     "exit_ladder",
     "exceeds_max_stop",
     "position_size",
@@ -205,6 +206,20 @@ class Ladder:
         return entry < self.t1 < self.t2
 
 
+def t1_level(entry: Decimal, r: Decimal, cfg: Config) -> Decimal:
+    """T1 — exactly ``t1_r_multiple`` R above entry, rounded up (§3.1.1, §20.13).
+
+    Split out from :func:`exit_ladder` for Phase 4. §3.3's T2 is *"next whole-dollar level
+    above **T1**"*, so a setup has to know T1 before it can name a structural target — while
+    :func:`exit_ladder` computes both together and cannot be called without one. Restating
+    ``entry + t1_r_multiple × R`` in :mod:`tradipy.setups` is the v1.2 defect class, so
+    :func:`exit_ladder` delegates here and this is the single definition. Same shape as
+    :func:`scan_spread_cap`, including the enforcement fixture that asserts the delegation
+    structurally rather than by comparing outputs.
+    """
+    return ceil_to_tick(entry + cfg["t1_r_multiple"] * r)
+
+
 def exit_ladder(entry: Decimal, r: Decimal, structural_target: Decimal, cfg: Config) -> Ladder:
     """T1 at exactly ``t1_r_multiple`` R; T2 at the structural level.
 
@@ -213,10 +228,7 @@ def exit_ladder(entry: Decimal, r: Decimal, structural_target: Decimal, cfg: Con
     ``ceil_to_tick`` directly: §20.13 states the direction for *targets* as such, not by
     reference to any parameter's polarity.
     """
-    return Ladder(
-        t1=ceil_to_tick(entry + cfg["t1_r_multiple"] * r),
-        t2=ceil_to_tick(structural_target),
-    )
+    return Ladder(t1=t1_level(entry, r, cfg), t2=ceil_to_tick(structural_target))
 
 
 # ---------------------------------------------------------------------------

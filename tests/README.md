@@ -51,6 +51,7 @@ like logic bugs (PRD §9.2).
 | `test_computations.py` | The three PRD §20 rules that need no feed — §20.4 flagpole geometry, §20.10 composite score, §20.14 quote validity | All three were fully specified and entirely absent. §20.14 had a registered parameter and two `Reject` members that no code returned |
 | `test_poc.py` | A self-checking demo that has stopped checking | `python -m tradipy demo` is what people will run instead of reading the code, so its self-check needs its own test — including `test_demo_self_check_would_catch_spec_drift`, which asserts the check can still fail |
 | `test_scanner.py` | **Spec drift in a table the code re-implements** — §4.2's fourteen filters, parsed out of `docs/PRD.md` and compared to `HARD_FILTERS`/`SOFT_FILTERS` in both directions: name, rejection code, hard/soft classification, and order. Finding G3 was that nothing compared the `Reject` enum to the spec's rejection-code namespace either way; round 10's K5 was the same gap read from the other end, a gate document sizing Phase 3 at all fourteen rows with nothing mechanical to contradict it. Plus a `boundary` mark per filter and the `polarity` proof that the price range's two ends round in opposite directions |
+| `test_setups.py` | **The §3 setups against their own worked examples, from bars** — PRD §21.1's worked-example row read as written (*"input **bar series** → asserted entry, stop, R, targets, share count"*), plus §21.1's look-ahead property test at every legal trigger index for all three setups. It is what found that §3.4's example fails §3.1.1's room gate: the older scalar-driven fixtures could not, because they are handed the resistance the table names |
 | `test_documentation.py` | **Consistency, applied to the documentation's own counts** — a number stated in prose that no longer matches the code | The registry solved this for thresholds; nothing solved it for the counts the docs quote about themselves. It recurred at v0.1.0 inside this very file: the heading below read "Four open spec discrepancies" above a list of six, while a fixture comment said eleven surviving mutations where three other documents said twelve |
 | `test_spike2a_instrumentation.py` | **Unvalidated instrument** — spike code that produces spec-deciding numbers while restating the library | Review round 7 in `scripts/spike2a/synthetic_data_generator.py`: hand-derived R under a docstring claiming library stop functions. AST and runtime checks that `generate_signal_bars` calls `apply_stop_floor_and_ceiling`, that `R = entry − stop`, and that `q4_spreads` imports the shipped cap/spread functions |
 
@@ -162,7 +163,14 @@ Six restatements of `max_spread_abs` and six of `max_spread_pct` currently sit a
 §3.3, §3.4, §4.2, §13 and §15. Each is a future divergence point; the baseline is what makes
 the seventh visible.
 
-## Six open spec discrepancies these tests pin
+## Open spec discrepancies these tests pin
+
+**The count is deliberately not in this heading.** It read *"Four open spec discrepancies"* above
+six items until `c04d496` corrected it to *"Six"* — the instance the table above records at its
+`test_documentation.py` row — and round 12 then added two further findings to this section. That is
+the second time, not the third, and it is the reason the number is gone rather than corrected:
+`test_documentation.py` checks counts that are mechanically derivable from *code*, and the number
+of open findings in a prose section is not one of them.
 
 None is a code bug — each follows from defaults that were individually reasonable, set in
 different revisions. All are recorded as tests that fail once resolved, so they cannot be
@@ -239,12 +247,31 @@ different dress.
    score. Pinned so the divergence has to be a decision.
    → `test_score_float_cap_currently_equals_the_scan_filter`
 
-### Thresholds the code deliberately does not invent
+### Thresholds the code deliberately does not invent — **closed by Phase 4, and how**
 
-PRD §3.2 criterion 2 states three thresholds — at least 3 candles, combined move ≥ 2%, total
-volume ≥ 2× the prior 30 bars' average — and none has a registry entry. `bars.select_flagpole`
-therefore takes the qualification test as a **caller-supplied predicate** rather than either
-registering values the PRD never defined or writing them as literals. §3.2's criteria 3, 5
-and 7 (retrace ≤ 50%, flag volume ≤ 70%, breakout volume ≥ 2×) are in the same position.
-These are setup rules rather than §20 computation semantics, so they belong to whatever
-implements §3.2 — but they need §2.0 rows before it does.
+This section read: §3.2 criterion 2's three thresholds *"belong to whatever implements §3.2 — but
+they need §2.0 rows before it does."* Phase 4 is that implementation and the §2.0 rows **were never
+written**, so D33 registered all twenty §3 thresholds with **code-originated bounds**
+(`(bounds: code)`, convention 7) rather than waiting. `bars.select_flagpole`'s caller-supplied
+predicate now has a caller: it is §3.2 criterion 2, built from the first four rows.
+
+That is a resolution and also a weakening, stated because the distinction matters: a
+`(bounds: code)` range is this code's judgement, and **all twenty** cite a PRD section with no
+Bounds column — eighteen of them §3.2, §3.3 or §3.4 — where §4.2 at least tabulated its defaults. The values are §3's prose;
+only the ranges are invented. `test_code_originated_bounds_are_declared_as_such` keeps that visible.
+
+### The §3.4 worked example fails §3.1.1's room gate
+
+Pinned in both directions by `test_setups.py`. §3.1.1's resistance set contains *"next whole
+dollar"*; at §3.4's $3.83 entry that is $4.00, nearer than the $4.15 HOD the example's table names,
+and $0.17 above entry against a required room of $0.28. Every other line of that table reproduces
+exactly from the bar series. Raised in `docs/CHANGELOG.md` with three candidate resolutions and
+**not resolved in code** — which is why the test asserts the rejection *and* asserts that the same
+trade passes against the level §3.4 names. Either resolution breaks one half of it deliberately.
+
+### `session.ema_at` has no caller
+
+§20.5's EMA is implemented and unused in `src/`: its consumer is §3.1.1's T3 leg, which D18 puts
+behind a broker-side stop and therefore in Phase 5/6. Recorded here for the same reason
+`select_flagpole`'s predicate was — a mechanism with no caller is the fifth defect class's shape,
+and the defence is that §21.1's unit row names *"EMA seeding"* explicitly as needing a fixture.

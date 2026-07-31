@@ -7,18 +7,36 @@ together. `PRD.md §20` (Computation Semantics) is normative and governs on any 
 
 ## Module structure
 
-Nine library modules plus a CLI entry point, with a strict one-way dependency graph:
+Eleven library modules plus a CLI entry point, with a strict one-way dependency graph:
 
-```
-rounding.py  ◄── params.py ◄──┬── quotes.py ──────────────┐
-                              ├── score.py  ──┐           │
-rejects.py   ◄────────────────┴── gates.py  ──┴─ scanner.py ── poc.py ◄── __main__.py
-                                                            │
-bars.py  ───────────────────────────────────────────────────┘
-```
+| Module | Imports (first-party) |
+|---|---|
+| `rounding`, `rejects`, `bars` | — (standard library only) |
+| `params` | `rounding` |
+| `quotes` | `params`, `rejects`, `rounding` |
+| `score` | `params` |
+| `gates` | `params`, `rejects`, `rounding` |
+| `scanner` | `params`, `rejects`, `score`, `gates` |
+| `session` | `bars`, `params` |
+| `setups` | `bars`, `session`, `params`, `rejects`, `rounding`, `gates` |
+| `poc` | all of the above |
+| `__main__` | `poc`, `params`, `quotes`, `rounding`, `scanner`, `score`, `setups` |
+
+A table rather than a drawing, deliberately: an ASCII bus diagram was tried here for Phase 4's
+two new rows and, on inspection, implied that `quotes` does not depend on `rejects` — its branch
+was drawn off the `params` bus above the point where `rejects` merged into it, which is false
+(see the row above). A bus-style junction can imply an edge that does not exist simply from where
+a tap is drawn relative to a merge, which is the same failure
+[PHASE-4-DESIGN.md](PHASE-4-DESIGN.md) §3 records for the diagram once drafted for that document;
+a table cannot be geometrically wrong the same way.
+
+`session` adds PRD §20.1–§20.6 over an ordered series and `setups` the three §3 setups on top of
+it. `setups` is imported by `__init__` (it is public), by `poc`, and by `__main__` for one type
+annotation. Both were added by **D33** and both are held to an
+import allowlist, as `scanner` already was.
 
 `rounding`, `rejects` and `bars` depend on nothing but the standard library. `params` depends
-only on `rounding`; `quotes` and `gates` depend on `params` and `rejects`; `score` on
+only on `rounding`; `quotes` and `gates` depend on `params`, `rejects` and `rounding`; `score` on
 `params`; `scanner` on `params`, `rejects`, `score` and `gates`. `bars` is standalone because
 §20.4 is pure geometry over candles — it reads no threshold, which is also why §3.2
 criterion 2 arrives as a caller-supplied predicate.
@@ -42,7 +60,7 @@ invites: a reader sizing the scanner from it builds all fourteen as rejection pa
 candidates away. Two unrelated types make that a compile-time error instead. `ScanResult.reject`
 is `Reject | None` and will not accept a flag.
 
-`tradipy/__init__.py` imports the eight library modules so the names it advertises resolve as
+`tradipy/__init__.py` imports the ten library modules so the names it advertises resolve as
 attributes. It deliberately does **not** import `poc`: the composition layer is not part of
 what `import tradipy` means, and `import tradipy.poc` is the honest way to reach it.
 

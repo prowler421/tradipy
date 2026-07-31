@@ -16,14 +16,16 @@ between prose, comments, and code. Read it before changing behavior.
 
 ## Architecture
 
-Nine small, pure modules under `src/tradipy/`, plus a CLI:
+Eleven small, pure modules under `src/tradipy/`, plus a CLI:
 
 - `rounding.py` — tick arithmetic and polarity-aware threshold rounding. The governing
   principle is *"rounding must never weaken a constraint."* `Polarity.MINIMUM` rounds up;
   `Polarity.MAXIMUM` rounds down and clamps to one tick.
-- `rejects.py` — the `Reject` reason codes and, separately, the `SoftFlag` codes for §4.2's
-  seven Soft rows. Two enums, not one: a soft row flags and never rejects, and splitting the
-  namespace makes mixing them a type error rather than a review finding (round 10, K5).
+- `rejects.py` — the `Reject` reason codes, the `SoftFlag` codes for §4.2's seven Soft rows, and
+  the `ExitReason` codes for §3's post-entry rules. Three enums, not one: a soft row flags and
+  never rejects, an exit closes a position that a rejection declined to open, and splitting the
+  namespaces makes mixing them a type error rather than a review finding (round 10, K5; the third
+  arrived with Phase 4 and its members are transcribed from §20.12).
   Separate from `gates` so `quotes` need not depend on `gates`; `Reject` is re-exported from
   `tradipy.gates` for compatibility.
 - `params.py` — the parameter registry: the single source of truth for every tunable
@@ -40,6 +42,16 @@ Nine small, pure modules under `src/tradipy/`, plus a CLI:
 - `scanner.py` — PRD §4: the seven §4.2 hard filters, the seven §4.2 soft flags, and §4.3's
   ranked watchlist. Same two rules as `gates` — no threshold literal, no rounding direction.
   Pure: it applies §4.2 to a universe it is *given*, and sources nothing (D30).
+- `session.py` — PRD §20.1/§20.2/§20.3/§20.5/§20.6 over an ordered series: session VWAP, HOD
+  (wicks, plus §20.3's not-the-opening-print rule), the 9 EMA, §20.1's missing-bar gap rule, and
+  `tighter()`/`wider()` as named definitions. A `SessionBar` carries **minutes from the open as an
+  `int`**, not a timestamp — §21.1 forbids `datetime.now()` in strategy code. `through(i)` is the
+  truncation primitive §21.1's look-ahead property test needs. Does **not** round.
+- `setups.py` — PRD §3.2/§3.3/§3.4, §20.11 arbitration, and §3's post-entry rules as predicates.
+  Same two rules as `gates` and `scanner`: no threshold literal, no rounding direction. Where §3
+  defines nothing — *flag*, *consolidation candle*, *dip*, *leg* — the reading taken is on the
+  function and raised in `docs/CHANGELOG.md`; `docs/PHASE-4-DESIGN.md` §5 is the list. Out of
+  scope and stated: §20.12's state machine, T3's EMA trail (D18), §7's pre-order rules.
 - `poc.py` / `__main__.py` — the proof of concept. `poc` composes the gates into one
   evaluation and holds the simulated scanner universe; `__main__` is
   `python -m tradipy demo` / `evaluate` / `scan`, argparse and nothing else. Explicitly not
@@ -47,20 +59,23 @@ Nine small, pure modules under `src/tradipy/`, plus a CLI:
   find one.
 
 Data flows one way. `rounding`, `rejects` and `bars` import only the standard library;
-`params` imports `rounding`; `quotes` and `gates` import `params` and `rejects`; `score`
-imports `params`; `scanner` imports `params`, `rejects`, `score` and `gates`; `poc` imports
-the lot, and only `__main__` imports `poc`. Everything is `Decimal`.
+`params` imports `rounding`; `quotes` and `gates` import `params`, `rejects` and `rounding`;
+`score` imports `params`; `session` imports `bars` and `params`; `scanner` imports `params`,
+`rejects`, `score` and `gates`; `setups` imports `bars`, `session`, `params`, `rejects`,
+`rounding` and `gates`; `poc` imports the lot, and `__main__` imports `poc` plus `setups` for one
+type annotation. Everything is `Decimal`.
 
 ## Repository layout
 
 ```
 src/tradipy/        # the library (rounding, rejects, params, bars, quotes, score, gates,
-                    # scanner) plus poc.py and __main__.py — the runnable proof of concept
+                    # scanner, session, setups) plus poc.py and __main__.py — the runnable
+                    # proof of concept
 tests/              # pytest suite — worked examples, registry, boundary/polarity marks,
                     # enforcement fixtures, and doc-count consistency
 docs/               # start at docs/README.md (index)
   PRD.md            #   normative; §20 governs on any conflict
-  PLAN.md           #   workstreams, sequencing, decision log D1–D30, risks
+  PLAN.md           #   workstreams, sequencing, decision log D1–D33 (no D31), risks
   CHANGELOG.md      #   PRD corrections — NOT the root CHANGELOG.md, which tracks the package
   PHASE-2A-SPIKE.md #   data spike scope with binding pre-registration
   api.md architecture.md development.md
@@ -89,9 +104,9 @@ data/spike2a/       # spike inputs — gitignored, empty on a clean clone. Every
 2. **Polarity, not the call site, decides rounding.** Every module that rounds routes through
    `Config.round_for(value, *governed_by)`, which reads the direction from the registry. Do
    not import `Polarity` into any of them and do not name a member at a call site: that gives
-   direction two definitions. `gates.py`, `quotes.py` and `scanner.py` are the three, and a
-   test proves the import is absent from each **and** derives that list from the source, so a
-   fourth cannot be added outside it. It lived in `gates.py` as `_rounded` until Phase 3 added
+   direction two definitions. `gates.py`, `quotes.py`, `scanner.py` and `setups.py` are the
+   four, and a test proves the import is absent from each **and** derives that list from the
+   source, so a fifth cannot be added outside it. It lived in `gates.py` as `_rounded` until Phase 3 added
    a second consumer; direction is registry data, so it moved onto the registry object.
 3. **`Decimal` everywhere money is compared to a tick or summed into P&L** (PRD §9.2). No
    `float`.

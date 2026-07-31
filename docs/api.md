@@ -9,7 +9,7 @@ against a tick boundary or summed into P&L (PRD §9.2).
 
 ## Package layout
 
-Nine library modules and a `__main__` CLI entry point, with a strict one-way dependency
+Eleven library modules and a `__main__` CLI entry point, with a strict one-way dependency
 graph:
 
 - `rounding`, `rejects`, `bars` — standard library only.
@@ -17,12 +17,15 @@ graph:
 - `quotes`, `gates` — depend on `params`, `rejects`, `rounding`.
 - `score` — depends on `params`.
 - `scanner` — depends on `params`, `rejects`, `score`, `gates`.
-- `poc` — composes all of the above into one evaluable candidate and one simulated universe.
+- `session` — depends on `bars` and `params` (PRD §20.1–§20.6 over an ordered series).
+- `setups` — depends on `bars`, `session`, `params`, `rejects`, `gates` (PRD §3.2–§3.4).
+- `poc` — composes all of the above into one evaluable candidate, one simulated universe and
+  the three §3 worked examples as bar series.
 - `__main__` — the `python -m tradipy` front end over `poc`.
 
-`import tradipy` binds the eight library modules named in the package `__all__`
-(`rounding`, `rejects`, `params`, `bars`, `quotes`, `score`, `gates`, `scanner`) as
-attributes. `tradipy.poc` is not among them and must be imported explicitly — it is the
+`import tradipy` binds the ten library modules named in the package `__all__`
+(`rounding`, `rejects`, `params`, `bars`, `quotes`, `score`, `gates`, `scanner`, `session`,
+`setups`) as attributes. `tradipy.poc` is not among them and must be imported explicitly — it is the
 proof-of-concept composition layer, not part of the invariant surface.
 
 ## `tradipy.rounding`
@@ -56,35 +59,43 @@ def is_whole_tick(value: Decimal) -> bool
 
 ## `tradipy.rejects`
 
-Rejection reason codes, and the §4.2 soft flags that are deliberately *not* rejections
-(PRD §3.1.2, §3.1.3, §4.2, §20.9, §20.13, §20.14).
+Rejection reason codes, the §4.2 soft flags that are deliberately *not* rejections, and the §3
+post-entry exit reasons (PRD §3.1.2, §3.1.3, §4.2, §20.9, §20.12, §20.13, §20.14).
 
 ```python
 class Reject(Enum):
     # PRD §4.2 hard filters — the scanner
-    GAP_TOO_SMALL = "GAP_TOO_SMALL"                  # §4.2
-    RVOL_TOO_LOW = "RVOL_TOO_LOW"                    # §4.2 / §20.7
-    FLOAT_TOO_HIGH = "FLOAT_TOO_HIGH"                # §4.2 / D4
-    PRICE_OUT_OF_RANGE = "PRICE_OUT_OF_RANGE"        # §4.2
-    ADV_TOO_LOW = "ADV_TOO_LOW"                      # §4.2
-    NEAR_LULD = "NEAR_LULD"                          # §4.2
+    GAP_TOO_SMALL = "GAP_TOO_SMALL"  # §4.2
+    RVOL_TOO_LOW = "RVOL_TOO_LOW"  # §4.2 / §20.7
+    FLOAT_TOO_HIGH = "FLOAT_TOO_HIGH"  # §4.2 / D4
+    PRICE_OUT_OF_RANGE = "PRICE_OUT_OF_RANGE"  # §4.2
+    ADV_TOO_LOW = "ADV_TOO_LOW"  # §4.2
+    NEAR_LULD = "NEAR_LULD"  # §4.2
     # PRD §3 pre-entry gates
-    SPREAD_TOO_WIDE = "SPREAD_TOO_WIDE"              # §3.1.3 / §4.2
-    INSUFFICIENT_ROOM = "INSUFFICIENT_ROOM"          # §3.1.1 / §3.1.2
-    TARGETS_TOO_CLOSE = "TARGETS_TOO_CLOSE"          # §3.1.2
-    STOP_TOO_WIDE = "STOP_TOO_WIDE"                  # §2 / §3.2 / §20.13
-    QUOTE_STALE = "QUOTE_STALE"                      # §20.14
-    QUOTE_CROSSED = "QUOTE_CROSSED"                  # §20.14
+    SPREAD_TOO_WIDE = "SPREAD_TOO_WIDE"  # §3.1.3 / §4.2
+    INSUFFICIENT_ROOM = "INSUFFICIENT_ROOM"  # §3.1.1 / §3.1.2
+    TARGETS_TOO_CLOSE = "TARGETS_TOO_CLOSE"  # §3.1.2
+    STOP_TOO_WIDE = "STOP_TOO_WIDE"  # §2 / §3.2 / §20.13
+    QUOTE_STALE = "QUOTE_STALE"  # §20.14
+    QUOTE_CROSSED = "QUOTE_CROSSED"  # §20.14
     DATA_QUALITY_DEGRADED = "DATA_QUALITY_DEGRADED"  # §20.9 / §20.14
+    # PRD §3.2 / §3.3 / §3.4 setup recognition — the one code Phase 4 adds
+    SETUP_NOT_PRESENT = "SETUP_NOT_PRESENT"  # §3.2 / §3.3 / §3.4
+
 
 class SoftFlag(Enum):
-    PREMARKET_THIN = "PREMARKET_THIN"                # §4.2 (also a §20.10 input)
-    MARKET_CAP_HIGH = "MARKET_CAP_HIGH"              # §4.2
-    ATR_LOW = "ATR_LOW"                              # §4.2
-    NO_CATALYST = "NO_CATALYST"                      # §4.2 (also a §20.10 input)
-    RECENT_HALT = "RECENT_HALT"                      # §4.2, "Soft (flag)"
-    INST_OWN_HIGH = "INST_OWN_HIGH"                  # §4.2 / A22 / D24 — disabled by default
-    HIGH_SHORT_INTEREST = "HIGH_SHORT_INTEREST"      # §4.2, flag only
+    PREMARKET_THIN = "PREMARKET_THIN"  # §4.2 (also a §20.10 input)
+    MARKET_CAP_HIGH = "MARKET_CAP_HIGH"  # §4.2
+    ATR_LOW = "ATR_LOW"  # §4.2
+    NO_CATALYST = "NO_CATALYST"  # §4.2 (also a §20.10 input)
+    RECENT_HALT = "RECENT_HALT"  # §4.2, "Soft (flag)"
+    INST_OWN_HIGH = "INST_OWN_HIGH"  # §4.2 / A22 / D24 — disabled by default
+    HIGH_SHORT_INTEREST = "HIGH_SHORT_INTEREST"  # §4.2, flag only
+
+
+class ExitReason(Enum):
+    BAILED_OUT = "BAILED_OUT"  # §20.12 / §3.2 / §3.3
+    INVALIDATED = "INVALIDATED"  # §20.12 / §3.2 / §3.3 / §3.4
 ```
 
 - The module holds both because three layers raise `Reject` — `gates` for the pre-entry
@@ -107,6 +118,17 @@ class SoftFlag(Enum):
 - `SPREAD_TOO_WIDE` covers §4.2's Liquidity/Spread row in full, which states *two* conditions
   under one code: a spread over the cap **and** a bid thinner than `min_quote_size`. A name
   nobody is bidding for in size is as unexecutable as one quoted too wide.
+- `SETUP_NOT_PRESENT` is the **only** rejection code Phase 4 added: every other way a setup can
+  be declined already had one, because those are §3.1's gates rather than each setup's criteria.
+  `SetupOutcome.criteria` carries which part of the pattern was absent and the arithmetic behind
+  it, so the single code loses no detail. Like `STOP_TOO_WIDE` it is a name the PRD does not
+  state, and §4.2's table should adopt or replace it.
+- **`ExitReason` is a third namespace, on the same argument as the second.** A rejection declines
+  a trade that was never taken; an exit closes one that was. Sharing a namespace would permit a
+  pre-entry gate returning `BAILED_OUT` and an exit rule returning `SPREAD_TOO_WIDE`. Both member
+  names are transcribed from §20.12's state machine rather than invented — the states themselves
+  are Phase 5/6's, but the §3 rules that reach two of them are pure functions of the bars after
+  entry, and taking §20.12's vocabulary is what lets the two halves meet later.
 
 ## `tradipy.params`
 
@@ -116,7 +138,7 @@ The parameter registry — the single source of truth for every tunable threshol
 Mode = Literal["beginner", "experienced"]
 MODES: tuple[str, ...]                             # ("beginner", "experienced")
 
-PARAMS: Mapping[str, Param]                        # read-only; 55 entries
+PARAMS: Mapping[str, Param]                        # read-only; 75 entries
 MODE_PRESETS: Mapping[str, Mapping[str, Decimal]]  # read-only, inner maps too
 HARD_CAPS: Mapping[str, Decimal]                   # read-only
 DISCRIMINATING_CAP_TICKS = 2
@@ -156,7 +178,7 @@ def min_tradeable_price_from_stop_bounds(cfg: Config) -> Decimal
 
 ### The registry
 
-`PARAMS` holds **55** entries keyed by name, each carrying its default, legal range, unit,
+`PARAMS` holds **75** entries keyed by name, each carrying its default, legal range, unit,
 PRD source citation, and — where it is used as a gate threshold — its polarity. A
 threshold is defined there exactly once and every consumer reads it by name; no numeric
 literal for a registered threshold may appear anywhere else in the package. The lint that
@@ -598,6 +620,113 @@ def scan(candidates: Iterable[ScanCandidate], cfg: Config) -> ScanReport
   D29 gates *calibration* on Phase 2a Q1 answered on measured data, and **D32** opened this
   phase without it. See [PHASE-3-READINESS.md](PHASE-3-READINESS.md).
 
+## `tradipy.session`
+
+The §20 computations that need an *ordered series* rather than one bar (PRD §20.1, §20.2,
+§20.3, §20.5, §20.6).
+
+```python
+@dataclass(frozen=True)
+class SessionBar:
+    minute: int          # minutes from the session open; 0 is the 09:30 bar (§20.1)
+    bar: Bar
+
+@dataclass(frozen=True)
+class Session:
+    bars: tuple[SessionBar, ...]          # strictly increasing minutes, validated
+
+    def bar(self, i) -> Bar
+    def minute(self, i) -> int
+    def ohlcv(self) -> tuple[Bar, ...]
+    def through(self, i) -> Session       # the no-look-ahead primitive (§21.1)
+    def vwap_at(self, i) -> Decimal       # §20.2, typical price, cumulative
+    def vwap(self) -> Decimal
+    def hod_through(self, i) -> Decimal   # §20.3, wicks
+    def hod(self) -> Decimal
+    def hod_established_by(self, i) -> bool   # §20.3's "not the opening print"
+    def ema_at(self, i, cfg) -> Decimal | None    # §20.5; None until the period closes
+    def gap_before(self, i) -> int        # §20.1 missing minutes
+    def pattern_intact(self, start, end, cfg) -> bool
+
+def bar_sequence(bars, *, first_minute=0) -> Session
+def tighter(*levels) -> Decimal          # §20.6: max() of candidate stop prices
+def wider(*levels) -> Decimal            # §20.6: min()
+```
+
+- **`minute` is an `int`, not a timestamp.** §21.1 requires an injectable clock and forbids
+  `datetime.now()` in strategy code; every §20.1 rule Phase 4 needs is ordinal — *"pattern
+  counts count **available bars**"*, *"a gap > 2 minutes invalidates any in-progress pattern"*.
+  Timezone and DST are §21.4's and ingestion's.
+- **`through(i)` is what makes §21.1's look-ahead property test two lines** rather than an
+  audit: every derivation in `setups` reads the session only at or before its trigger index.
+- **`ema_at` has no caller in `src/`, deliberately.** Its consumer is §3.1.1's T3 leg, which
+  D18 requires be mirrored to a broker-side stop — Phase 5/6. It is implemented now because
+  §21.1's unit row names *"EMA seeding"* as a computation needing a hand-computed fixture.
+- **This module does not round.** VWAP, HOD and EMA are inputs to a level, not levels, and
+  §20.13 puts rounding once at level computation. The enforcement suite derives the set of
+  rounding modules from the source, so the distinction is checked rather than asserted.
+- Premarket VWAP (§20.2's 04:00 series) is **not** implemented: D11 disables premarket entries
+  and `premarket_trading_enabled` cannot be represented in the registry at all (question G9).
+
+## `tradipy.setups`
+
+PRD §3.2, §3.3 and §3.4 — the three MVP setups, §20.11 arbitration, and §3's post-entry rules.
+
+```python
+class SetupType(Enum):                    # §9.2 values; declaration order is §20.11 priority
+    BULL_FLAG; HOD_BREAKOUT; VWAP_RECLAIM
+    priority: int
+
+@dataclass(frozen=True)
+class Criterion:  name: str; code: Reject; passed: bool; detail: str
+
+@dataclass(frozen=True)
+class Resistance: level: Decimal; source: str; candidates: tuple[tuple[str, Decimal], ...]
+
+@dataclass(frozen=True)
+class Levels:     # every price §9.2's TradeSignal carries — reported on a *rejected* setup too
+    entry_price; pattern_stop; stop_price; r_per_share; ladder; resistance; room
+    min_separation; spread_at_signal; breakout_high; prior_hod
+    target_prices -> tuple[Decimal, Decimal]; required_room -> Decimal
+
+@dataclass(frozen=True)
+class SetupSignal: symbol; setup_type; levels: Levels; shares: int
+                   direction: ClassVar[str] = "LONG"
+
+@dataclass(frozen=True)
+class SetupOutcome:
+    symbol; setup_type; criteria: tuple[Criterion, ...]
+    levels: Levels | None = None; signal: SetupSignal | None = None
+    failures -> tuple[Criterion, ...]; reject -> Reject | None; accepted -> bool
+
+def evaluate_bull_flag(symbol, session, i, spread, cfg, *, premarket_high=None,
+                       buying_power=None, adv_shares=None) -> SetupOutcome
+def evaluate_hod_breakout(...) -> SetupOutcome
+def evaluate_vwap_reclaim(...) -> SetupOutcome
+EVALUATORS: dict[SetupType, Callable[..., SetupOutcome]]
+def evaluate_all(...) -> tuple[SetupOutcome, ...]
+def arbitrate(outcomes) -> tuple[SetupSignal | None, tuple[SetupOutcome, ...]]
+def nearest_resistance(entry, *, prior_hod, structural_target, premarket_high=None) -> Resistance
+def whole_dollar_above(price) -> Decimal
+def bull_flag_exit(session, signal, after, cfg) -> ExitReason | None
+def hod_breakout_exit(session, signal, after, cfg) -> ExitReason | None
+def vwap_reclaim_exit(session, signal, after, cfg) -> ExitReason | None
+```
+
+- **A `SetupOutcome` carries every criterion, and `Levels` even when it rejects.** Only the
+  share count is withheld from a rejection — the same argument §4.1 makes for withholding the
+  composite score. Pattern criteria short-circuit at the first structural absence (a flag's
+  retrace is undefined without a flag); the §3.1 gates are all evaluated together.
+- **One new rejection code**, `SETUP_NOT_PRESENT`. Everything else a setup can fail is a §3.1
+  gate with a code of its own.
+- **`nearest_resistance` is where two readings live.** §3.1.1's *"prior leg high"* is omitted
+  because *leg* is undefined; `PMH` is included because §20.3 says so; and `HOD` means the HOD
+  established **before** the trigger bar, without which §3.1.1 rejects every breakout that
+  closes below its own high. See [CHANGELOG.md](CHANGELOG.md).
+- **§3.4's worked example is rejected by this module**, on §3.1.1's whole-dollar candidate.
+  That is a PRD-internal contradiction, raised there, and `python -m tradipy setups` prints it.
+- **Nothing here is calibrated**: of Phase 4's twenty registry rows **all twenty are marked `(bounds: code)`** — eighteen cite §3.2, §3.3 or §3.4, sections with no parameter table and no Bounds column, and the other two cite §20.1 and §20.5, which have none either. See [PHASE-4-DESIGN.md](PHASE-4-DESIGN.md) and PLAN **D33**.
+
 ## `tradipy.poc`
 
 Proof-of-concept composition: one candidate through every Phase 1 gate, plus the simulated
@@ -740,7 +869,10 @@ from tradipy.quotes import Quote
 
 cfg = Config.default(mode="experienced")
 quote = Quote(
-    bid=Decimal("6.47"), ask=Decimal("6.48"), bid_size=500, ask_size=500,
+    bid=Decimal("6.47"),
+    ask=Decimal("6.48"),
+    bid_size=500,
+    ask_size=500,
     age_seconds=Decimal(0),
 )
 candidate = Candidate(

@@ -10,6 +10,82 @@ Corrections and reversals to [PRD.md](PRD.md), extracted so the spec itself can 
 
 ---
 
+## Unreleased — D33, and the §3 questions implementing it exposed
+
+### Decided
+
+| Decision | Rule | Where |
+|---|---|---|
+| **D33** | **D32's construction/calibration split extends to Phase 4 (the §3 strategy engine).** `session.py` and `setups.py` implement §3.2, §3.3 and §3.4 on simulated bar series; no threshold in them is calibrated. The ladder does **not** move — `PERMITTED_ORIGINS` stays `{SIMULATED}` — and §12.1's Phase 3 and Phase 4 rows stay unticked. The cost that does *not* carry over from D32 is stated in the decision itself | [PLAN.md](PLAN.md) D33 |
+| **Exit reasons are a third namespace** | A rejection declines a trade never taken; an exit closes one that was. `ExitReason` is separate from `Reject` and `SoftFlag`, and its two members (`BAILED_OUT`, `INVALIDATED`) are **transcribed from §20.12's state names** rather than invented. This is the K5 argument applied one step further out | PRD §20.12; `src/tradipy/rejects.py` |
+| **§21.1's worked-example row is met from the side it names** | *"Each §3 worked example encoded as a test: **input bar series** → asserted entry, stop, R, targets, share count."* All three now start from bars (`tests/test_setups.py`, `python -m tradipy setups`). The older scalar-driven fixtures are kept: they are a different check and are what the demo's self-check exercises | PRD §21.1 |
+
+### The finding that changes a verdict — §3.4's worked example fails §3.1.1's room gate
+
+**This is a PRD-internal contradiction with a behaviour consequence, and it is raised rather than
+resolved.** §3.1.1 defines the room gate's input as *"the **nearest** overhead level above entry
+among {HOD, next whole dollar, prior leg high, measured-move projection}"*. §3.4's worked example
+names the HOD (**$4.15**) as *"nearest overhead resistance"* and computes a passing room test from
+it — while the next whole dollar (**$4.00**) is in §3.1.1's own set, is nearer, and is only $0.17
+above the $3.83 entry against a required room of **$0.28**.
+
+Applying §3.1.1 as enumerated, the example is **rejected** with `TARGETS_TOO_CLOSE`. Every other
+line of its table reproduces exactly from the bar series — VWAP $3.80, dip depth 1.58%, the
+`$3.762 → $3.76 → $3.75 → $3.73` stop chain, R $0.10, T1 $4.03, T2 $4.15, T2−T1 $0.12. Only the
+resistance differs.
+
+Three things make this worth more than a table correction:
+
+1. **§3.2's example applies the whole-dollar candidate and §3.3's uses it as *the* resistance.**
+   Only §3.4 omits it. That asymmetry is evidence of an oversight rather than a per-setup override.
+2. **§3.4's sensitivity table is undermined too.** Its three rows (HOD $4.05 / $4.09 / $4.15)
+   conclude that only the cost-denominated floor rejects the collapsed ladder. Under §3.1.1's set
+   all three reject on the $4.00 level, which is a different reason and a different lesson.
+3. **The consequence is material, not cosmetic.** On a $1–$20 universe, requiring `required_room`
+   of clear space below the next whole dollar rejects a large share of VWAP Reclaim setups — the
+   direction §3.1.3's own note says to accept rather than widen the gate, but a rejection rate
+   nobody has measured. It is exactly the kind of joint incoherence the v1.3 defect class names:
+   §3.1.1 and §3.4 are each defensible alone.
+
+**Candidate resolutions, none taken:** amend §3.4's example and its sensitivity table to §3.1.1's
+set; or state in §3.1.1 that the whole-dollar candidate applies only where a setup's structural
+target is not itself a level (which would need justifying, since whole dollars are resistance
+precisely on cheap stocks); or scope the candidate set per setup, which §3.4's *"HOD (or nearest
+resistance)"* phrasing hints at and no section states. `tests/test_setups.py` pins the current
+behaviour in both directions, and `python -m tradipy setups` prints the disagreement.
+
+### Spec questions — open, raised by implementing §3.2, §3.3 and §3.4
+
+**No threshold moves here and no §3 rule changes.** §20 defines flagpole geometry (§20.4) and
+stops: *flag*, *consolidation candle*, *dip*, *leg* and *leg height* have no normative definition
+anywhere in the PRD, so a reading had to be taken for each to make §3 executable. Every reading is
+localised to one function and pinned by a test; [PHASE-4-DESIGN.md](PHASE-4-DESIGN.md) §5 carries
+the same list against the code.
+
+| Where | The question | The reading taken, and why it is not a settlement |
+|-------|--------------|---------------------------------------------------|
+| §2 vs §3.1.1, T3 | §2's Profit Target row says *"Target 3: HOD retest + extension"*; §3.1.1, §3.5, §15 and §20.12 all say *trail 9 EMA*. §3.4 separately uses HOD retest as **T2** | Neither is implemented — T3 is Phase 5/6 per **D18** — so nothing depends on the answer yet, which is the only reason this is recorded rather than blocking. One of the two sections is wrong about what T3 *is* |
+| §3.2 / §3.3 / §3.4, bailout | Breakout-or-bailout is three rules. §3.2 requires a **conjunction** (no close above entry *and* no new high above the breakout candle); §3.3 states only the second condition; §3.4 states **none** — while §11.1 and A12 both describe it as one canonical rule | Implemented **per setup, as each states it**, and `test_vwap_reclaim_has_no_bailout_timer` asserts §3.4's silence rather than filling it in. Unifying them would be inventing a rule for whichever setups do not state it |
+| §20.1 vs §3.2 / §3.4, counts | §20.1: *"pattern counts count **available bars**, not wall-clock minutes."* §3.2 writes *"3 candles (3 min)"*, equating them; §3.4 crit 2 says *"≥ 15 **minutes**"*; §3.2's halt edge case says *"within 2 min"* | Bars, because §20 governs. The parameter is named `min_bars_above_vwap` rather than `..._minutes` so the divergence from §3.4's wording is visible in the registry |
+| §3.2 crit 3 | *"2–5 red/consolidation candles"* — a consolidation candle may close up, but §20.4 terminates the flagpole at *"the longest run of consecutive green candles ending immediately before the flag"* | The flag is the maximal run of **not-green** bars (`close ≤ open`). The alternative is circular: §20.4 needs the flag's start to find the flagpole, and a flag admitting green bars needs the flagpole to find its own start |
+| §3.2 crit 2 | *"combined move ≥ 2%"* states no denominator, and *"total volume ≥ 2× average 1-min volume of prior 30 bars"* compares a **sum** against a **per-bar mean**, which any 3-bar pole at ordinary volume satisfies — the criterion would be inert | Move as `flagpole_height / flagpole_low`, which reproduces the example's **+7.29%** exactly where the alternatives do not. Volume as the **per-bar** comparison, the stricter reading and the same shape as crit 7. A13 shows §3.2's volume rows have needed one reversal already |
+| §3.3 crit 3 | *"≥ 2 candles where high ≤ prior HOD and low ≥ VWAP"* is circular: the run's extent depends on *prior HOD* and *prior HOD* depends on where the run starts | Per bar: a consolidation bar set no new high (`high ≤ hod_through(i−1)`) and held above VWAP (`low ≥ vwap_at(i)`). The circle closes and gives the same *prior HOD* either way, because no bar in the run made a new high |
+| §3.1.1 / §20.3, resistance | *"Prior leg high"* is undefined; §20.3 adds `PMH` from outside §3.1.1's enumeration; and §20.3's *"updated on every completed bar"* would put the trigger bar's **own high** in the set | `PMH` is in (§20 governs). *Prior leg high* is **omitted** — an undefined term cannot go into a gate §7 marks non-bypassable. HOD means the HOD **before** the trigger bar: the literal reading gives every breakout that closes below its high a resistance level a few ticks above entry, which would reject every §3.2 and §3.3 setup unconditionally |
+| §3.3 T2 | *"Next whole dollar above T1, or prior leg extension (1× **leg height**), whichever is nearer and above T1"* — *leg height* is undefined | Whole-dollar branch only, which §3.3's own example uses. Stated because the omission can only put T2 **further** away, and a reader needs to know the direction |
+| §3.4 crit 3 | *"≤ 5 consecutive candles below VWAP"* — close or wick? And depth *"≤ 2% below VWAP"* against **which** VWAP | Close-based, because the trigger is (*"closes above VWAP"*) and a reclaim defined by closes needs a dip defined by closes. Depth against VWAP as of the bar that set the dip low. The example has one VWAP value and cannot distinguish them |
+| §3.4 stop vs crit 3 | Crit 3 admits a dip **2%** below VWAP; the stop is `max(dip_low, VWAP × 0.99)` — **1%** below. Whenever the dip is deeper than 1% the `max()` selects the VWAP band and puts the stop *inside the pattern*, which §2 and §3.2 both forbid in terms | Implemented as §3.4 states it. The example does exactly this ($3.74 low, $3.75 raw stop) and is rescued only by the $0.10 floor widening it to $3.73. The two numbers are also uncoupled in code: `vwap_stop_band_pct` is registered, the 2% dip depth is now registered separately, and nothing relates them |
+| §20.1 gap rule | *"A gap > 2 minutes invalidates any in-progress pattern"* — missing minutes, or elapsed span? | **Missing** minutes, the literal reading. Recorded because this is the one §4.2-style ambiguity where the **stricter** reading was not taken: the span reading rejects one more minute of absence. One comparison, in `Session.pattern_intact` |
+| §14.2 conviction gate | §14.2 recommends *"composite score ≥ 0.7"*, §20.10 calls the score *"directly comparable to the ≥ 0.7 conviction gate"*, `score.meets_conviction_gate` and `min_conviction_score` exist — and **no §3 criterion references it** | **Not applied.** A gate no setup criterion names would be this layer inventing a rejection. So a watchlist survivor below 0.7 can still produce a signal, which may be wrong and is at least visible |
+| §14.3 vs §3.2 | §14.3 justifies its candle-quality choice as *"already used by the §3.2 breakout test"* — a body ≥ 60% of candle range. **§3.2 states no such criterion**: crit 6 is a close above the flag high and crit 7 is volume | Not implemented, because §3.2 does not state it. Either §3.2 is missing a criterion or §14.3's justification is void; both are spec calls |
+| §2 vs §3, VWAP extension | §2 states a **global** rule — *"no entry if price > 3% above VWAP, or > 5% above in the first 30 min"* — and only §3.3 carries an extension test, only the 3% branch. `max_vwap_extension_open_pct` is registered and read by nothing, and *"first 30 min"* is undefined in §20 | Applied where §3.3 states it and nowhere else. Extending it to §3.2 and §3.4 would change which setups fire, which is a behaviour change and therefore a decision |
+| §3.2 edge case vs §8.2 | Halt proximity is *"within **2 min** of anticipated halt/resumption"* in §3.2 and *"no entries **5 min** before known halts"* in §8.2 — and *"anticipated"* is undefined | Neither implemented: both need a halt calendar, which is Phase 2 ingestion. Recorded so the conflict is not discovered by whoever builds it |
+| §3.2 edge case vs §20.11 | *"After Target 1, treat subsequent consolidation as a new flag if above VWAP"* against §20.11 rule 4, which supersedes further signals while a position is open *"except an explicit scale-in add permitted under §7.1.1"* | Neither implemented (both need position state). Is the second flag a §7.1.1 scale-in, which requires the stop already at breakeven, or a new signal §20.11 supersedes? |
+| §3.3, A14 | A14 prescribes `effective_stop = max(consolidation_low − 1 tick, VWAP − 1 tick)` to reconcile a stop above VWAP with an invalidation below it — but crit 3 already requires `consolidation_low ≥ VWAP`, so that `max()` is **inert in the case A14 describes**. It binds only when the *breakout candle's* low is the lower of §3.3's two stop candidates and sits below VWAP, which A14 does not mention | Applied as A14 states it, and `test_the_hod_stop_rounds_away_from_the_position_when_a14_binds` exercises the case A14 omits. The nominal-vs-realised R mismatch A14 identifies therefore persists in the case it was written for |
+| §8.2, opening auction | The row states both *"premarket signals fill at the **09:30 open** + slippage"* and, two clauses later, *"no entry may be simulated **inside the 09:30 bar** — the earliest continuous-session entry is the **09:31 bar**"* | Phase 4 refuses the session's opening bar, which follows §20.2's *"no VWAP-dependent setup can fire before 09:31"* and is the second reading. §8.2's first clause is not implemented because fills are Phase 4b's; whoever builds them meets the contradiction |
+| §3.2 crit 4, §3.3 crit 3, §3.4 crit 3 | The pre-entry VWAP tests are wick-based as written (*"flag **low** remains above"*, *"**low** ≥ VWAP"*) while every post-entry VWAP rule is close-based (*"**close** below VWAP"*). §20.3 settles wick-vs-close for HOD only; §20.2 settles it for nothing | Taken as written — wicks before entry, closes after. Consistent with §20.3's split between HOD tracking and the HOD *trigger*, but nothing states it for VWAP |
+
+---
+
 ## Unreleased — D32, and the §4.2 questions implementing it exposed
 
 ### Decided

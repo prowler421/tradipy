@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import ast
 import importlib
+import itertools
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -49,7 +50,9 @@ import pytest
 
 from scripts.spike2a import provenance, q1_vendors, q2_float, q3_latency, q4_spreads
 from scripts.spike2a.feeds import QuoteSample
+from tradipy.bars import Bar
 from tradipy.gates import (
+    Ladder,
     apply_stop_floor_and_ceiling,
     min_separation,
     position_size,
@@ -57,7 +60,8 @@ from tradipy.gates import (
     spread_caps,
 )
 from tradipy.params import HARD_CAPS, MODE_PRESETS, PARAMS, Config, CouplingError
-from tradipy.rejects import Reject, SoftFlag
+from tradipy.poc import setup_examples
+from tradipy.rejects import ExitReason, Reject, SoftFlag
 from tradipy.rounding import TICK_SIZE, Polarity, ceil_to_tick, floor_to_tick
 from tradipy.scanner import (
     HARD_FILTERS,
@@ -67,6 +71,19 @@ from tradipy.scanner import (
     scan,
 )
 from tradipy.score import Catalyst
+from tradipy.session import Session, SessionBar, bar_sequence
+from tradipy.setups import (
+    EVALUATORS,
+    Criterion,
+    SetupOutcome,
+    SetupSignal,
+    SetupType,
+    _gate_criteria,
+    arbitrate,
+    evaluate_all,
+    evaluate_bull_flag,
+    nearest_resistance,
+)
 
 D = Decimal
 CFG = Config.default(mode="experienced")
@@ -88,7 +105,11 @@ ROUNDING_FUNCTIONS = ("round_for", "round_threshold", "ceil_to_tick", "floor_to_
 #: ``Polarity``, so neither can be held to the import check.
 POLARITY_DEFINING = ("params.py", "rounding.py")
 
-ROUNDING_CONSUMERS = ("gates.py", "quotes.py", "scanner.py")
+#: ``setups.py`` joined at Phase 4: it floors the §3.3 VWAP stop candidate to a tick. Note that
+#: ``session.py`` deliberately did **not** — VWAP, HOD and EMA are inputs to a level rather than
+#: levels, and §20.13 puts rounding once, at level computation. The guard below derives the set
+#: from the source, so that distinction is checked rather than asserted here.
+ROUNDING_CONSUMERS = ("gates.py", "quotes.py", "scanner.py", "setups.py")
 
 #: PRD §2.0's mode-preset table, transcribed here so the test compares against the document
 #: rather than against `MODE_PRESETS`, which is the thing under test.
@@ -1151,16 +1172,29 @@ HARD_FILTER_CODES: list[Reject] = sorted(TRIPS_HARD_FILTER, key=lambda c: c.valu
 
 
 @pytest.mark.spec
-def test_the_two_code_namespaces_cannot_be_confused() -> None:
-    """No value string is shared between ``Reject`` and ``SoftFlag``, in either direction.
+def test_the_three_code_namespaces_cannot_be_confused() -> None:
+    """No value string is shared between ``Reject``, ``SoftFlag`` and ``ExitReason``.
 
-    The types differ, so mixing them is a static error. This is the runtime half: a code
-    added to both enums would type-check everywhere and mean two different things.
+    The types differ, so mixing them is a static error. This is the runtime half: a code added
+    to two enums would type-check everywhere and mean two different things. ``ExitReason`` joined
+    at Phase 4 — a rejection declines a trade never taken and an exit closes one that was, so
+    ``BAILED_OUT`` reaching a pre-entry gate is as wrong as ``SPREAD_TOO_WIDE`` closing a
+    position.
     """
-    assert {m.value for m in Reject} & {m.value for m in SoftFlag} == set()
+    namespaces = [
+        {m.value for m in Reject},
+        {m.value for m in SoftFlag},
+        {m.value for m in ExitReason},
+    ]
+    for a, b in itertools.combinations(namespaces, 2):
+        assert a & b == set()
     assert all(isinstance(f.code, Reject) for f in HARD_FILTERS)
     assert all(isinstance(f.code, SoftFlag) for f in SOFT_FILTERS)
     assert not any(isinstance(f.code, Reject) for f in SOFT_FILTERS)
+    # And every criterion a setup reports carries a Reject, never an exit reason.
+    outcome = setup_examples()[0].evaluate(CFG)
+    assert all(isinstance(c.code, Reject) for c in outcome.criteria)
+    assert not any(isinstance(c.code, ExitReason) for c in outcome.criteria)
 
 
 @pytest.mark.spec
@@ -1387,3 +1421,248 @@ def test_two_different_candidates_can_score_identically() -> None:
     assert CFG["score_cap_float"] == CFG["max_float_shares"]
     over_cap = candidate(symbol="CCC", float_shares=CFG["score_cap_float"] + D("1"))
     assert evaluate_candidate(over_cap, CFG).reject is Reject.FLOAT_TOO_HIGH
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — the §3 setups (D33). Each block performs the violation it forbids.
+# ---------------------------------------------------------------------------
+@pytest.mark.spec
+def test_a_signal_cannot_coexist_with_a_failed_criterion() -> None:
+    """§3.x states its criteria as *"all required"*, so ``SetupOutcome`` refuses the pair.
+
+    Constructed directly rather than reached through an evaluator, because no evaluator can
+    produce it — which is exactly why the guarantee needs a test that tries. An outcome carrying
+    both a signal and a failure is how a rejected setup comes to be routed as an order.
+    """
+    accepted = setup_examples()[0].evaluate(CFG)
+    assert accepted.signal is not None and accepted.levels is not None
+
+    failure = Criterion("invented", Reject.SETUP_NOT_PRESENT, False, "planted by the test")
+    with pytest.raises(ValueError, match="cannot coexist"):
+        SetupOutcome(
+            accepted.symbol,
+            accepted.setup_type,
+            (*accepted.criteria, failure),
+            accepted.levels,
+            accepted.signal,
+        )
+
+
+@pytest.mark.spec
+def test_no_setup_can_fire_on_the_session_s_opening_bar() -> None:
+    """§20.2: *"no VWAP-dependent setup can fire before 09:31."* All three are VWAP-dependent.
+
+    The violation is attempted with a session whose *only* bar is the 09:30 bar, and again at
+    index 0 of a longer one, so neither a short series nor a long one admits it.
+    """
+    example = setup_examples()[0]
+    full = example.session
+    for setup in SetupType:
+        for session, index in ((full.through(0), 0), (full, 0)):
+            outcome = EVALUATORS[setup](example.label.upper(), session, index, TICK_SIZE, CFG)
+            timing = outcome.criteria[0]
+            assert not timing.passed, f"{setup.value} fired on the opening bar"
+            assert outcome.reject is Reject.SETUP_NOT_PRESENT
+            assert outcome.signal is None
+
+
+@pytest.mark.spec
+def test_a_gap_wider_than_the_registered_maximum_invalidates_the_pattern() -> None:
+    """§20.1: *"a gap > 2 minutes invalidates any in-progress pattern."*
+
+    The bars are unchanged — only the *minutes* they carry move, so nothing about the pattern's
+    prices or volumes differs between the passing and failing case. A check that read only the
+    list order could not tell the two apart, and that is the failure this performs.
+    """
+    example = setup_examples()[0]
+    bars = example.bars
+    widest = int(CFG["max_pattern_gap_minutes"])
+
+    for missing, intact in ((widest, True), (widest + 1, False)):
+        minutes = [*range(len(bars) - 1), len(bars) - 2 + missing + 1]
+        session = Session(tuple(SessionBar(m, b) for m, b in zip(minutes, bars, strict=True)))
+        assert session.gap_before(len(bars) - 1) == missing
+        outcome = evaluate_bull_flag("BF", session, len(bars) - 1, TICK_SIZE, CFG)
+        gap = next(c for c in outcome.criteria if "gap" in c.name)
+        assert gap.passed is intact, gap.detail
+        if not intact:
+            assert outcome.signal is None
+
+
+@pytest.mark.spec
+def test_arbitration_cannot_return_two_signals_for_one_symbol() -> None:
+    """§20.11 rule 1: *"at most one open position per symbol regardless of setup count."*
+
+    Performed on a bar where two setups really do fire, then again on hand-built outcomes for two
+    different symbols — which §20.11 never asked to be arbitrated together, and silently picking
+    one of them would suppress a signal.
+    """
+    from tests.test_setups import _dual_fire_session
+
+    session = _dual_fire_session()
+    outcomes = evaluate_all("BF", session, len(session) - 1, TICK_SIZE, CFG)
+    accepted = [o for o in outcomes if o.accepted]
+    assert len(accepted) > 1, "the fixture must fire twice for this to prove anything"
+
+    winner, superseded = arbitrate(outcomes)
+    assert winner is not None
+    assert len(superseded) == len(accepted) - 1
+    assert all(o.signal is not None for o in superseded)
+
+    other = accepted[0]
+    assert other.levels is not None and other.signal is not None
+    foreign = SetupOutcome(
+        "OTHER",
+        other.setup_type,
+        other.criteria,
+        other.levels,
+        SetupSignal("OTHER", other.setup_type, other.levels, other.signal.shares),
+    )
+    with pytest.raises(ValueError, match="per-symbol"):
+        arbitrate([*accepted, foreign])
+
+
+@pytest.mark.spec
+def test_a_rejected_setup_is_never_sized() -> None:
+    """§4.1's withholding rule, applied one layer up: no share count on a rejection.
+
+    §3.4's worked example is the case — it derives a full set of levels and is then declined by
+    the room gate. A size sitting on that is an invitation to route it.
+    """
+    rejected = [ex.evaluate(CFG) for ex in setup_examples() if ex.expect_reject is not None]
+    assert rejected, "the fixtures must contain a rejected example for this to check anything"
+    for outcome in rejected:
+        assert outcome.reject is not None
+        assert outcome.signal is None
+        assert outcome.levels is not None, "the levels are reported; only the size is withheld"
+
+
+@pytest.mark.spec
+def test_t1_has_exactly_one_implementation() -> None:
+    """``gates.exit_ladder`` *calls* ``t1_level``; :mod:`tradipy.setups` does not restate it.
+
+    Asserted structurally, like the ``scan_spread_cap`` delegation: two implementations of
+    ``entry + t1_r_multiple × R`` agree until one is edited, which is the whole v1.2 story. §3.3's
+    T2 is defined relative to T1, so a second definition here would be the one that drifts.
+    """
+    tree = ast.parse((SRC / "gates.py").read_text(encoding="utf-8"))
+    body = next(
+        n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "exit_ladder"
+    )
+    calls = {
+        n.func.id
+        for n in ast.walk(body)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+    }
+    assert "t1_level" in calls, "exit_ladder no longer delegates; T1 now has two definitions"
+
+    # And `setups.py` does not read the multiple at all — checked by AST rather than by
+    # substring, because the parameter is *named* in a docstring there explaining why T1 is
+    # delegated, and a check that cannot tell prose from code is a check that gets switched off.
+    setups = ast.parse((SRC / "setups.py").read_text(encoding="utf-8"))
+    subscripts = {
+        n.slice.value
+        for n in ast.walk(setups)
+        if isinstance(n, ast.Subscript)
+        and isinstance(n.slice, ast.Constant)
+        and isinstance(n.slice.value, str)
+    }
+    assert "t1_r_multiple" not in subscripts, (
+        "setups.py reads t1_r_multiple from the registry, which means it derives T1 itself"
+    )
+
+
+@pytest.mark.spec
+def test_the_target_ordering_check_fires_when_handed_a_ladder_that_violates_it() -> None:
+    """§3.1.1's ``entry < T1 < T2``, both halves: the implication, and the check.
+
+    §3.1.1 calls the ordering *"guaranteed by the pre-entry room gate"*. It is — because the
+    structural target is one of the gate's own resistance candidates — so the check below is
+    unreachable through the three MVP evaluators. Both facts are asserted, because the first is a
+    property of the *candidate set* rather than of the gate: a setup whose T2 is not among the
+    candidates would lose the guarantee with nothing to notice.
+    """
+    for example in setup_examples():
+        levels = example.evaluate(CFG).levels
+        assert levels is not None
+        room_passed = (levels.resistance.level - levels.entry_price) >= levels.room.required
+        if room_passed:
+            assert levels.ladder.ordered_above(levels.entry_price), example.section
+
+    levels = setup_examples()[0].evaluate(CFG).levels
+    assert levels is not None
+    inverted = Ladder(t1=levels.ladder.t1, t2=levels.ladder.t1 - TICK_SIZE)
+    criteria = _gate_criteria(
+        entry=levels.entry_price,
+        stop=levels.stop_price,
+        stop_reject=None,
+        r=levels.r_per_share,
+        spread=levels.spread_at_signal,
+        ladder=inverted,
+        room=levels.room,
+        separation=levels.min_separation,
+        resistance=levels.resistance,
+        cfg=CFG,
+    )
+    ordering = next(c for c in criteria if c.name.startswith("Target ordering"))
+    assert not ordering.passed
+    assert ordering.code is Reject.TARGETS_TOO_CLOSE
+
+
+@pytest.mark.spec
+@pytest.mark.parametrize("module", ["session.py", "setups.py"])
+def test_the_setup_layer_reads_nothing_and_imports_nothing_that_could(module: str) -> None:
+    """D30, extended to Phase 4's two modules — an allowlist, not a denylist.
+
+    §3's criteria are arithmetic over a bar series the caller supplies, so the same argument that
+    made an allowlist possible for ``scanner.py`` applies here: these modules may import the
+    listed stdlib names and their own package, and nothing else. A strategy engine that grew a
+    feed would fail here first, and it is the module most likely to want one.
+    """
+    tree = ast.parse((SRC / module).read_text(encoding="utf-8"))
+    permitted = {"__future__", "collections.abc", "dataclasses", "decimal", "enum", "typing"}
+
+    roots: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            roots.add(node.module)
+        elif isinstance(node, ast.Import):
+            roots.update(a.name for a in node.names)
+    outside = {r for r in roots if not r.startswith("tradipy")} - permitted
+    assert not outside, f"{module} imports outside its allowlist: {sorted(outside)}"
+
+    reads = [
+        n.func.id
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "open"
+    ]
+    assert not reads, f"{module} opens a file; §3 is arithmetic over a supplied series (D30)"
+
+
+@pytest.mark.spec
+@pytest.mark.parametrize("setup", list(SetupType))
+def test_every_setup_can_reject_with_setup_not_present(setup: SetupType) -> None:
+    """The one code Phase 4 adds must be reachable for each setup, or it names nothing.
+
+    A flat series has no flagpole, no consolidation above VWAP and no dip below it, so all three
+    patterns are absent. Reachability per code is what ``test_every_hard_filter_can_actually_reject``
+    does for §4.2, and the argument is the same: an unreachable code is a rule nothing enforces.
+    """
+    flat = bar_sequence([Bar(D("5.00"), D("5.00"), D("5.00"), D("5.00"), 1000)] * 40)
+    outcome = EVALUATORS[setup]("FLAT", flat, len(flat) - 1, TICK_SIZE, CFG)
+    assert outcome.reject is Reject.SETUP_NOT_PRESENT
+    assert outcome.signal is None
+
+
+@pytest.mark.spec
+def test_the_resistance_set_cannot_lose_its_only_unconditional_candidate() -> None:
+    """§3.1.1's set must always contain a level above entry, or the room gate has no input.
+
+    ``whole_dollar_above`` is the one candidate that cannot be below entry, which is what makes
+    :func:`~tradipy.setups.nearest_resistance` total. Performed by handing it a HOD and a
+    structural target that are both below entry: the whole dollar still carries it.
+    """
+    resistance = nearest_resistance(D("5.16"), prior_hod=D("5.00"), structural_target=D("5.10"))
+    assert resistance.source == "next whole dollar"
+    assert resistance.level == D("6")
+    assert [name for name, _ in resistance.candidates] == ["next whole dollar"]

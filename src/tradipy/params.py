@@ -214,6 +214,70 @@ _REGISTRY: list[Param] = [
     _p("watchlist_size", "5", "1", "20", "symbols",
        "PRD §4.1 / §4.3 (bounds: code)"),
 
+    # --- §3.2 / §3.3 / §3.4 setup criteria (D33) --------------------------
+    # Nineteen of the twenty rows added by Phase 4 are here and in the block below, and every
+    # one is `(bounds: code)` for a reason worth stating plainly: **§3.2, §3.3 and §3.4 have no
+    # parameter table at all.** Their thresholds are inline prose, so unlike §4.2 — which at
+    # least tabulated its defaults — there is no column to transcribe and no bound to inherit.
+    # `bars.select_flagpole` took the §3.2 criterion-2 test as a caller-supplied predicate
+    # precisely so that this module would not have to invent these before something read them;
+    # `setups.py` is that something, and the predicate is now built from the first four rows.
+    #
+    # Polarity follows §20.13's "classify before choosing", with one distinction the registry
+    # already makes implicitly: a count that is a **constraint** carries a direction, and a
+    # count that is a **window** does not. `flag_max_candles` is a ceiling a pattern must stay
+    # under; `flagpole_vol_lookback_bars` is the size of a lookback and there is nothing to
+    # weaken by rounding it. Compare `max_open_positions` (MAXIMUM) against
+    # `rvol_lookback_days` (none), which is the same split.
+    _p("flagpole_min_candles", "3", "2", "10", "candles", "PRD §3.2 crit 2 (bounds: code)",
+       polarity=Polarity.MINIMUM),
+    _p("flagpole_min_move_pct", "0.02", "0.005", "0.20", "fraction",
+       "PRD §3.2 crit 2 (bounds: code)", polarity=Polarity.MINIMUM),
+    _p("flagpole_vol_multiple", "2.0", "1.0", "10.0", "x avg bar",
+       "PRD §3.2 crit 2 (bounds: code)", polarity=Polarity.MINIMUM),
+    _p("flagpole_vol_lookback_bars", "30", "5", "200", "bars",
+       "PRD §3.2 crit 2 (bounds: code)"),
+    _p("flag_min_candles", "2", "1", "10", "candles", "PRD §3.2 crit 3 (bounds: code)",
+       polarity=Polarity.MINIMUM),
+    _p("flag_max_candles", "5", "2", "20", "candles", "PRD §3.2 crit 3 (bounds: code)",
+       polarity=Polarity.MAXIMUM),
+    _p("max_flag_retrace_pct", "0.50", "0.10", "0.90", "fraction",
+       "PRD §3.2 crit 3 / §20.4 (bounds: code)", polarity=Polarity.MAXIMUM),
+    # A13 reversed this row's direction: an earlier draft required flag volume >= 70% of the
+    # flagpole's, which contradicted §3.2's own "brief low-volume consolidation". It is a
+    # contraction ceiling, so it is a MAXIMUM, and the `hi` above 1.0 is deliberate — a
+    # configuration that permits expansion in the flag is legal and wrong, not unrepresentable.
+    _p("max_flag_volume_ratio", "0.70", "0.10", "1.50", "fraction",
+       "PRD §3.2 crit 5 / A13 (bounds: code)", polarity=Polarity.MAXIMUM),
+    _p("breakout_vol_multiple", "2.0", "1.0", "10.0", "x avg flag bar",
+       "PRD §3.2 crit 7 (bounds: code)", polarity=Polarity.MINIMUM),
+    _p("consolidation_min_candles", "2", "1", "10", "candles",
+       "PRD §3.3 crit 3 (bounds: code)", polarity=Polarity.MINIMUM),
+    _p("hod_breakout_vol_multiple", "1.5", "1.0", "10.0", "x avg consolidation bar",
+       "PRD §3.3 crit 5 (bounds: code)", polarity=Polarity.MINIMUM),
+    _p("hod_reclaim_invalidation_candles", "2", "1", "10", "candles",
+       "PRD §3.3 invalidation (bounds: code)"),
+    # §3.4 states "above VWAP for >= 15 **minutes**" and §20.1 states that pattern counts are
+    # over **available bars**, not wall-clock minutes. §20 governs, so the name says bars.
+    _p("min_bars_above_vwap", "15", "1", "120", "bars",
+       "PRD §3.4 crit 2 (stated as minutes; §20.1 counts bars) (bounds: code)",
+       polarity=Polarity.MINIMUM),
+    _p("max_dip_candles", "5", "1", "20", "candles", "PRD §3.4 crit 3 (bounds: code)",
+       polarity=Polarity.MAXIMUM),
+    _p("max_dip_depth_pct", "0.02", "0.005", "0.10", "fraction",
+       "PRD §3.4 crit 3 (bounds: code)", polarity=Polarity.MAXIMUM),
+    _p("reclaim_vol_multiple", "2.0", "1.0", "10.0", "x avg dip bar",
+       "PRD §3.4 crit 5 (bounds: code)", polarity=Polarity.MINIMUM),
+    _p("hod_proximity_min_candles", "2", "1", "10", "candles",
+       "PRD §3.4 crit 9 (bounds: code)", polarity=Polarity.MINIMUM),
+
+    # --- §20.1 / §20.5 series semantics, and the §3 bailout timer (D33) ---
+    _p("max_pattern_gap_minutes", "2", "1", "30", "minutes", "PRD §20.1 (bounds: code)",
+       polarity=Polarity.MAXIMUM),
+    _p("ema_period", "9", "2", "200", "bars", "PRD §20.5 (bounds: code)"),
+    _p("bailout_candles", "3", "1", "20", "candles",
+       "PRD §3.2 / §3.3 exit criteria (bounds: code)"),
+
     # --- §2 risk settings (D27) -------------------------------------------
     # Registered so §2's "User-Configurable (within …)" column is true in code. The mode
     # preset overlays the default; `with_overrides` reaches them like any other parameter.

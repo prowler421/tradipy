@@ -1,10 +1,11 @@
-"""Synthetic NBBO data generator for Phase 2a spike.
+"""Synthetic Phase 2a data generator (Q1–Q4 inputs).
 
-**Everything this module writes is fabricated.** It exists so the Q4 pipeline can be exercised
-end to end before a vendor answers — nothing more. No number computed from its output is an
-answer to Q1–Q4, and in particular a §7 verdict printed over these files says something about
-this file's random number generator and nothing about `max_spread_r`. §7's thresholds are binding
-against *measured* data; a synthetic run is not a data pull and cannot license amending them.
+**Everything this module writes is fabricated.** It exists so the full Q1–Q4 pipeline can be
+exercised end to end before vendor trials, a second float provider, or a paper connection exist —
+nothing more. No number computed from its output is an answer to Q1–Q4, and in particular a §7
+verdict printed over these files says something about this file's random number generator and
+nothing about the thresholds §7 binds to measured data. A synthetic run is not a data pull and
+cannot license amending them.
 
 The files carry a `PROVENANCE.txt` beside them saying so, because a reader who finds four
 plausible CSVs and a documented command to run them has no other way to tell. That marker used
@@ -13,11 +14,14 @@ to be written and never read. It is now **machine-readable and load-bearing**: i
 it, and the measurement modules refuse to run on input it does not cover. Under PLAN **D30** this
 generator is the only source of data in the repository.
 
-Generates market-microstructure-shaped data loosely following IBKR conventions:
+Generates spike-shaped data loosely following IBKR conventions:
 - VIX history to select sample windows (12 months prior to spike start)
 - Pre-open facts matching §4.2 hard filters for gappers
 - Signal bars for the three MVP setups
 - NBBO quotes with spreads that test the max_spread_r gate
+- Float readings from two providers (Q2 staleness and disagreement halves)
+- Latency measurements for data-to-signal and signal-to-order (Q3)
+- A vendor trial matrix with one passing and two failing providers (Q1)
 
 Run without arguments to generate all files to data/spike2a/:
     uv run python -m scripts.spike2a.synthetic_data_generator
@@ -370,6 +374,86 @@ def generate_nbbo_quotes(
     return quotes
 
 
+def generate_float_readings(
+    preopen: list[tuple[date, str, Decimal, Decimal, Decimal, Decimal, Decimal, Decimal]],
+    measured_on: date,
+) -> list[tuple[str, str, Decimal, str]]:
+    """Two providers per symbol — fresh enough for staleness, close enough for disagreement.
+
+    The disagreement half stays within §7's threshold on purpose: the point of simulated Q2 is
+    to exercise both conditions, not to trip A10 over generator fiction.
+    """
+    symbol_float: dict[str, Decimal] = {}
+    for _session, symbol, *_rest, float_shares in preopen:
+        symbol_float[symbol] = float_shares
+
+    rows: list[tuple[str, str, Decimal, str]] = []
+    providers = ("finviz", "sec_edgar")
+    for symbol in sorted(symbol_float):
+        base = symbol_float[symbol]
+        for pi, provider in enumerate(providers):
+            age_days = random.randint(1, 15)
+            if random.random() < 0.05:
+                age_days = random.randint(31, 60)
+            as_of = (measured_on - timedelta(days=age_days)).isoformat()
+
+            float_shares = base
+            if pi == 1:
+                jitter = Decimal(str(random.uniform(0.97, 1.08)))
+                float_shares = (base * jitter).quantize(Decimal("1"))
+
+            rows.append((symbol, provider, float_shares, as_of))
+    return rows
+
+
+def generate_latency_measurements(
+    n_data_to_signal: int = 50,
+    n_signal_to_order: int = 50,
+) -> list[tuple[str, str, str]]:
+    """Latency rows sized so p95 sits within §7's Q3 thresholds on a typical draw."""
+    rows: list[tuple[str, str, str]] = []
+    for _ in range(n_data_to_signal):
+        secs = round(random.uniform(0.3, 2.0), 3)
+        rows.append(("data_to_signal", str(secs), ""))
+    for _ in range(n_signal_to_order):
+        secs = round(random.uniform(0.05, 0.6), 3)
+        rows.append(("signal_to_order", str(secs), ""))
+    return rows
+
+
+def generate_vendor_trials() -> list[tuple[str, int, int, int, int, str, str]]:
+    """Fixed vendor matrix: one simulated pass, two documented failures."""
+    return [
+        (
+            "ibkr",
+            450,
+            100,
+            30,
+            98,
+            "true",
+            "pre-determined negative: concurrent cap ~100",
+        ),
+        (
+            "polygon_screener",
+            400,
+            500,
+            45,
+            97,
+            "true",
+            "simulated pass candidate",
+        ),
+        (
+            "finviz_manual",
+            50,
+            50,
+            120,
+            99,
+            "false",
+            "refresh too slow; filters not expressible",
+        ),
+    ]
+
+
 def write_csv(
     filename: Path,
     rows: list,
@@ -499,12 +583,60 @@ def main() -> None:
     )
     print(f"   → {len(all_quotes)} NBBO samples generated\n")
 
+    # 6. Float readings (Q2)
+    print("6. Generating float readings (two providers per symbol)...")
+    float_rows = generate_float_readings(all_preopen, spike_start)
+    write_csv(
+        data_dir / "floats.csv",
+        float_rows,
+        ["symbol", "provider", "float_shares", "as_of"],
+    )
+    symbols_with_floats = len({row[0] for row in float_rows})
+    print(f"   → {len(float_rows)} readings ({symbols_with_floats} symbols × 2 providers)\n")
+
+    # 7. Latency measurements (Q3)
+    print("7. Generating latency measurements...")
+    latency_rows = generate_latency_measurements()
+    write_csv(
+        data_dir / "latency.csv",
+        latency_rows,
+        ["kind", "seconds", "note"],
+    )
+    print(f"   → {len(latency_rows)} measurements\n")
+
+    # 8. Vendor trial matrix (Q1)
+    print("8. Generating vendor trial matrix...")
+    vendor_rows = generate_vendor_trials()
+    write_csv(
+        data_dir / "vendors.csv",
+        vendor_rows,
+        [
+            "provider",
+            "monthly_cost_usd",
+            "concurrent_symbols",
+            "refresh_seconds",
+            "sample_coverage_pct",
+            "hard_filters_expressible",
+            "notes",
+        ],
+    )
+    print(f"   → {len(vendor_rows)} providers evaluated\n")
+
     # The marker travels with the files, and now names each one with its digest: a declaration
     # covering a directory lets an undeclared file sit beside a declared one and inherit its
     # claim. `provenance.require` is what reads this back, and it is the reason the pipeline can
     # no longer print a §7 verdict over fabricated input (PLAN D30).
     covered = [
-        data_dir / name for name in ("vix.csv", "preopen.csv", "signal_bars.csv", "quotes.csv")
+        data_dir / name
+        for name in (
+            "vix.csv",
+            "preopen.csv",
+            "signal_bars.csv",
+            "quotes.csv",
+            "floats.csv",
+            "latency.csv",
+            "vendors.csv",
+        )
     ]
     (data_dir / PROVENANCE_FILENAME).write_text(
         render(
@@ -521,8 +653,11 @@ def main() -> None:
                 f"symbol-sessions   {len(all_preopen)}\n"
                 f"signal bars       {len(signal_bars)}\n"
                 f"NBBO samples      {len(all_quotes)}\n"
+                f"float readings    {len(float_rows)}\n"
+                f"latency rows      {len(latency_rows)}\n"
+                f"vendor trials     {len(vendor_rows)}\n"
                 "\n"
-                "Not market data. Not vendor data. Fabricated to exercise the Q4 pipeline.\n"
+                "Not market data. Not vendor data. Fabricated to exercise the Q1-Q4 pipeline.\n"
                 "No number computed from these files answers Q1-Q4: §7's thresholds are binding\n"
                 "against measured data, and a synthetic run is not a data pull. See\n"
                 "docs/PHASE-2A-SPIKE.md §7 and PLAN D30."
@@ -534,7 +669,10 @@ def main() -> None:
     print(f"✓ All synthetic data written to {data_dir}/")
     print(f"  and {data_dir}/{PROVENANCE_FILENAME}, which declares it SIMULATED and lists each")
     print("  file with its digest — the measurement modules refuse to run without it")
-    print("\nReady to exercise the pipeline (NOT to answer Q4):")
+    print("\nReady to exercise the pipeline (NOT to answer Q1-Q4):")
+    print(f"  uv run python -m scripts.spike2a.q1_vendors {data_dir}/vendors.csv")
+    print(f"  uv run python -m scripts.spike2a.q2_float {data_dir}/floats.csv {spike_start}")
+    print(f"  uv run python -m scripts.spike2a.q3_latency {data_dir}/latency.csv")
     print(
         f"  uv run python -m scripts.spike2a.q4_spreads "
         f"{data_dir}/signal_bars.csv {data_dir}/quotes.csv"

@@ -9,6 +9,13 @@ All notable changes to the tradipy **package** are documented here. This file fo
 
 ## [Unreleased]
 
+### Added
+
+- **Simulated Q1–Q4 inputs.** `synthetic_data_generator.py` now emits `floats.csv`, `latency.csv`,
+  and `vendors.csv` alongside the existing market-microstructure files; new `q1_vendors.py` applies
+  §7's Q1 thresholds to the vendor matrix. All four questions remain pipeline-only on
+  `SIMULATED` origin per D30.
+
 ### Fixed
 
 - **Q4 quote selection (review H4/H6).** `signal_bars.csv` requires `signal_at`; `feeds.quote_at_or_before`

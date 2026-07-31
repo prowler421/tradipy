@@ -26,9 +26,9 @@ scanner by accretion."* So:
 
 | Q | What it needs | Runnable now |
 |---|---|---|
-| **Q1** — real-time candidate list | Vendor trials | **No.** And IBKR alone is a *pre-determined* negative: §7 requires ≥ 200 concurrent symbols and §1 records IBKR's ~100 market-data line cap. §3.3 says to establish that concretely rather than assume it |
-| **Q2** — float / short-interest quality | Two independent providers | **Half.** The staleness condition runs on one provider and can trip A10 alone. The disagreement condition cannot — `q2_float.disagreement` returns `None`, never `0` |
-| **Q3** — latency | Paper connection | **Arithmetic yes, collection no.** The percentile logic is written and checkable; the broker-side timestamping is not, because guessing at its event ordering measures the guess. On simulated input the §5.5/§4.4 disposition is **withheld entirely** — a fabricated p95 reports the generator's parameters |
+| **Q1** — real-time candidate list | Vendor trials | **Pipeline yes, answer no.** `q1_vendors` applies §7's Q1 thresholds to a declared trial matrix; on simulated input it prints a pipeline outcome, not a §7 verdict. IBKR alone remains a *pre-determined* negative on measured data: §7 requires ≥ 200 concurrent symbols and §1 records IBKR's ~100 market-data line cap |
+| **Q2** — float / short-interest quality | Two independent providers | **Pipeline yes, answer no.** Both staleness and disagreement conditions execute on the generator's two-provider `floats.csv`; on simulated input the A10 disposition is **withheld** |
+| **Q3** — latency | Paper connection | **Pipeline yes, answer no.** The percentile logic runs on the generator's `latency.csv`; on simulated input the §5.5/§4.4 disposition is **withheld entirely** |
 | **Q4** — realized spread distribution | Historical intraday NBBO | **The pipeline runs, on declared simulated CSVs, and reports a pipeline outcome rather than a §7 verdict.** Whether the IBKR paper tier serves `reqHistoricalTicks` BID_ASK for a 400-symbol-session sample is **unverified** — see [TEST_SETUP.md](TEST_SETUP.md) for the three limits to check |
 
 Under D30 none of the four is answerable; the column says what *executes*, not what is settled.
@@ -43,31 +43,30 @@ Every measurement module is stdlib-only and takes CSV input, so the whole pipeli
 broker, no subscription and no network. Run from the repository root.
 
 **`data/spike2a/` is gitignored and empty on a clean clone**, so nothing below runs until the
-files exist. `synthetic_data_generator.py` fabricates four of the six, which is enough to exercise
-Q4 and nothing more — no number computed from its output answers Q1–Q4. `floats.csv` and
-`latency.csv` have no generator: Q2 and Q3 are blocked on a second float provider and a paper
-connection, so their inputs are hand-authored when those arrive — and must be declared, or the
-modules refuse them.
+files exist. `synthetic_data_generator.py` fabricates all seven spike inputs
+(`vix.csv`, `preopen.csv`, `signal_bars.csv`, `quotes.csv`, `floats.csv`, `latency.csv`,
+`vendors.csv`) plus `PROVENANCE.txt` — enough to exercise Q1–Q4 end to end. No number computed
+from that output answers Q1–Q4.
 
 **Declaration is not optional.** The generator writes a `PROVENANCE.txt` naming `origin
-SIMULATED` and listing each file with its SHA-256. **All six measurement entry points** —
-`windows`, `universe`, `sample`, `q2_float`, `q3_latency`, `q4_spreads` — call
+SIMULATED` and listing each file with its SHA-256. **All seven measurement entry points** —
+`windows`, `universe`, `sample`, `q1_vendors`, `q2_float`, `q3_latency`, `q4_spreads` — call
 `provenance.require` before reading anything and exit `3` if a file is missing from it, has
 changed since, or declares an origin D30 does not permit. Undeclared data is refused rather than assumed simulated.
 
-For input with no generator, declare it by hand:
+For input the generator does not cover, declare it by hand:
 
 ```bash
 uv run python -m scripts.spike2a.provenance data/spike2a/latency.csv
 ```
 
 That **merges** into the existing marker rather than replacing it, so a hand-authored declaration
-and the generator's four files coexist. The generator does not merge — it rewrites the marker with
-its own four files, so **re-declare hand-authored input after regenerating**. Editing any declared
+and the generator's files coexist. The generator does not merge — it rewrites the marker with
+its own seven files, so **re-declare hand-authored input after regenerating**. Editing any declared
 file also breaks its digest, which is the mechanism working, not a bug.
 
 ```bash
-# Fabricate vix.csv, preopen.csv, signal_bars.csv, quotes.csv + PROVENANCE.txt. Synthetic.
+# Fabricate all spike inputs + PROVENANCE.txt. Synthetic.
 uv run python -m scripts.spike2a.synthetic_data_generator
 
 # The two §7 sample windows, chosen by the VIX rule. Input: date,close
@@ -80,14 +79,16 @@ uv run python -m scripts.spike2a.universe data/spike2a/preopen.csv
 # The full §7 sample: the two selected windows, then the filter rule applied within them
 uv run python -m scripts.spike2a.sample data/spike2a/vix.csv data/spike2a/preopen.csv 2026-07-29
 
+# Q1 — vendor trial matrix (pipeline outcome on SIMULATED input)
+uv run python -m scripts.spike2a.q1_vendors data/spike2a/vendors.csv
+
 # Q4 — the measurement that matters
 uv run python -m scripts.spike2a.q4_spreads data/spike2a/signal_bars.csv data/spike2a/quotes.csv
 
-# Q2 — float staleness (and disagreement, once a second provider exists). No generator; needs
-# a real provider extract.
+# Q2 — float staleness and disagreement (A10 disposition withheld on SIMULATED input)
 uv run python -m scripts.spike2a.q2_float data/spike2a/floats.csv 2026-07-29
 
-# Q3 — latency percentiles. No generator; needs a measured run.
+# Q3 — latency percentiles (disposition withheld on SIMULATED input)
 uv run python -m scripts.spike2a.q3_latency data/spike2a/latency.csv
 ```
 
@@ -131,6 +132,7 @@ it before anything else. `rvol` is *not* a fraction — `min_rvol` is a plain mu
 | `quotes.csv` | `symbol,captured_at,bid,ask,bid_size,ask_size[,age_seconds]` |
 | `floats.csv` | `symbol,provider,float_shares,as_of[,short_interest_shares]` |
 | `latency.csv` | `kind,seconds[,note]` — `kind` is `data_to_signal` or `signal_to_order` |
+| `vendors.csv` | `provider,monthly_cost_usd,concurrent_symbols,refresh_seconds,sample_coverage_pct,hard_filters_expressible[,notes]` — `hard_filters_expressible` is `true`/`false` or `yes`/`no` |
 
 ### Two obligations the schemas cannot enforce
 
@@ -147,7 +149,7 @@ it before anything else. `rvol` is *not* a fraction — `min_rvol` is a plain mu
 
 Convention 9 — all data is simulated — **is mechanical here too.** An import lint over `src/`,
 `scripts/` and `tests/` fails on any of twenty enumerated broker, vendor and network roots;
-`provenance.py` refuses undeclared input at all six entry points; and the §7 verdict wording is
+`provenance.py` refuses undeclared input at all seven entry points; and the §7 verdict wording is
 unreachable on simulated data. Each has a
 test that performs the violation, and each was checked by removing the guard and confirming the
 test goes red — the discipline the `guarantee-test` skill exists for.

@@ -9,20 +9,21 @@ against a tick boundary or summed into P&L (PRD §9.2).
 
 ## Package layout
 
-Eight library modules and a `__main__` CLI entry point, with a strict one-way dependency
+Nine library modules and a `__main__` CLI entry point, with a strict one-way dependency
 graph:
 
 - `rounding`, `rejects`, `bars` — standard library only.
 - `params` — depends on `rounding`.
 - `quotes`, `gates` — depend on `params`, `rejects`, `rounding`.
 - `score` — depends on `params`.
-- `poc` — composes all of the above into one evaluable candidate.
+- `scanner` — depends on `params`, `rejects`, `score`, `gates`.
+- `poc` — composes all of the above into one evaluable candidate and one simulated universe.
 - `__main__` — the `python -m tradipy` front end over `poc`.
 
-`import tradipy` binds the seven library modules named in the package `__all__`
-(`rounding`, `rejects`, `params`, `bars`, `quotes`, `score`, `gates`) as attributes.
-`tradipy.poc` is not among them and must be imported explicitly — it is the proof-of-concept
-composition layer, not part of the invariant surface.
+`import tradipy` binds the eight library modules named in the package `__all__`
+(`rounding`, `rejects`, `params`, `bars`, `quotes`, `score`, `gates`, `scanner`) as
+attributes. `tradipy.poc` is not among them and must be imported explicitly — it is the
+proof-of-concept composition layer, not part of the invariant surface.
 
 ## `tradipy.rounding`
 
@@ -55,29 +56,57 @@ def is_whole_tick(value: Decimal) -> bool
 
 ## `tradipy.rejects`
 
-Rejection reason codes (PRD §3.1.2, §3.1.3, §4.2, §20.9, §20.13, §20.14).
+Rejection reason codes, and the §4.2 soft flags that are deliberately *not* rejections
+(PRD §3.1.2, §3.1.3, §4.2, §20.9, §20.13, §20.14).
 
 ```python
 class Reject(Enum):
-    SPREAD_TOO_WIDE = "SPREAD_TOO_WIDE"              # §3.1.3
+    # PRD §4.2 hard filters — the scanner
+    GAP_TOO_SMALL = "GAP_TOO_SMALL"                  # §4.2
+    RVOL_TOO_LOW = "RVOL_TOO_LOW"                    # §4.2 / §20.7
+    FLOAT_TOO_HIGH = "FLOAT_TOO_HIGH"                # §4.2 / D4
+    PRICE_OUT_OF_RANGE = "PRICE_OUT_OF_RANGE"        # §4.2
+    ADV_TOO_LOW = "ADV_TOO_LOW"                      # §4.2
+    NEAR_LULD = "NEAR_LULD"                          # §4.2
+    # PRD §3 pre-entry gates
+    SPREAD_TOO_WIDE = "SPREAD_TOO_WIDE"              # §3.1.3 / §4.2
     INSUFFICIENT_ROOM = "INSUFFICIENT_ROOM"          # §3.1.1 / §3.1.2
     TARGETS_TOO_CLOSE = "TARGETS_TOO_CLOSE"          # §3.1.2
     STOP_TOO_WIDE = "STOP_TOO_WIDE"                  # §2 / §3.2 / §20.13
     QUOTE_STALE = "QUOTE_STALE"                      # §20.14
     QUOTE_CROSSED = "QUOTE_CROSSED"                  # §20.14
     DATA_QUALITY_DEGRADED = "DATA_QUALITY_DEGRADED"  # §20.9 / §20.14
+
+class SoftFlag(Enum):
+    PREMARKET_THIN = "PREMARKET_THIN"                # §4.2 (also a §20.10 input)
+    MARKET_CAP_HIGH = "MARKET_CAP_HIGH"              # §4.2
+    ATR_LOW = "ATR_LOW"                              # §4.2
+    NO_CATALYST = "NO_CATALYST"                      # §4.2 (also a §20.10 input)
+    RECENT_HALT = "RECENT_HALT"                      # §4.2, "Soft (flag)"
+    INST_OWN_HIGH = "INST_OWN_HIGH"                  # §4.2 / A22 / D24 — disabled by default
+    HIGH_SHORT_INTEREST = "HIGH_SHORT_INTEREST"      # §4.2, flag only
 ```
 
-- The enum lives in its own module because two layers raise it — `gates` for the pre-entry
-  gates and `quotes` for §20.14 validity — and a quote is a lower-level construct than a
-  gate. Keeping it in `gates` would have made `quotes` depend on `gates`, inverting the
-  layering. `tradipy.gates` re-exports `Reject`, so `from tradipy.gates import Reject`
-  still works.
+- The module holds both because three layers raise `Reject` — `gates` for the pre-entry
+  gates, `quotes` for §20.14 validity, and `scanner` for §4.2's hard filters — and a quote is
+  a lower-level construct than a gate. Keeping it in `gates` would have made `quotes` depend
+  on `gates`, inverting the layering. `tradipy.gates` re-exports `Reject`, so
+  `from tradipy.gates import Reject` still works.
+- **`SoftFlag` is a separate enum, and that is the point.** §4.2 lists all fourteen rows
+  under one "Rejection Code" column, seven Hard and seven Soft. Round 10's finding K5 is what
+  that invites: a reader building from the shared column implements all fourteen as rejection
+  paths, and `INST_OWN_HIGH` — which D24 keeps inert because §4.2's own note calls its
+  premise doubtful — becomes a filter that discards candidates. Two unrelated types make that
+  a type error. `ScanResult.reject` is `Reject | None` and cannot hold a flag;
+  `test_enforcement.py` performs the violation at runtime anyway.
 - Each member names the PRD section that defines the rejection, because a reason code
   invented by the implementation is a rule the specification has not agreed to.
   `STOP_TOO_WIDE` is the one exception: the PRD states the rule ("skip the trade") without
   naming a code, so the name is the implementation's and §4.2's table should adopt or
   replace it.
+- `SPREAD_TOO_WIDE` covers §4.2's Liquidity/Spread row in full, which states *two* conditions
+  under one code: a spread over the cap **and** a bid thinner than `min_quote_size`. A name
+  nobody is bidding for in size is as unexecutable as one quoted too wide.
 
 ## `tradipy.params`
 
@@ -87,7 +116,7 @@ The parameter registry — the single source of truth for every tunable threshol
 Mode = Literal["beginner", "experienced"]
 MODES: tuple[str, ...]                             # ("beginner", "experienced")
 
-PARAMS: Mapping[str, Param]                        # read-only; 47 entries
+PARAMS: Mapping[str, Param]                        # read-only; 55 entries
 MODE_PRESETS: Mapping[str, Mapping[str, Decimal]]  # read-only, inner maps too
 HARD_CAPS: Mapping[str, Decimal]                   # read-only
 DISCRIMINATING_CAP_TICKS = 2
@@ -111,6 +140,7 @@ class Config:
 
     def __getitem__(self, name: str) -> Decimal
     def polarity(self, name: str) -> Polarity
+    def round_for(self, value: Decimal, *governed_by: str) -> Decimal
 
     @classmethod
     def default(cls, mode: Mode = "beginner") -> Config
@@ -126,7 +156,7 @@ def min_tradeable_price_from_stop_bounds(cfg: Config) -> Decimal
 
 ### The registry
 
-`PARAMS` holds **47** entries keyed by name, each carrying its default, legal range, unit,
+`PARAMS` holds **55** entries keyed by name, each carrying its default, legal range, unit,
 PRD source citation, and — where it is used as a gate threshold — its polarity. A
 threshold is defined there exactly once and every consumer reads it by name; no numeric
 literal for a registered threshold may appear anywhere else in the package. The lint that
@@ -175,9 +205,19 @@ reasoning about out-of-range inputs produces misleading errors.
   mapping is complete.
 - `Config.polarity(name)` — the declared rounding direction. Raises `ValueError` when the
   parameter has no polarity, because §20.13 requires classification before a rounding
-  function is chosen. `tradipy.gates` routes every rounding call through this rather than
-  naming a `Polarity` member, so the registry field is the single source of truth for
-  direction as well as for value.
+  function is chosen. Every rounding call routes through this rather than naming a
+  `Polarity` member, so the registry field is the single source of truth for direction as
+  well as for value.
+- `Config.round_for(value, *governed_by)` — round `value` in the direction the registry
+  declares for the named parameters. Raises `ValueError` when they disagree, or when any of
+  them has no declared polarity, or when none is given: a threshold built from several
+  parameters must have exactly one classification, and "no governing parameter" is not
+  "any direction". This was `gates._rounded` until Phase 3, when `scanner` needed the same
+  resolution; the alternatives were a private cross-module import or a second place naming a
+  direction, and the second is the v1.3.1 defect. Direction is registry data, so resolving it
+  belongs on the registry object. Carrying a polarity does **not** imply a value is rounded —
+  a ratio has no tick to round to, so `min_gap_daily_pct`, `min_rvol` and
+  `min_conviction_score` declare a direction and never reach this method.
 
 ### Coupling and documented-state helpers
 
@@ -355,6 +395,8 @@ value is read from the registry by name, and every rounding direction from
 ```python
 Reject   # re-exported from tradipy.rejects
 
+def scan_spread_cap(price: Decimal, cfg: Config) -> Decimal
+
 @dataclass(frozen=True)
 class SpreadCaps:
     scan: Decimal
@@ -441,11 +483,126 @@ def position_size(
   `apply_stop_floor_and_ceiling` first. A budget too small for one share still returns `0`
   rather than a rejection; that is a recorded Phase 2 gap.
 
+## `tradipy.scanner`
+
+PRD §4: the seven §4.2 hard filters, the seven §4.2 soft flags, and §4.3's ranked watchlist.
+Same two rules as `gates` — no threshold literal, no rounding direction named at a call site.
+
+```python
+PERCENT_PER_UNIT: Decimal   # Decimal(100) — §4.2's fraction to §20.10's percent units
+
+@dataclass(frozen=True)
+class ScanCandidate:
+    symbol: str
+    # §4.2 hard-filter inputs — all required
+    price: Decimal
+    premarket_gap_pct: Decimal          # fraction, 0.04 = 4%
+    daily_gap_pct: Decimal              # fraction; also what feeds §20.10
+    rvol: Decimal
+    float_shares: Decimal
+    adv_shares: Decimal
+    luld_upper: Decimal
+    luld_lower: Decimal
+    spread: Decimal
+    bid_size: int
+    # §4.3 ranking inputs — required, because §20.10 consumes them
+    premarket_volume: Decimal
+    catalyst: Catalyst
+    # §4.2 soft-flag inputs — None means "not available", which raises no flag
+    market_cap: Decimal | None = None
+    atr: Decimal | None = None
+    avg_atr: Decimal | None = None
+    sessions_since_halt: int | None = None
+    institutional_ownership_pct: Decimal | None = None
+    short_interest_pct: Decimal | None = None
+
+@dataclass(frozen=True)
+class HardFilter:
+    name: str          # verbatim from §4.2's Filter column
+    code: Reject
+    check: Callable[[ScanCandidate, Config], tuple[bool, str]]
+
+@dataclass(frozen=True)
+class SoftFilter:
+    name: str
+    code: SoftFlag     # note the type: a soft row cannot carry a rejection
+    check: Callable[[ScanCandidate, Config], tuple[bool, str]]
+
+HARD_FILTERS: tuple[HardFilter, ...]   # 7, in §4.2 table order
+SOFT_FILTERS: tuple[SoftFilter, ...]   # 7, in §4.2 table order
+
+@dataclass(frozen=True)
+class HardResult:
+    filter: str
+    code: Reject
+    passed: bool
+    detail: str
+
+@dataclass(frozen=True)
+class SoftResult:
+    filter: str
+    code: SoftFlag
+    raised: bool       # advisory: it rejects nothing
+    detail: str
+
+@dataclass(frozen=True)
+class ScanResult:
+    candidate: ScanCandidate
+    hard: tuple[HardResult, ...]
+    soft: tuple[SoftResult, ...]
+    score: Score | None = None         # None for a rejected candidate
+
+    @property
+    def rejects(self) -> tuple[Reject, ...]   # every hard failure, §4.2 table order
+    @property
+    def reject(self) -> Reject | None         # the first
+    @property
+    def passed(self) -> bool
+    @property
+    def flags(self) -> tuple[SoftFlag, ...]   # never affects `passed`
+
+@dataclass(frozen=True)
+class ScanReport:
+    results: tuple[ScanResult, ...]    # every candidate, in the order supplied
+    watchlist: tuple[ScanResult, ...]  # survivors, ranked, cut to watchlist_size
+
+    @property
+    def survivors(self) -> tuple[ScanResult, ...]
+
+def evaluate_candidate(candidate: ScanCandidate, cfg: Config) -> ScanResult
+def scan(candidates: Iterable[ScanCandidate], cfg: Config) -> ScanReport
+```
+
+- **It sources nothing.** PRD §4.1's pipeline runs *universe → hard filters → soft filters →
+  catalyst check → watchlist*; this module implements the middle and the end. The universe
+  is Phase 2 ingestion and the catalyst check is the one manual step §12.2 keeps in the MVP
+  loop, so both arrive as inputs. There is no feed, no file read and no network call here,
+  and PLAN **D30** is why: the project is on the `SIMULATED` rung of the data ladder.
+  `test_enforcement.py` enforces this with an **allowlist** of imports for this module
+  specifically, rather than the repository-wide denylist — §4.2 is arithmetic over inputs and
+  needs nothing but `dataclasses`, `decimal`, `collections.abc` and its own package.
+- **Every hard filter is evaluated, not just up to the first failure.** `rejects` reports all
+  of them so a marginal candidate can be told from one that was nowhere near — which is what
+  recalibrating a threshold against measured data (Phase 2a Q1) has to read.
+- **A rejected candidate has no score**, deliberately. §4.1 orders hard filters before
+  scoring, and a score on a rejected name invites ranking on it.
+- Ties in the watchlist are broken by symbol ascending. §4.3 states no tiebreak and ties are
+  reachable — `float_inverse` saturates at 0 above the cap and `norm_rvol` at 1 above 20× —
+  so without one the watchlist would depend on the order the universe arrived in.
+- **§4.2 admits more than one reading in several places** — what "within 10% of LULD band"
+  is 10% *of*, whether §4.2's daily Gap % and §20.10's `pct_change` are the same quantity,
+  whether "last 5 days" means sessions, and others. Each is taken one way here because the
+  module has to be executable, and each is raised in [CHANGELOG.md](CHANGELOG.md)'s
+  spec-question table rather than decided here. That table is the authoritative list.
+- **Nothing below is calibrated.** The filters are applied correctly and tested to be; PLAN
+  D29 gates *calibration* on Phase 2a Q1 answered on measured data, and **D32** opened this
+  phase without it. See [PHASE-3-READINESS.md](PHASE-3-READINESS.md).
+
 ## `tradipy.poc`
 
-Proof-of-concept composition: one candidate through every Phase 1 gate. This is not the
-strategy engine — finding candidates needs a scanner, a feed and bar ingestion, all of which
-PRD §12.1 scopes to later phases.
+Proof-of-concept composition: one candidate through every Phase 1 gate, plus the simulated
+universe the §4 scanner demo runs over. This is not the strategy engine — finding candidates
+needs a feed and bar ingestion, which PRD §12.1 scopes to Phase 2.
 
 ```python
 @dataclass(frozen=True)
@@ -484,7 +641,16 @@ class Evaluation:
 
 def evaluate(candidate: Candidate, cfg: Config) -> Evaluation
 def worked_examples() -> list[Candidate]
+def simulated_universe(cfg: Config) -> list[ScanCandidate]
 ```
+
+- `simulated_universe` is fourteen synthetic candidates — seven that survive §4.2 and seven
+  that each fail exactly one hard row — behind `python -m tradipy scan`. It is *constructed*,
+  not read, so it needs no `PROVENANCE.txt`: PLAN D30's gate constrains what may be read, and
+  nothing here reads anything. Its boundary values are derived from the registry
+  (`cfg["min_rvol"] - 1`, not `4`), which is the opposite of what the fixtures in `tests/` do
+  and for the opposite reason — a demo should follow the configuration, a test must be able
+  to detect it changing.
 
 Also public by use — read by the CLI and the tests, though not in `__all__`:
 

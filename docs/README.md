@@ -32,7 +32,7 @@ and a change usually belongs in exactly one.
 
 | Document | Role |
 |---|---|
-| [PLAN.md](PLAN.md) | Workstreams 0–11, the sequencing table, the decision log D1–D30, and the risk register. The defect-classes section is the most cited part of the repository — six rows as of round 7, and the count is deliberately not restated here |
+| [PLAN.md](PLAN.md) | Workstreams 0–11, the sequencing table, the decision log D1–D30, and the risk register. The defect-classes section is the most cited part of the repository, and PLAN is where its count is maintained — deliberately not restated here, so that this page cannot go stale against it |
 | [PHASE-2A-SPIKE.md](PHASE-2A-SPIKE.md) | Scope and **binding pre-registration** for the data feasibility spike (PRD §5.5 / V7). Its §7 thresholds were committed before any data was pulled and are not to be retrofitted to a result |
 | [PHASE-2A-REPORT.md](PHASE-2A-REPORT.md) | Completion report per §6 — Q1–Q4 status, measured vs pipeline-only |
 | [PHASE-3-READINESS.md](PHASE-3-READINESS.md) | Gate checklist for whether Phase 3 (scanner) may start (D29) |
@@ -42,7 +42,7 @@ and a change usually belongs in exactly one.
 | Document | Role |
 |---|---|
 | [architecture.md](architecture.md) | Module structure, the one-way dependency graph, and the five design invariants the test suite defends |
-| [api.md](api.md) | Public surface of all eight library modules, with signatures and worked snippets |
+| [api.md](api.md) | Public surface of all nine library modules, with signatures and worked snippets |
 | [development.md](development.md) | Environment, `make` targets, the testing markers, the release process, and the mutation protocol |
 
 See also [../tests/README.md](../tests/README.md), which is where the **documented open
@@ -63,6 +63,8 @@ of what was found; corrections go to the changelogs, not into the review that fo
 | [REVIEW-2026-07-29.md](reviews/REVIEW-2026-07-29.md) | The code again, verifying the round above | 9; ten of twelve F-findings confirmed closed, F8 not |
 | [REVIEW-2026-07-30.md](reviews/REVIEW-2026-07-30.md) | The **Phase 2a instrumentation** (`scripts/spike2a/`), first time; round 6 verified | 15, three HIGH; `make check` red against four documents saying the guardrail was enforced; the **sixth defect class** |
 | [REVIEW-2026-07-31.md](reviews/REVIEW-2026-07-31.md) | D30 and the H5 join, verifying round 7; `src/tradipy/` unchanged | 1, LOW-MEDIUM; two documents understated a fix that shipped in the same commit as D30 — no new defect class |
+| [REVIEW-2026-07-31-round9.md](reviews/REVIEW-2026-07-31-round9.md) | Phase 3 readiness / the new Q1 pipeline (`q1_vendors.py`), verifying round 8; `src/tradipy/` unchanged for the second round running | 2; MEDIUM-HIGH — Q1's disposition-withholding guarantee (the same one Q2–Q4 each have a test for) had none, reproduced by mutation. Phase 3 gate verdict unchanged: not ready |
+| [claude-PHASE-3-REVIEW.md](reviews/claude-PHASE-3-REVIEW.md) | The **Phase 3 gate** and the same interval, conducted independently of round 9 and completed after it; findings prefixed `K*` so the two do not collide | 7; two MEDIUM-HIGH — a completion report quoting the previous commit's numbers under a claim of regeneration, and `q1_vendors` asserting a §7 Q1 negative from an empty matrix. Candidate **seventh defect class** raised, not decided. Phase 3 gate verdict unchanged: not ready |
 
 **On the naming.** `REVIEW-v1.2` and `REVIEW-v1.3` are named for the PRD version they reviewed;
 `REVIEW-2026-07-28` onward are dated because they review *code*, which has its own version

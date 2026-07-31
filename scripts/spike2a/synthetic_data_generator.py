@@ -51,6 +51,23 @@ from tradipy.rounding import TICK_SIZE, ceil_to_tick, floor_to_tick
 _CHEAP_PRICE_USD = 5
 _MID_PRICE_USD = 10
 
+#: The multipliers those bands select, named for the same reason and not written inline.
+#: ``Decimal("1.5")`` collided with ``min_atr_multiple`` the moment PRD §4.2's Volatility row
+#: was registered in Phase 3 — a spread-ladder multiplier and an ATR multiple are unrelated
+#: quantities that happen to share a number, which is exactly the collision the lint cannot
+#: distinguish and is right not to try.
+#:
+#: **The rejected alternative was ``EXEMPT_ASSIGNMENTS``** in ``tests/test_parameter_registry.py``,
+#: which would keep these as ``Decimal`` and record the exemption on the lint's side where it is
+#: one grep away. That list currently holds ``TICK_SIZE`` alone — a market fact fixed by SEC Rule
+#: 612 — and widening it to throwaway spike knobs changes what it means. The cost of the choice
+#: made instead is real and is stated here rather than left implicit: as ``str`` constants these
+#: values are *invisible* to the lint rather than *exempted* by it, and the idiom generalizes to
+#: any future collision, deliberate or not. If a third one appears, take the other branch.
+_SPREAD_MULTIPLIER_CHEAP = "2.0"
+_SPREAD_MULTIPLIER_MID = "1.5"
+_SPREAD_MULTIPLIER_RICH = "1.0"
+
 #: Fixed so a regeneration is reproducible. Read by the provenance marker so the written file
 #: records the seed that produced it rather than a number a reader has to trust.
 SEED = 42
@@ -322,11 +339,11 @@ def generate_nbbo_quotes(
 
         # Price-level adjustment: spreads wider on cheap stocks
         if price < Decimal(_CHEAP_PRICE_USD):
-            price_multiplier = Decimal("2.0")
+            price_multiplier = Decimal(_SPREAD_MULTIPLIER_CHEAP)
         elif price < Decimal(_MID_PRICE_USD):
-            price_multiplier = Decimal("1.5")
+            price_multiplier = Decimal(_SPREAD_MULTIPLIER_MID)
         else:
-            price_multiplier = Decimal("1.0")
+            price_multiplier = Decimal(_SPREAD_MULTIPLIER_RICH)
 
         spread_bps_float = float(Decimal(base_bps) * price_multiplier) + random.gauss(
             0, float(Decimal(regime.spread_bps_std))

@@ -18,9 +18,10 @@ the same discipline against the prose in docs/PRD.md — within a stated scope: 
 not scanned, deliberately: fixtures must state literals to assert a derivation against them.
 
 Each parameter carries its **polarity** (PRD §20.13) where it is used as a gate threshold,
-because rounding direction is a property of the constraint, not of the call site. As of
-v0.1.0 :mod:`tradipy.gates` reads that field rather than naming a `Polarity` member at the
-call site, so the declaration below is load-bearing rather than documentary.
+because rounding direction is a property of the constraint, not of the call site. Every
+module that rounds — `gates`, `quotes` and `scanner` — reads that field through
+`Config.round_for` rather than naming a `Polarity` member at the call site, so the
+declaration below is load-bearing rather than documentary.
 
 **Immutability.** ``PARAMS``, ``MODE_PRESETS`` and ``HARD_CAPS`` are read-only mappings, and
 the inner preset dicts are wrapped too. Before v0.1.0 they were plain dicts read *live* by
@@ -37,7 +38,7 @@ from decimal import Decimal
 from types import MappingProxyType
 from typing import Literal, get_args
 
-from tradipy.rounding import TICK_SIZE, Polarity, floor_to_tick
+from tradipy.rounding import TICK_SIZE, Polarity, floor_to_tick, round_threshold
 
 __all__ = [
     "Param",
@@ -141,21 +142,32 @@ _REGISTRY: list[Param] = [
 
     # --- §2 quantitative thresholds ---------------------------------------
     # §2 has no bounds column; every lo/hi in this block is code-originated.
+    # The two gap floors are an OR (PRD §4.2), not a pair of independent gates. Both are
+    # MINIMUM — but a gap is a ratio, so nothing tick-rounds them; the classification is
+    # recorded because the *comparison* direction is part of the threshold's meaning, which
+    # is the same reason `min_conviction_score` carries one. See `Config.round_for`.
     _p("min_gap_premarket_pct", "0.04", "0.01", "0.50", "fraction",
-       "PRD §2 / D3 (bounds: code)"),
-    _p("min_gap_daily_pct", "0.10", "0.01", "0.50", "fraction", "PRD §2 / D3 (bounds: code)"),
-    _p("min_rvol", "5.0", "1.0", "50.0", "x ADV", "PRD §2 (bounds: code)",
+       "PRD §2 / §4.2 / D3 (bounds: code)", polarity=Polarity.MINIMUM),
+    _p("min_gap_daily_pct", "0.10", "0.01", "0.50", "fraction",
+       "PRD §2 / §4.2 / D3 (bounds: code)", polarity=Polarity.MINIMUM),
+    _p("min_rvol", "5.0", "1.0", "50.0", "x ADV", "PRD §2 / §4.2 (bounds: code)",
        polarity=Polarity.MINIMUM),
     _p("rvol_lookback_days", "30", "5", "200", "sessions",
        "PRD §2.1 / A8 / D2 (bounds: code)"),
     _p("max_float_shares", "20000000", "1000000", "500000000", "shares",
-       "PRD §2 / D4 (bounds: code)", polarity=Polarity.MAXIMUM),
-    _p("min_price", "1.00", "1.00", "100.00", "USD", "PRD §2 (bounds: code)"),
-    _p("max_price", "20.00", "2.00", "1000.00", "USD", "PRD §2 (bounds: code)"),
-    _p("min_adv_shares", "500000", "50000", "50000000", "shares", "PRD §2 (bounds: code)",
+       "PRD §2 / §4.2 / D4 (bounds: code)", polarity=Polarity.MAXIMUM),
+    # Both ends of §4.2's price range are compared against a price, so both are rounded to a
+    # tick by the scanner and both need a declared direction. At the shipped defaults the
+    # rounding is a no-op — $1.00 and $20.00 are already whole ticks — which is exactly the
+    # configuration in which an undeclared polarity goes unnoticed.
+    _p("min_price", "1.00", "1.00", "100.00", "USD", "PRD §2 / §4.2 (bounds: code)",
        polarity=Polarity.MINIMUM),
+    _p("max_price", "20.00", "2.00", "1000.00", "USD", "PRD §2 / §4.2 (bounds: code)",
+       polarity=Polarity.MAXIMUM),
+    _p("min_adv_shares", "500000", "50000", "50000000", "shares",
+       "PRD §2 / §4.2 (bounds: code)", polarity=Polarity.MINIMUM),
     _p("min_premarket_volume", "100000", "10000", "10000000", "shares",
-       "PRD §2 (bounds: code)", polarity=Polarity.MINIMUM),
+       "PRD §2 / §4.2 (bounds: code)", polarity=Polarity.MINIMUM),
     _p("max_vwap_extension_pct", "0.03", "0.005", "0.20", "fraction",
        "PRD §2 / A7 (bounds: code)", polarity=Polarity.MAXIMUM),
     _p("max_vwap_extension_open_pct", "0.05", "0.005", "0.30", "fraction",
@@ -167,6 +179,40 @@ _REGISTRY: list[Param] = [
     # rejected it — D26 removed the last check that incidentally constrained this.
     _p("t1_r_multiple", "2.0", "2.0", "5.0", "xR", "PRD §2 / §3.1.1 / D12 (bounds: code)",
        polarity=Polarity.MINIMUM),
+
+    # --- §4 scanner thresholds not already registered above (D32) ---------
+    # Seven §4.2 rows §2 does not carry, plus `watchlist_size`, which is §4.1/§4.3 and is
+    # not a filter at all. Neither section has a Bounds column, so every lo/hi here is
+    # code-originated. What is deliberately *absent* is as load-bearing as
+    # what is present: §4.2's "RVOL >= 5x 30-day ADV" and "ATR(14) >= 1.5x 30-day avg ATR",
+    # and §2's "(30-day)" on Average Daily Volume, all name a window or a period, and those
+    # are **input-contract** facts for Phase 2 ingestion, not thresholds this layer applies.
+    # `rvol_lookback_days` is registered above because §2.1 states it as a parameter; an
+    # `atr_period` or an `adv_lookback_days` would be a registry row wired to nothing, which
+    # is the fifth defect class in miniature.
+    _p("min_luld_distance_pct", "0.10", "0.01", "0.50", "fraction",
+       "PRD §4.2 Circuit Breakers (bounds: code)", polarity=Polarity.MINIMUM),
+    _p("max_market_cap", "2000000000", "100000000", "50000000000", "USD",
+       "PRD §4.2 Market Cap (bounds: code)", polarity=Polarity.MAXIMUM),
+    _p("min_atr_multiple", "1.5", "1.0", "5.0", "x avg ATR",
+       "PRD §4.2 Volatility (bounds: code)", polarity=Polarity.MINIMUM),
+    _p("recent_halt_lookback_days", "5", "1", "30", "sessions",
+       "PRD §4.2 Recent Halts (bounds: code)"),
+    # D24 / A22: the threshold is registered so the hypothesis is testable, and the enable
+    # flag defaults off so it is inert until Phase 2a confirms the data exists and Phase 4b
+    # shows it discriminates. §4.2's own note calls the premise doubtful. Deleting the row
+    # was the rejected alternative — a hypothesis nobody wrote down cannot be tested later.
+    _p("min_institutional_ownership_pct", "0.80", "0.50", "1.00", "fraction",
+       "PRD §4.2 Institutional Ownership / A22 / D24 (bounds: code)",
+       polarity=Polarity.MINIMUM),
+    _p("institutional_ownership_enabled", "0", "0", "1", "boolean",
+       "PRD §4.2 note ('disabled by default') / D24 (bounds: code)"),
+    _p("min_short_interest_pct", "0.05", "0.01", "0.50", "fraction",
+       "PRD §4.2 Short Interest (bounds: code)", polarity=Polarity.MINIMUM),
+    # §4.1's pipeline ends "Watchlist (top 3-5 by composite score)" and §4.3 says "Return
+    # top 5". The 5 is the ceiling; §4.1's 3 is the low end of a range, not a second bound.
+    _p("watchlist_size", "5", "1", "20", "symbols",
+       "PRD §4.1 / §4.3 (bounds: code)"),
 
     # --- §2 risk settings (D27) -------------------------------------------
     # Registered so §2's "User-Configurable (within …)" column is true in code. The mode
@@ -346,11 +392,11 @@ class Config:
     def polarity(self, name: str) -> Polarity:
         """The declared rounding direction for ``name`` (PRD §20.13).
 
-        :mod:`tradipy.gates` routes every ``round_threshold`` call through this rather than
-        naming a :class:`~tradipy.rounding.Polarity` member, so the registry field is the
-        single source of truth for direction as well as for value. Naming the member at the
-        call site gave polarity two definitions that nothing reconciled — the v1.3.1 defect
-        class reproduced inside the mechanism built to close it.
+        Every module that rounds routes through :meth:`round_for`, which calls this, rather
+        than naming a :class:`~tradipy.rounding.Polarity` member — so the registry field is
+        the single source of truth for direction as well as for value. Naming the member at
+        the call site gave polarity two definitions that nothing reconciled — the v1.3.1
+        defect class reproduced inside the mechanism built to close it.
         """
         p = PARAMS[name].polarity
         if p is None:
@@ -359,6 +405,55 @@ class Config:
                 "as MINIMUM or MAXIMUM before a rounding function is chosen"
             )
         return p
+
+    def round_for(self, value: Decimal, *governed_by: str) -> Decimal:
+        """Round ``value`` in the direction the registry declares for its governing parameters.
+
+        PRD §20.13 requires a threshold to be classified as a minimum or a maximum *before* a
+        rounding function is chosen. Passing the governing parameter names rather than a
+        :class:`~tradipy.rounding.Polarity` member makes that classification the single source
+        of truth: change the registry and the arithmetic at every call site follows.
+
+        A threshold built from several parameters must have one classification.
+        ``max(min_sep_r * R, sep_cost_multiple * cost)`` is a minimum because *both* of its
+        terms are; if they ever disagree this raises rather than guessing.
+
+        **Why this is a method on ``Config`` rather than a helper in ``gates``.** It was
+        ``gates._rounded`` until Phase 3, when :mod:`tradipy.scanner` needed the same
+        resolution for §4.2's price range and LULD distance. The two ways to share it were
+        importing a private name across modules, or letting the scanner name a
+        :class:`~tradipy.rounding.Polarity` member itself — and the second is the v1.3.1
+        defect, which is direction having two definitions. Direction is registry data, so
+        resolving it belongs on the registry object; both consumers now read it here and
+        neither imports ``Polarity`` at all, which ``tests/test_enforcement.py`` asserts
+        structurally rather than by output.
+
+        Note that carrying a polarity does **not** imply a value is rounded. **Most declared
+        polarities never reach this method**, and only three currently do — ``min_price``,
+        ``max_price`` and ``min_luld_distance_pct`` — because a threshold is rounded only when
+        it is compared against a price, and a tick is the unit of a price. A ratio
+        (``min_gap_daily_pct``), a multiple (``min_rvol``), a share count
+        (``max_float_shares``), a dollar figure that is not a price level
+        (``max_market_cap``) and a score (``min_conviction_score``) all carry a direction
+        because the *comparison* direction is part of what the threshold means, and none of
+        them has a tick to round to. An earlier version of this paragraph said "a ratio has no
+        tick" and named three ratios, which reads as the whole justification and covers a
+        minority of the declarations it is justifying.
+        """
+        if not governed_by:
+            raise ValueError(
+                "round_for was given no governing parameter; PRD §20.13 requires a threshold "
+                "to be classified before a rounding function is chosen, and no classification "
+                "is not the same as any direction"
+            )
+        polarities = {self.polarity(n) for n in governed_by}
+        if len(polarities) != 1:
+            raise ValueError(
+                f"threshold governed by {governed_by} has conflicting polarities "
+                f"{sorted(p.name for p in polarities)}; PRD §20.13 requires exactly one "
+                "classification per rounded threshold"
+            )
+        return round_threshold(value, polarities.pop())
 
     @classmethod
     def default(cls, mode: Mode = "beginner") -> Config:

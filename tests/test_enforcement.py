@@ -47,21 +47,48 @@ from pathlib import Path
 
 import pytest
 
-from scripts.spike2a import provenance, q2_float, q3_latency, q4_spreads
+from scripts.spike2a import provenance, q1_vendors, q2_float, q3_latency, q4_spreads
 from scripts.spike2a.feeds import QuoteSample
 from tradipy.gates import (
-    _rounded,
     apply_stop_floor_and_ceiling,
     min_separation,
     position_size,
+    scan_spread_cap,
     spread_caps,
 )
 from tradipy.params import HARD_CAPS, MODE_PRESETS, PARAMS, Config, CouplingError
+from tradipy.rejects import Reject, SoftFlag
 from tradipy.rounding import TICK_SIZE, Polarity, ceil_to_tick, floor_to_tick
+from tradipy.scanner import (
+    HARD_FILTERS,
+    SOFT_FILTERS,
+    _rank_key,
+    evaluate_candidate,
+    scan,
+)
+from tradipy.score import Catalyst
 
 D = Decimal
 CFG = Config.default(mode="experienced")
-GATES_SRC = Path(__file__).resolve().parents[1] / "src" / "tradipy" / "gates.py"
+SRC = Path(__file__).resolve().parents[1] / "src" / "tradipy"
+
+#: Every module that rounds anything to a tick. Each must read the direction from the
+#: registry rather than name a ``Polarity`` member, and the check is that the *import* is
+#: absent — see :func:`test_a_rounding_module_cannot_name_a_polarity_member`.
+#:
+#: This listed only ``round_for``'s callers when Phase 3 added the second one, which named the
+#: guard after a property it did not check: ``quotes.py`` rounds an estimated spread with a
+#: bare ``ceil_to_tick`` and was outside it. That is the v1.3.1 shape — a rule stated more
+#: broadly than the thing it ranges over — reproduced in the test written to prevent it.
+#: :func:`test_every_module_that_rounds_is_in_the_polarity_check` now derives the list from
+#: every rounding call, not from one of them.
+ROUNDING_FUNCTIONS = ("round_for", "round_threshold", "ceil_to_tick", "floor_to_tick")
+
+#: ``params.py`` resolves the direction and ``rounding.py`` defines it; both must name
+#: ``Polarity``, so neither can be held to the import check.
+POLARITY_DEFINING = ("params.py", "rounding.py")
+
+ROUNDING_CONSUMERS = ("gates.py", "quotes.py", "scanner.py")
 
 #: PRD §2.0's mode-preset table, transcribed here so the test compares against the document
 #: rather than against `MODE_PRESETS`, which is the thing under test.
@@ -147,15 +174,22 @@ def test_mode_preset_mutation_cannot_reach_a_live_config() -> None:
 # F4 — the registry decides rounding direction, not the call site
 # ---------------------------------------------------------------------------
 @pytest.mark.polarity
-def test_gates_do_not_import_polarity() -> None:
-    """``gates.py`` must have no way to name a ``Polarity`` member.
+@pytest.mark.parametrize("filename", ROUNDING_CONSUMERS)
+def test_a_rounding_module_cannot_name_a_polarity_member(filename: str) -> None:
+    """No module that rounds a threshold may have a way to name a ``Polarity`` member.
 
     This is the structural half of the fix. A test asserting that the *output* is correct
     passes under either design, because the literal and the registry agree today — that is
     precisely why the divergence went unnoticed. Removing the import makes the second source
     of truth unreachable rather than merely unused.
+
+    Parametrized over :data:`ROUNDING_CONSUMERS` rather than written for ``gates.py`` alone,
+    because Phase 3 added a second consumer and a guarantee that names one file protects one
+    file. ``scanner.py`` rounds §4.2's price range and LULD distance; ``quotes.py`` rounds
+    §20.14's estimated spread. :func:`test_every_module_that_rounds_is_in_the_polarity_check`
+    is what stops a fourth being added outside this list.
     """
-    tree = ast.parse(GATES_SRC.read_text(encoding="utf-8"))
+    tree = ast.parse((SRC / filename).read_text(encoding="utf-8"))
     imported = {
         alias.asname or alias.name
         for node in ast.walk(tree)
@@ -163,8 +197,41 @@ def test_gates_do_not_import_polarity() -> None:
         for alias in node.names
     }
     assert "Polarity" not in imported, (
-        "gates.py imports Polarity, so a call site can name a direction again. Rounding "
+        f"{filename} imports Polarity, so a call site can name a direction again. Rounding "
         "direction must come from Config.polarity() (PRD §20.13)."
+    )
+
+
+@pytest.mark.polarity
+def test_every_module_that_rounds_is_in_the_polarity_check() -> None:
+    """Guard on the guard: the list above must name every module that rounds to a tick.
+
+    A hand-maintained list of files to check is exactly the mechanism that goes stale
+    silently — the check keeps passing on the files it knows about while a new one rounds
+    unobserved. Derived from the source instead, and from **every** rounding function rather
+    than only ``round_for``: rounding with a bare ``ceil_to_tick`` is still rounding, and a
+    module doing that while naming a ``Polarity`` member is the divergence the whole F4 block
+    exists to make unreachable.
+
+    Detected by AST rather than substring, so a rounding function named in a docstring or a
+    comment does not enlist a module that never calls one.
+    """
+    rounds: set[str] = set()
+    for path in SRC.glob("*.py"):
+        if path.name in POLARITY_DEFINING:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        called = {
+            node.func.id if isinstance(node.func, ast.Name) else node.func.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name | ast.Attribute)
+        }
+        if called & set(ROUNDING_FUNCTIONS):
+            rounds.add(path.name)
+
+    assert rounds == set(ROUNDING_CONSUMERS), (
+        f"ROUNDING_CONSUMERS is stale: modules that round are {sorted(rounds)}, "
+        f"listed are {sorted(ROUNDING_CONSUMERS)}"
     )
 
 
@@ -206,12 +273,23 @@ def test_separation_floor_follows_the_registry_polarity() -> None:
 
 @pytest.mark.polarity
 def test_rounded_requires_exactly_one_classification() -> None:
-    """PRD §20.13: a threshold built from several parameters must have one direction."""
-    assert _rounded(CFG, D("0.018"), "max_spread_abs", "max_spread_pct") == D("0.01")
+    """PRD §20.13: a threshold built from several parameters must have one direction.
+
+    ``round_for`` is a method on ``Config`` rather than a helper in ``gates`` as of Phase 3,
+    because the scanner needed the same resolution and the alternatives were a private
+    cross-module import or a second place that names a direction.
+    """
+    assert CFG.round_for(D("0.018"), "max_spread_abs", "max_spread_pct") == D("0.01")
     with pytest.raises(ValueError, match="conflicting polarities"):
-        _rounded(CFG, D("0.018"), "max_spread_abs", "min_sep_r")
+        CFG.round_for(D("0.018"), "max_spread_abs", "min_sep_r")
     with pytest.raises(ValueError, match="no declared polarity"):
-        _rounded(CFG, D("0.018"), "start_of_day_equity")
+        CFG.round_for(D("0.018"), "start_of_day_equity")
+    # "No governing parameter" is a *third* failure and says so. It reported "conflicting
+    # polarities []" until this was written — a message naming a conflict between nothing and
+    # nothing, which is worse than no message because it sends the reader looking for two
+    # parameters that do not exist.
+    with pytest.raises(ValueError, match="no governing parameter"):
+        CFG.round_for(D("0.018"))
 
 
 # ---------------------------------------------------------------------------
@@ -884,6 +962,75 @@ def test_q2_withholds_its_disposition_on_simulated_input(declared: Path) -> None
     assert "PARTIAL. The staleness half is within threshold" in text
 
 
+@pytest.mark.spec
+def test_q1_withholds_its_disposition_on_simulated_input(declared: Path) -> None:
+    """Q1 is the one Q-module D30's withholding guarantee had no test for.
+
+    A vendor trial clearing every §7 threshold would otherwise print "§7 verdict: at least one
+    provider passes Q1" over a fabricated matrix — licensing a Phase 3 go-ahead (D29) from a
+    random number generator. Q2 and Q3 each have this test beside their own report(); Q4 has the
+    paired non-vacuous version above. Q1 had neither, and removing its ``prov.answers_prereg``
+    branch entirely left all other tests passing.
+    """
+    simulated = provenance.require(declared)
+    passing = [
+        q1_vendors.VendorTrial(
+            provider="polygon_screener",
+            monthly_cost_usd=400,
+            concurrent_symbols=500,
+            refresh_seconds=45,
+            sample_coverage_pct=97,
+            hard_filters_expressible=True,
+        )
+    ]
+
+    text = q1_vendors.report(passing, simulated)
+    assert "pipeline outcome (NOT a §7 verdict)" in text
+    assert "§7 verdict:" not in text
+
+    # The contrast, so the assertion above is not the absence of an unreachable string.
+    measured = provenance.Provenance(
+        origin=provenance.DataOrigin.PAPER, generator="a vendor trial that does not exist yet"
+    )
+    measured_text = q1_vendors.report(passing, measured)
+    assert "§7 verdict: at least one provider passes Q1" in measured_text
+    assert "NOT a §7 verdict" not in measured_text
+
+
+@pytest.mark.spec
+def test_q1_does_not_claim_a_verdict_from_zero_vendor_trials() -> None:
+    """An empty or wholly-unparsable ``vendors.csv`` must not print a §7 verdict.
+
+    Before this guard, ``q1_vendors.report([], measured)`` fell straight into the "no provider
+    passes Q1" branch and printed "Implication per §6: PRD §4 is rewritten before Phase 3
+    (scanner) starts" — the spike's largest possible consequence, from zero trials. Q2 prints
+    "UNANSWERED"; Q3 prints "no measurements — unanswered, not passed"; Q4 returns CALIBRATED
+    with "no gated bars — nothing measured, so nothing is claimed". Q1 had no equivalent
+    (review round 10, K3).
+    """
+    measured = provenance.Provenance(
+        origin=provenance.DataOrigin.PAPER, generator="a vendor trial that does not exist yet"
+    )
+    text = q1_vendors.report([], measured)
+    assert "§7 verdict" not in text
+    assert "PRD §4 is rewritten" not in text
+    assert "UNANSWERED — no vendor trials recorded, have 0" in text
+
+    # The contrast, so the assertions above are not the absence of an unreachable string: a
+    # non-empty measured list still gets a real verdict, on either side of the pass/fail line.
+    passing = [
+        q1_vendors.VendorTrial(
+            provider="polygon_screener",
+            monthly_cost_usd=400,
+            concurrent_symbols=500,
+            refresh_seconds=45,
+            sample_coverage_pct=97,
+            hard_filters_expressible=True,
+        )
+    ]
+    assert "§7 verdict: at least one provider passes Q1" in q1_vendors.report(passing, measured)
+
+
 # `declare` is the only writer besides the generator, so it is the only other place a false
 # declaration can originate.
 @pytest.mark.spec
@@ -960,3 +1107,283 @@ def test_the_declare_cli_unblocks_input_the_generator_does_not_cover(tmp_path: P
 
     assert provenance._main([str(latency)]) == 0
     assert q3_latency.main([str(latency)]) == 0
+
+
+# ---------------------------------------------------------------------------
+# K5 / D24 / D32 — the §4.2 scanner's guarantees (Phase 3)
+#
+# Round 10's K5: a gate document sized Phase 3 at all fourteen §4.2 rows, and warned what
+# that produces — "the soft filters that are off-by-default or flag-only, INST_OWN_HIGH
+# among them, which D24 keeps deliberately inert, would be built as rejection paths."
+# `tradipy.rejects` answers it structurally by splitting the namespace, so a soft code is a
+# different type from a rejection. A type annotation is not a runtime guarantee, so the
+# violation is performed here anyway: every soft input pushed to its worst value, and the
+# assertion that nothing was rejected.
+# ---------------------------------------------------------------------------
+WORST_SOFT_INPUTS: dict[str, object] = {
+    "premarket_volume": D("1"),
+    "market_cap": D("900000000000"),
+    "atr": D("0.01"),
+    "avg_atr": D("9.99"),
+    "catalyst": Catalyst.NONE,
+    "sessions_since_halt": 0,
+    "institutional_ownership_pct": D("1.00"),
+    "short_interest_pct": D("1.00"),
+}
+
+#: One override per §4.2 hard row, chosen to trip that row and only that row.
+TRIPS_HARD_FILTER: dict[Reject, dict[str, object]] = {
+    Reject.GAP_TOO_SMALL: {"premarket_gap_pct": D("0"), "daily_gap_pct": D("0")},
+    Reject.RVOL_TOO_LOW: {"rvol": D("1")},
+    Reject.FLOAT_TOO_HIGH: {"float_shares": D("400000000")},
+    Reject.PRICE_OUT_OF_RANGE: {"price": D("64.00")},
+    Reject.ADV_TOO_LOW: {"adv_shares": D("1000")},
+    Reject.NEAR_LULD: {"luld_upper": D("4.01")},
+    Reject.SPREAD_TOO_WIDE: {"spread": D("1.00")},
+}
+
+#: The keys of the table above, in a stable order, hoisted out of the ``parametrize`` call.
+#: Written inline, basedpyright flows ``parametrize``'s expected ``ParameterSet`` type back
+#: into ``sorted()`` and infers the lambda's parameter as ``ParameterSet``, so ``c.value``
+#: fails to typecheck against a signature that is correct at runtime. Binding it here breaks
+#: that inference chain.
+HARD_FILTER_CODES: list[Reject] = sorted(TRIPS_HARD_FILTER, key=lambda c: c.value)
+
+
+@pytest.mark.spec
+def test_the_two_code_namespaces_cannot_be_confused() -> None:
+    """No value string is shared between ``Reject`` and ``SoftFlag``, in either direction.
+
+    The types differ, so mixing them is a static error. This is the runtime half: a code
+    added to both enums would type-check everywhere and mean two different things.
+    """
+    assert {m.value for m in Reject} & {m.value for m in SoftFlag} == set()
+    assert all(isinstance(f.code, Reject) for f in HARD_FILTERS)
+    assert all(isinstance(f.code, SoftFlag) for f in SOFT_FILTERS)
+    assert not any(isinstance(f.code, Reject) for f in SOFT_FILTERS)
+
+
+@pytest.mark.spec
+def test_no_soft_flag_can_reach_the_rejection_path() -> None:
+    """K5, performed: every soft row raised at once, and the candidate is still accepted."""
+    from tests.test_scanner import candidate
+
+    result = evaluate_candidate(candidate(**WORST_SOFT_INPUTS), CFG)
+    assert result.reject is None and result.rejects == () and result.passed
+    assert result.score is not None, "a flagged candidate is still ranked"
+
+    raised = set(result.flags)
+    assert raised == {f.code for f in SOFT_FILTERS} - {SoftFlag.INST_OWN_HIGH}, (
+        f"expected every soft row but the D24-disabled one; got {sorted(f.value for f in raised)}"
+    )
+    # And the codes that did surface are not assignable to the rejection path at all.
+    assert not any(isinstance(code, Reject) for code in result.flags)
+
+
+@pytest.mark.spec
+def test_institutional_ownership_cannot_fire_at_the_shipped_default() -> None:
+    """D24 / A22: the row is registered, unvalidated, and inert.
+
+    Attempted at the threshold, above it, and at 100% — the three values that would fire it
+    if the enable flag were not consulted first. §4.2's own note is why: the premise is
+    doubtful, no Appendix A source states the threshold, and Phase 2a has not confirmed the
+    data even exists.
+    """
+    from tests.test_scanner import candidate
+
+    threshold = CFG["min_institutional_ownership_pct"]
+    assert CFG["institutional_ownership_enabled"] == D("0"), "D24: off by default"
+    for ownership in (threshold, threshold + D("0.05"), D("1.00")):
+        result = evaluate_candidate(candidate(institutional_ownership_pct=ownership), CFG)
+        assert SoftFlag.INST_OWN_HIGH not in result.flags, f"fired at {ownership}"
+        assert result.passed
+
+
+@pytest.mark.spec
+def test_institutional_ownership_fires_when_enabled__so_the_above_is_not_vacuous() -> None:
+    """The other half: enabling the row makes it work, so "inert" is a decision not a bug.
+
+    Without this, deleting the filter body entirely would leave the D24 test green — which
+    is the fifth defect class reproduced inside the test written to prevent it.
+    """
+    from tests.test_scanner import candidate
+
+    cfg = CFG.with_overrides(institutional_ownership_enabled=1)
+    threshold = cfg["min_institutional_ownership_pct"]
+
+    at = evaluate_candidate(candidate(institutional_ownership_pct=threshold), cfg)
+    below = evaluate_candidate(candidate(institutional_ownership_pct=threshold - D("0.01")), cfg)
+    assert SoftFlag.INST_OWN_HIGH in at.flags and at.passed, "enabled, at the threshold"
+    assert SoftFlag.INST_OWN_HIGH not in below.flags
+    assert at.passed and below.passed, "enabling a *soft* row still rejects nothing"
+
+
+@pytest.mark.polarity
+def test_luld_distance_follows_the_registry_polarity() -> None:
+    """Flip ``min_luld_distance_pct`` and §4.2's Circuit Breakers gate admits a closer price.
+
+    Chosen at a price where the two directions differ: ``0.10 x $4.25 = $0.425``, which
+    ceils to $0.43 and floors to $0.42. Under the declared MINIMUM a band $0.42 away is too
+    close; under the flip it is admitted. If this test ever stops distinguishing the two, the
+    scanner has gone back to naming a direction.
+    """
+    from tests.test_scanner import candidate
+
+    price = D("4.25")
+    raw = CFG["min_luld_distance_pct"] * price
+    assert ceil_to_tick(raw) == D("0.43") and floor_to_tick(raw) == D("0.42")
+
+    near = candidate(price=price, luld_upper=price + D("0.42"), luld_lower=D("0.01"))
+    flipped = _with_flipped_polarity(CFG, "min_luld_distance_pct")
+
+    assert evaluate_candidate(near, CFG).reject is Reject.NEAR_LULD
+    assert evaluate_candidate(near, flipped).reject is None, (
+        "the flipped declaration must admit a price the rounded-up minimum rejects"
+    )
+
+
+@pytest.mark.spec
+@pytest.mark.parametrize("code", HARD_FILTER_CODES)
+def test_every_hard_filter_can_actually_reject(code: Reject) -> None:
+    """Each of §4.2's seven hard rows is wired, not merely declared.
+
+    A filter table whose bodies all return ``True`` passes every happy-path test in the
+    suite. This is the reachability half — one candidate per row, asserting that row and no
+    other is the one that binds.
+    """
+    from tests.test_scanner import candidate
+
+    result = evaluate_candidate(candidate(**TRIPS_HARD_FILTER[code]), CFG)
+    assert result.rejects == (code,), (
+        f"expected exactly {code.value}, got {[r.value for r in result.rejects]}"
+    )
+
+
+@pytest.mark.spec
+def test_the_hard_filter_reachability_table_covers_every_row() -> None:
+    """Guard on the guard: a row added to §4.2 must not be silently untested above."""
+    assert set(TRIPS_HARD_FILTER) == {f.code for f in HARD_FILTERS}
+
+
+@pytest.mark.boundary
+def test_the_watchlist_cannot_exceed_the_registered_size() -> None:
+    """§4.3's "top 5" is a ceiling, and a config change moves it rather than being ignored."""
+    from tests.test_scanner import candidate
+
+    universe = [candidate(symbol=f"S{i:02d}", rvol=D(str(6 + i))) for i in range(30)]
+    for size in (1, 5, 20):
+        cfg = CFG.with_overrides(watchlist_size=size)
+        report = scan(universe, cfg)
+        assert len(report.survivors) == len(universe), "the fixture must over-supply"
+        assert len(report.watchlist) == size
+
+
+@pytest.mark.spec
+def test_the_scanner_reads_nothing_and_imports_nothing_that_could() -> None:
+    """D30, applied to the module most likely to want a feed.
+
+    The broker-import denylist above is a denylist, so a green result is not proof that
+    nothing can reach a market. For ``scanner.py`` specifically an **allowlist** is possible,
+    because §4.2 is arithmetic over inputs and needs nothing else: the module may import the
+    four stdlib names below and its own package, and nothing more. A scanner that sources its
+    own universe is Phase 2's job and would fail here first.
+    """
+    tree = ast.parse((SRC / "scanner.py").read_text(encoding="utf-8"))
+    permitted = {"__future__", "collections.abc", "dataclasses", "decimal"}
+
+    roots: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            roots.add(node.module)
+        elif isinstance(node, ast.Import):
+            roots.update(a.name for a in node.names)
+    outside = {r for r in roots if not r.startswith("tradipy")} - permitted
+    assert not outside, f"scanner.py imports outside its allowlist: {sorted(outside)}"
+
+    reads = [
+        n.func.id
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "open"
+    ]
+    assert not reads, "scanner.py opens a file; §4.2 is arithmetic over inputs (D30)"
+
+
+@pytest.mark.spec
+def test_the_scan_spread_cap_has_exactly_one_implementation() -> None:
+    """``gates.scan_spread_cap`` is *called* by ``spread_caps``, not paralleled by it.
+
+    ``scan_spread_cap``'s docstring says "deriving the cap twice — once here, once there — is
+    the v1.2 defect class, so ``spread_caps`` delegates." Equal outputs do not establish that:
+    two independent implementations of the same formula agree until one is edited, which is
+    the entire v1.2 story. So the call is asserted structurally, and the agreement is asserted
+    as well — across the §4.2 price range, where the two terms of the ``min()`` swap over at
+    $4.00 and the one-tick clamp binds below $2.00.
+    """
+    tree = ast.parse((SRC / "gates.py").read_text(encoding="utf-8"))
+    body = next(
+        n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "spread_caps"
+    )
+    calls = {
+        n.func.id
+        for n in ast.walk(body)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+    }
+    assert "scan_spread_cap" in calls, (
+        "spread_caps no longer delegates; the scan cap now has two definitions (v1.2 class)"
+    )
+
+    r = D("0.15")
+    for price in (D("1.00"), D("1.99"), D("3.99"), D("4.00"), D("4.01"), D("20.00")):
+        assert spread_caps(price, r, CFG).scan == scan_spread_cap(price, CFG), price
+
+
+@pytest.mark.spec
+def test_ranking_refuses_an_unscored_result_rather_than_ordering_it() -> None:
+    """``_rank_key`` raises rather than sorting a candidate §4.1 never scored.
+
+    Unreachable through :func:`~tradipy.scanner.scan`, which only ranks survivors — so it is
+    tested by calling it directly. A guard reachable only by a future caller is still a
+    guarantee, and an untested one is how three of the four v0.0.1 holes stayed open.
+    """
+    from tests.test_scanner import candidate
+
+    rejected = evaluate_candidate(candidate(rvol=D("1")), CFG)
+    assert rejected.score is None
+    with pytest.raises(ValueError, match="rejected and has no score"):
+        _rank_key(rejected)
+
+
+@pytest.mark.spec
+def test_two_different_candidates_can_score_identically() -> None:
+    """The saturation claim ``_rank_key``'s docstring argues the tiebreak from.
+
+    Its reasoning is that ties arise between *different* inputs, because §20.10's normalizers
+    saturate — not merely between duplicated fixtures, which tie trivially and prove nothing
+    about whether the tiebreak is needed. Two candidates whose RVOL differs by 60× score
+    identically here, because both are above ``score_cap_rvol``.
+
+    **One half of that argument does not survive being tested, and the docstring is corrected
+    to match.** ``float_inverse`` saturating at 0 cannot produce a tie *among survivors*:
+    ``score_cap_float`` and ``max_float_shares`` are the same number, so the only float that
+    saturates the normalizer and still passes §4.2's Float filter is the cap exactly — one
+    value, not a range. That is the coincidence ``score.py`` flags and
+    ``test_score_float_cap_currently_equals_the_scan_filter`` pins, showing up as a
+    consequence: the two parameters being equal is also what makes half the saturation
+    argument inapplicable. If either moves, this becomes reachable.
+    """
+    from tests.test_scanner import candidate
+
+    cap_rvol = CFG["score_cap_rvol"]
+    a = candidate(symbol="AAA", rvol=cap_rvol + D("1"))
+    b = candidate(symbol="BBB", rvol=cap_rvol * D("4"))
+
+    sa, sb = evaluate_candidate(a, CFG).score, evaluate_candidate(b, CFG).score
+    assert sa is not None and sb is not None
+    assert a.rvol != b.rvol, "the fixture must actually differ for this to mean anything"
+    assert sa.total == sb.total, "the saturation argument for the tiebreak does not hold"
+    assert [r.candidate.symbol for r in scan([b, a], CFG).watchlist] == ["AAA", "BBB"]
+
+    # And the float half, shown unreachable rather than asserted away.
+    assert CFG["score_cap_float"] == CFG["max_float_shares"]
+    over_cap = candidate(symbol="CCC", float_shares=CFG["score_cap_float"] + D("1"))
+    assert evaluate_candidate(over_cap, CFG).reject is Reject.FLOAT_TOO_HIGH

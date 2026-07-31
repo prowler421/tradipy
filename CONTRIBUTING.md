@@ -18,10 +18,11 @@ contributors.
    `params.py` and `__init__.py` inside `src/tradipy/` only, and exempting undistinctive values.
    `tests/` is **not** covered, deliberately: a fixture that asserts a derivation against a value
    the registry supplied proves nothing. The rule is still wider than the lint; hold to the rule.
-3. **Polarity decides rounding, and the registry decides polarity.** In `gates.py` route
-   rounding through `_rounded(cfg, value, *governed_by)`, never by naming a `Polarity`
-   member — that gives direction a second definition, and a test asserts `gates.py` does not
-   import `Polarity` at all.
+3. **Polarity decides rounding, and the registry decides polarity.** Route rounding through
+   `Config.round_for(value, *governed_by)`, never by naming a `Polarity` member — that gives
+   direction a second definition. A test asserts that no module which rounds imports
+   `Polarity` at all, and derives the list of such modules from the source rather than
+   holding it by hand.
 4. **`Decimal`, never `float`, for anything compared to a tick or summed into P&L.**
 5. **Every guarantee needs the test that breaks it.** If you write "X cannot happen"
    anywhere — docstring, README, architecture doc — write the test that attempts X and
@@ -78,7 +79,7 @@ git diff -- tests/registry_baseline.json    # read this before committing
 
 - [ ] No new literal for a registered threshold; any new bound the PRD does not state is
       marked `(bounds: code)` in its `Param.source`.
-- [ ] Rounding routed through `_rounded`, with the polarity read from the registry.
+- [ ] Rounding routed through `Config.round_for`, with the polarity read from the registry.
 - [ ] `Decimal` used for all price/P&L comparisons.
 - [ ] Tests added/updated and assert the derivation, with the right marker.
 - [ ] Every new guarantee has a test that performs the violation it forbids.

@@ -9,6 +9,158 @@ All notable changes to the tradipy **package** are documented here. This file fo
 
 ## [Unreleased]
 
+### Added — Phase 3, the §4.2 scanner (PLAN D32)
+
+- **`src/tradipy/scanner.py`** — PRD §4: the seven §4.2 hard filters, the seven §4.2 soft flags,
+  and §4.3's ranked watchlist. `evaluate_candidate(candidate, cfg)` returns every filter's verdict
+  with the arithmetic that produced it; `scan(candidates, cfg)` returns the full audit trail plus
+  the survivors ranked by §20.10 and cut to `watchlist_size`. Written fresh against the PRD, not
+  grown from `scripts/spike2a/` (PHASE-2A-SPIKE §8). No threshold literal and no rounding direction
+  appears in it — the same two rules `gates.py` follows.
+  - **It sources nothing.** §4.1's universe is Phase 2 ingestion and its catalyst check is §12.2's
+    manual step; both are inputs. `test_the_scanner_reads_nothing_and_imports_nothing_that_could`
+    holds it to an import **allowlist** — the repository-wide broker/network lint is a denylist, and
+    for a module that is arithmetic over inputs a positive list is available and stronger.
+  - **Nothing in it is calibrated.** D29 gates calibration on Phase 2a Q1 answered on measured
+    data; D32 opened construction and explicitly not that. See `docs/PHASE-3-READINESS.md`.
+- **`SoftFlag`** in `rejects.py` — §4.2's seven Soft codes, as a **separate enum** from `Reject`.
+  §4.2 lists all fourteen rows under one "Rejection Code" column; review round 10's **K5** is what
+  that invites, and `INST_OWN_HIGH` — which D24 keeps deliberately inert — is the row it named.
+  Two unrelated types make mixing them a type error. `Reject` gains the six §4.2 hard codes
+  (`GAP_TOO_SMALL`, `RVOL_TOO_LOW`, `FLOAT_TOO_HIGH`, `PRICE_OUT_OF_RANGE`, `ADV_TOO_LOW`,
+  `NEAR_LULD`); `SPREAD_TOO_WIDE` was already there and now covers §4.2's bid-depth condition too.
+- **Eight registry rows** — seven §4.2 thresholds §2 did not already carry, plus
+  `watchlist_size`, which is §4.1/§4.3 and not a filter:
+  `min_luld_distance_pct`, `max_market_cap`, `min_atr_multiple`, `recent_halt_lookback_days`,
+  `min_institutional_ownership_pct`, `institutional_ownership_enabled` (0 — D24),
+  `min_short_interest_pct`, `watchlist_size`. Registry size 47 → **55**. `min_price`, `max_price`
+  and both gap floors gain the polarity declarations they had been missing.
+- **`gates.scan_spread_cap(price, cfg)`** — the scan-time half of §3.1.3, split out because §4.2
+  makes it a hard scanner filter and at scan time no setup has formed, so no R exists.
+  `spread_caps` delegates to it; the formula has one implementation.
+- **`python -m tradipy scan`** (`--verbose`) over `poc.simulated_universe(cfg)` — fourteen
+  constructed candidates, seven that survive and seven that each fail exactly one hard row, so every
+  filter is visibly reachable and the watchlist truncation is visible. Constructed, not read, so no
+  `PROVENANCE.txt` is involved: D30's gate constrains reads.
+- **`tests/test_scanner.py`** (25 functions). `HARD_FILTERS` and `SOFT_FILTERS` are compared to
+  §4.2's table **parsed out of `docs/PRD.md`** — name, code, hard/soft classification and order, in
+  both directions. Review finding G3 was that nothing compared the enum to the spec's namespace
+  either way. Plus a `boundary` mark per filter and a `polarity` mark proving the price range's two
+  ends round in opposite directions at a config where they differ (at the shipped $1.00/$20.00 both
+  are whole ticks, so a test written at the defaults would pass under any direction).
+- **Guarantee tests** in `tests/test_enforcement.py`: every soft input pushed to its worst value at
+  once, asserting nothing was rejected (K5, performed); `INST_OWN_HIGH` attempted at the threshold,
+  above it and at 100% under the shipped config, then enabled so the first assertion is not vacuous
+  (D24); the LULD distance flipped to prove it follows the registry polarity; and one candidate per
+  hard row proving all seven are reachable, with a guard asserting the table of seven is complete.
+
+### Changed
+
+- **`gates._rounded` → `Config.round_for`.** No behaviour change. The scanner needed the same
+  polarity resolution, and the two ways to share it were a private cross-module import or a second
+  module naming a `Polarity` member — the second being the v1.3.1 defect, which is direction having
+  two definitions. Direction is registry data, so it moved onto the registry object. It now also
+  raises on an empty `governed_by`: "no governing parameter" is not "any direction".
+  `test_gates_do_not_import_polarity` becomes
+  `test_a_rounding_module_cannot_name_a_polarity_member`, parametrized over every module that
+  rounds, with `test_every_module_that_rounds_is_in_the_polarity_check` deriving that list from the
+  source so it cannot go stale.
+- **`tests/registry_baseline.json` regenerated** — 68 entries before and after. The only change is
+  the attribution string on the fourteen `5%` entries, which now name `min_short_interest_pct`
+  alongside `max_stop_pct` and `max_vwap_extension_open_pct`. No new or removed locations.
+- **`scripts/spike2a/synthetic_data_generator.py`** — the three price-tier spread multipliers move
+  to named constants beside the price bands they select. `Decimal("1.5")` collided with
+  `min_atr_multiple` the moment §4.2's Volatility row was registered; a spread-ladder multiplier and
+  an ATR multiple are unrelated quantities sharing a number, which the lint cannot distinguish and
+  is right not to try. Same rationale as `_CHEAP_PRICE_USD`, already documented there.
+- Trivial (convention 8, fixed not dispositioned): three historical statements in `docs/PLAN.md` and
+  `docs/CHANGELOG.md` restated the *live* registry count while describing a finding from a specific
+  moment ("17 of 47 registered thresholds"). Rephrased to pin the number to its moment, so the
+  count-drift check is not answering for a claim about the past.
+
+### Fixed — review round 11 (`make check` was red)
+
+**`make check` failed against the tree that first proposed this change**, and
+`docs/PHASE-3-READINESS.md` — part of the same changeset — asserted it was green. That row is
+corrected there, with why the shape of the error matters. The gate failures, all introduced by
+Phase 3:
+
+- **`ruff check`, 11 errors.** Ten `B008` in `poc._sim`, whose keyword-only defaults called
+  `Decimal(...)` in the signature; the baseline is now module constants (`_SIM_*`), which reads
+  better anyway. One `SIM300` in `test_scanner.py`, replaced by asserting what the conversion
+  *does* — `daily_gap_pct * PERCENT_PER_UNIT == D("25.00")` — rather than the constant it is,
+  which is the assertion convention 4 asks for regardless of the lint.
+- **`ruff format --check`, 2 files.** `test_scanner.py`'s LULD boundary assertions and one
+  set-comprehension condition in `test_enforcement.py` had been hand-wrapped. `CLAUDE.md` says
+  formatting is Ruff's job; these were written to a guess at what Ruff wanted because Ruff could
+  not be run. Both are now bound to locals and short enough that the question does not arise.
+- **`basedpyright`, 3 errors, one cause.** `sorted(TRIPS_HARD_FILTER, key=lambda c: c.value)`
+  written inline as `parametrize`'s `argvalues` let the expected `ParameterSet` type flow back
+  into `sorted()`, inferring `c: ParameterSet`. Hoisted to `HARD_FILTER_CODES`, which breaks the
+  inference chain. Correct at runtime throughout; a real failure of the project's toolchain.
+
+Also from that round, non-blocking:
+
+- **`simulated_universe`'s baseline short interest sat above `min_short_interest_pct`**, so
+  `HIGH_SHORT_INTEREST` fired on all fourteen candidates and drowned out every other flag in the
+  demo. The baseline now raises nothing and each survivor raises one distinct flag; `SYNGAP`
+  keeps one *beside* its rejection, deliberately, so the demo shows a flag that changes nothing.
+- **Soft rows are evaluated on rejected candidates too**, which is a third reading of §4.1's
+  sequential pipeline diagram and was the one such reading not written down. Now on
+  `evaluate_candidate` and in `docs/CHANGELOG.md`'s spec-question table.
+
+### Fixed — from two automated checks over this change
+
+Two reviews were run before the round above: one against `CLAUDE.md`'s conventions and review
+checklist, one fact-checking `scanner.py` filter-by-filter against PRD §4. **Neither is a
+committed review artifact** — they were run in-session and are not in `docs/reviews/`, which
+holds independent rounds kept unedited as the record. Round 11 correctly flagged that this
+section had credited them in language that implied otherwise, and that neither committed review
+document mentions `scanner.py` at all. Read the findings below as this change checking its own
+work under convention 8, not as an independent round; the fixes are each covered by a named
+test, which is the part that is verifiable. Spec questions both raised are in
+`docs/CHANGELOG.md`, not here.
+
+- **The rounding-consumer guard was narrower than its own name.**
+  `test_every_module_that_rounds_is_in_the_polarity_check` derived its list from `"round_for" in
+  source`, while being named — and described here — as covering every module that rounds.
+  `quotes.py` rounds §20.14's estimated spread with a bare `ceil_to_tick` and was outside it, as
+  would be any future module doing the same while naming a `Polarity` member. That is the v1.3.1
+  shape (a rule stated more broadly than the thing it ranges over) reproduced inside the test
+  written to prevent it. Now derived by AST from **every** rounding call, and `quotes.py` is in
+  `ROUNDING_CONSUMERS`.
+- **"The formula has one implementation" was structural, not tested.** Nothing failed if
+  `spread_caps` re-inlined the scan-cap arithmetic instead of delegating — equal outputs prove
+  nothing, since two copies agree until one is edited, which is the entire v1.2 story.
+  `test_the_scan_spread_cap_has_exactly_one_implementation` asserts the call by AST and the
+  agreement across the §4.2 price range.
+- **`Config.round_for()` with no governing parameter reported "conflicting polarities []".** There
+  is no conflict; there is no classification. It now says so, and the test matches the new wording
+  rather than pinning the misleading one.
+- **`_rank_key`'s tiebreak rationale was half wrong, and the test did not check it.** Its docstring
+  argued ties arise between *different* inputs via `float_inverse` and `norm_rvol` saturation; the
+  test used three identical candidates, which tie trivially. Writing the real test showed the
+  `float_inverse` half is unreachable *among survivors* — `score_cap_float` and `max_float_shares`
+  are the same number, so the only float that saturates the normalizer and passes §4.2's Float
+  filter is the cap exactly. Docstring corrected, and both halves are now pinned.
+- **`_rank_key`'s "a rejected candidate is never ranked" guard had no test**, being unreachable
+  through `scan()`. Now called directly.
+- Trivial, fixed in place: `CLAUDE.md` convention 2 and both review checklists still mandated
+  `_rounded`, which this change deleted, and `CLAUDE.md`'s repository-layout list omitted
+  `scanner`; `CONTRIBUTING.md` the same. `params.py`'s docstrings named `gates` as the only
+  polarity consumer. `PHASE-3-READINESS.md` said "the scope is 7 of §4.2's 14 rows" directly above
+  a list of all 14 (the K5 distinction is *rejection paths*, not rows touched). The registry block
+  comment and this file called all eight new rows §4.2 when `watchlist_size` is §4.1/§4.3.
+  `test_documentation.py` — the file whose purpose is catching counts that drift — had four wrong
+  ones in its own prose; the numbers are now derived there too, not written. `PLAN.md`'s
+  registered-but-unread count moved 11-of-47 → **9 of 55** because the scanner gave
+  `min_premarket_volume` and `rvol_lookback_days` readers, and was restated rather than left. Four
+  documents said "two §4.2 readings" above a table that has grown past that; they now point at the
+  table instead of counting it. `scanner.py` now names the two §4 things it deliberately does not
+  do — §4.4's schedule (needs a clock, which D30 forbids it) and §4.1's "common stock" predicate
+  (no security type on `ScanCandidate`) — because an omission nobody wrote down is
+  indistinguishable from an oversight.
+
 ### Added
 
 - **Simulated Q1–Q4 inputs.** `synthetic_data_generator.py` now emits `floats.csv`, `latency.csv`,
@@ -21,6 +173,21 @@ All notable changes to the tradipy **package** are documented here. This file fo
 - **Q4 quote selection (review H4/H6).** `signal_bars.csv` requires `signal_at`; `feeds.quote_at_or_before`
   picks the NBBO in force at that instant and derives `age_seconds` for §20.14. Stops every setup
   on a symbol-session from sharing the session's last tick. `tests/test_spike2a_q4_quote_selection.py`.
+- **Q1's disposition-withholding guarantee had no test (review round 9, J2).** Q2, Q3 and Q4 each
+  assert that `report()` prints `pipeline outcome (NOT a §7 verdict)` rather than a real verdict on
+  `SIMULATED` input; `q1_vendors.report()` had the same `if prov.answers_prereg` branch but no test
+  for it, and removing the branch entirely left the rest of the suite green.
+  `test_q1_withholds_its_disposition_on_simulated_input` closes it, mirroring Q2's paired
+  withheld/measured assertions.
+- **`q1_vendors.report()` asserted a §7 Q1 negative from zero vendor trials (review round 10,
+  K3).** On measured input with an empty or wholly-unparsable `vendors.csv`, it fell straight into
+  the "no provider passes Q1" branch and printed `Implication per §6: PRD §4 is rewritten before
+  Phase 3 (scanner) starts` — the spike's largest possible consequence, from a file with nothing in
+  it. Q2, Q3 and Q4 each guard the empty-sample case in one line; Q1 had none. Now guarded the same
+  way: zero trials prints `UNANSWERED — no vendor trials recorded, have 0` on either origin, never a
+  `§7 verdict` or a PRD §4 rewrite. `test_q1_does_not_claim_a_verdict_from_zero_vendor_trials`
+  reproduces the defect by mutation (removing the guard reintroduces both strings) and closes it.
+  No PRD rule changes.
 
 ### Changed — all data is simulated (PLAN D30, `CLAUDE.md` convention 9)
 
@@ -72,9 +239,11 @@ All notable changes to the tradipy **package** are documented here. This file fo
 - **`random.seed(SEED)` moved from `__main__` into `synthetic_data_generator.main()`.** `main()`
   unconditionally wrote a `PROVENANCE.txt` asserting its output came from `random.seed(SEED)` —
   true via the command line, false for any programmatic call, and the file said so either way. A
-  provenance marker that is conditionally true is the defect it exists to prevent. Output is
-  unchanged: 156 symbol-sessions, 147 signal bars, 8,820 NBBO samples, and Q4 still reports 1.36%
-  aggregate with 14.29% in the cheapest decile.
+  provenance marker that is conditionally true is the defect it exists to prevent. Output was
+  unchanged **by this fix**, measured at `b70fa7a`: 156 symbol-sessions, 147 signal bars, 8,820 NBBO
+  samples, Q4 reporting 1.36% aggregate with 14.29% in the cheapest decile. Those figures are
+  specific to that commit and were superseded by the generator rewrite in `d03b35b` — see
+  `docs/reviews/claude-PHASE-3-REVIEW.md` finding K1 for the current ones.
 
 ### Added
 

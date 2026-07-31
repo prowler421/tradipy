@@ -17,7 +17,7 @@ ladder forbids one.
 | **Q1** — real-time §4.2 candidate list | Vendor trial + §7 pass thresholds | — | **Unanswered** — D30; no PAPER data read |
 | **Q2** — float / short-interest quality | Two-provider disagreement + staleness | — | **Unanswered** — needs measured `floats.csv` |
 | **Q3** — latency | Paper connection timestamps | — | **Unanswered** — needs measured `latency.csv` |
-| **Q4** — spread distribution / `max_spread_r` | `q4_spreads` on NBBO + signal bars | Pipeline exercised; **1.36%** aggregate rejection on synthetic sample | **Pipeline validated only** — not a §7 verdict |
+| **Q4** — spread distribution / `max_spread_r` | `q4_spreads` on NBBO + signal bars | Pipeline exercised; **0.64%** aggregate rejection on the synthetic sample at `e85a193` (see caveat below) | **Pipeline validated only** — not a §7 verdict |
 
 **Phase 2a gate for Phase 3 (D29):** **Not passed.** Q1 must be answered on measured data before
 PRD §4's scanner input contract is trusted. Instrumentation, pre-registration, and D30 guards are
@@ -32,23 +32,36 @@ complete; the remaining step is advancing the data ladder to `PAPER` and executi
 
 - **H5:** `scripts/spike2a/sample.py` joins window selection and universe filtering.
 - **H3 / sixth defect class:** `tests/test_spike2a_instrumentation.py` guards R derivation.
-- **D30:** `provenance.py` gates all six spike entry points; simulated runs print *pipeline
-  outcome*, not §7 verdict.
+- **D30:** `provenance.py` gates all seven spike entry points — `windows`, `universe`, `sample`,
+  `q1_vendors`, `q2_float`, `q3_latency`, `q4_spreads`; simulated runs print *pipeline outcome*, not
+  §7 verdict.
 - **H4 / H6 (2026-07-31):** `signal_bars.csv` carries `signal_at`; `quote_at_or_before` selects
   the NBBO in force at that instant and derives `age_seconds` for §20.14 validity.
 
 ### Pipeline exercise (simulated)
 
-Regenerated with `uv run python -m scripts.spike2a.synthetic_data_generator` at commit after H4/H6:
+Regenerated with `uv run python -m scripts.spike2a.synthetic_data_generator`. The generator is
+seeded (`SEED = 42`, seeded inside `main()`), so these counts are reproducible and do **not** vary
+between runs at the same commit — `PROVENANCE.txt` records each one beside its file digest.
 
-| Artifact | Count |
-|----------|------:|
-| Symbol-sessions (`preopen.csv`) | 156 |
-| Signal bars | 147 |
-| NBBO samples | varies by run (deduped per symbol/instant) |
+| Artifact | At `b70fa7a` | At `e85a193` |
+|----------|-------------:|-------------:|
+| Symbol-sessions (`preopen.csv`) | 156 | 156 |
+| Signal bars | 147 | 157 |
+| NBBO samples | 8,820 | 3,566 |
+| Q4 aggregate rejection | 1.36% (2/147) | 0.64% (1/157) |
+| Q4 worst decile | d1 14.29% | d1 6.67% |
+
+> **Regenerate before quoting the right-hand column.** The `b70fa7a` figures were verified by
+> [REVIEW-2026-07-31.md](reviews/REVIEW-2026-07-31.md) under `pytest` on the project's own toolchain.
+> The `e85a193` figures were reproduced by [claude-PHASE-3-REVIEW.md](reviews/claude-PHASE-3-REVIEW.md)
+> (finding K1) on CPython 3.10 under a stdlib stand-in, because no 3.13 build was available to it —
+> so they are correct relative to `b70fa7a` measured the same way, and should be re-run on 3.13
+> before being cited elsewhere. The figures previously recorded here were `b70fa7a`'s, carried into
+> the commit that rewrote the generator.
 
 `q4_spreads` on simulated input reports **pipeline outcome (NOT a §7 verdict)** — by design under
-D30.
+D30 — and did so at every commit in the interval.
 
 ---
 
@@ -59,9 +72,16 @@ D30.
 **Pass threshold (§7):** ≥95% of sample symbol-sessions as candidates; full §4.2 hard set;
 ≥200 concurrent symbols; refresh ≤60 s; ≤$500/month all-in.
 
-**Finding:** Not run. IBKR alone is a **pre-determined negative** for the 200-symbol clause
-(~100 market-data line cap vs §7's 200). A second vendor trial is required regardless of IBKR
-paper connectivity.
+**Finding:** Not run. `q1_vendors` applies §7's thresholds to a declared trial matrix and
+**withholds** its §7 verdict on simulated input, same as Q2 and Q3. IBKR's market-data line cap
+(~100 concurrent symbols against §7's required 200) would be a **pre-determined negative** for the
+200-symbol clause **if confirmed** — but that figure is currently **unsourced**: no IBKR
+documentation is cited for it, and the only place it appears in this repository is one row of
+`data/spike2a/vendors.csv`, which is generated, declared `SIMULATED`, and whose generator docstring
+says its numbers were chosen to exercise the pipeline's pass/fail branches, not to describe IBKR.
+Treat ~100 as a plausible estimate pending a cited vendor document or an actual trial, not as a
+measured fact — see [claude-PHASE-3-REVIEW.md](reviews/claude-PHASE-3-REVIEW.md) finding K4. A
+second vendor trial is required regardless of IBKR paper connectivity.
 
 **Reason recorded:** PLAN D30 — project reads `SIMULATED` only until a recorded decision advances
 `PERMITTED_ORIGINS` to include `PAPER`.
@@ -87,17 +107,19 @@ disposition on simulated input.
 **Pass thresholds (§7):** Recalibrate if >30% rejected (aggregate or cheap decile); inert if <2%
 every decile; else calibrated.
 
-**Finding (simulated pipeline only):** Last run before this report: aggregate rejection rate
-**~1.36%** with elevated cheap-decile rate — **pipeline outcome CALIBRATED by elimination**, not a
-§7 verdict. Numbers validate arithmetic and wiring only.
+**Finding (simulated pipeline only):** at `e85a193`, aggregate rejection rate **0.64%** (1/157) with
+the cheapest decile the only elevated one (d1 **6.67%**) — **pipeline outcome CALIBRATED by
+elimination**, not a §7 verdict. Numbers validate arithmetic and wiring only. See the caveat under
+"Pipeline exercise" above, and finding K1 in
+[claude-PHASE-3-REVIEW.md](reviews/claude-PHASE-3-REVIEW.md).
 
 ---
 
-## Open spec questions (unchanged disposition)
+## Spec questions raised by rounds 7–8, and where each now stands
 
 | ID | Question | Impact on Phase 3 |
 |----|----------|-------------------|
-| **H7** | Does a synthetic run count as a §7 data pull? | **Decided:** no — see [CHANGELOG.md](CHANGELOG.md) Unreleased |
+| **H7** | Does a synthetic run count as a §7 data pull? | **Decided in this interval:** no — see [CHANGELOG.md](CHANGELOG.md), Decided. How that decision was taken is finding K7 of [claude-PHASE-3-REVIEW.md](reviews/claude-PHASE-3-REVIEW.md) |
 | **H2** | Narrow PHASE-2A-SPIKE §8 coverage exemption? | Does not block Phase 3 start |
 | **H10** | §7 exclusions inert on generated fixtures | Documented; does not block |
 

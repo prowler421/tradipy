@@ -18,6 +18,16 @@ drawing from "recent big movers" measures the spread distribution of *winners* a
 ``max_spread_r`` look far more permissive than it is. §4.1 names this the single most likely way
 to get a wrong answer to Q4, so :func:`select_sample` refuses a pre-filtered candidate list —
 see :class:`Exclusion`.
+
+**This module applies the filter rule only — not the window restriction.** §7 defines the sample
+as sessions *in the two windows* that pass this rule; picking the windows is
+:mod:`scripts.spike2a.windows`'s job, not this one. Running this module's CLI directly against an
+unrestricted pre-open file reports on the filter rule alone, which is a deliberate, narrower thing
+than a §7 sample — useful when the caller has already restricted the file by other means, or when
+what's being checked is the filter rule itself rather than the sample it feeds. For the full §7
+sample end to end — the windows, then the filters, then the cap — use
+:mod:`scripts.spike2a.sample`, which composes this module with :mod:`scripts.spike2a.windows`
+without changing either.
 """
 
 from __future__ import annotations

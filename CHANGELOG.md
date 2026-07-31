@@ -41,6 +41,14 @@ All notable changes to the tradipy **package** are documented here. This file fo
   named in a docstring is a string and an `import` is an import; guarded by a planted-import test
   covering module scope, aliases, submodules, function-local and constructor-local forms. Each
   guarantee was verified by removing its guard and confirming the test goes red.
+- **`scripts/spike2a/sample.py` is gated too.** It arrived from `main` in the same merge that
+  produced D30, written against a tree where the gate did not exist, and read `vix.csv` and
+  `preopen.csv` without declaring either. It is the only entry point that reads two files, which
+  is where undeclared data most easily enters — each half looks like the other call's
+  responsibility. This is the shape to expect: every branch in flight predates a
+  repository-wide invariant, so the failure is correct code arriving without a call it had no
+  reason to make. `test_every_spike_entry_point_gates_its_input` is enumerated, so a new module
+  under `scripts/spike2a/` means a new row in it.
 - **`test_widening_the_permitted_origins_cannot_pass_unnoticed`** pins `PERMITTED_ORIGINS` to
   `{SIMULATED}`. It fails when that line changes, deliberately: advancing the ladder is a PLAN
   decision — and for `LIVE`, the PRD §18.8 evidence bar — so changing the line, the assertion and
@@ -101,6 +109,25 @@ All notable changes to the tradipy **package** are documented here. This file fo
   `classify()` and deliberately not from `from_csv_row`, which folds `ValueError` into an
   unparsable-row count where a `UnitError` would vanish. It caught a real instance immediately —
   the synthetic fixture used to smoke-test the module had `missing_nbbo_pct=9`.
+- **`scripts/spike2a/sample.py`** — joins the two halves of §7's sample definition that H5 found
+  nothing composing: `windows.select_windows` (the VIX-based window rule) and
+  `universe.select_sample` (the §4.2 filter rule). Restricts a pre-open file to the sessions in
+  the two selected windows, then applies the filter rule to what remains, reporting sessions
+  outside the windows as their own count rather than folding them into a filter rejection or a
+  §7 exclusion — split further into `span_gap` (a session inside a window's calendar range but
+  missing from the VIX series the window was computed from — a source disagreement) and
+  `out_of_span` (genuinely not a candidate), so the two are not counted as one thing. Every parsed
+  row is unit-checked regardless of which population it ends up in, since a malformed row that
+  happens to fall outside the windows is otherwise never seen by `universe.classify`, the guard's
+  only other caller. `windows.py` is unchanged; `universe.py`'s module docstring gains two
+  sentences stating that its own CLI applies the filter rule alone, which `sample.py` and
+  `scripts/spike2a/README.md` both already claimed of it. See `docs/CHANGELOG.md`'s "Decided"
+  section under Unreleased for why a composing module was chosen over the other two options H5
+  named, including the accretion risk the finding itself raised against this option.
+  `tests/test_spike2a_sample.py` exercises the join's central guarantee — each of its three
+  assertions was confirmed to fail with the corresponding guard removed, per `CLAUDE.md`
+  convention 6 — even though `scripts/spike2a/` carries no coverage obligation (PHASE-2A-SPIKE.md
+  §8; narrowing that exemption is H2, open).
 - **Two guard tests on the registry lint's new roots** —
   `test_the_lint_scans_scripts_recursively` asserts `scripts/` is in scope and that a nested file
   is reached; `test_the_lint_catches_a_planted_literal` asserts the detection half fires on a file

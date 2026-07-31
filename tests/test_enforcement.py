@@ -788,46 +788,58 @@ def test_q3_main_refuses_undeclared_input_rather_than_measuring_it(tmp_path: Pat
     assert q3_latency.main([str(latency)]) == 0
 
 
+#: Enough of a VIX series for the §7 window rule to have two non-overlapping runs to choose.
+_VIX_CSV = "date,close\n" + "".join(f"2026-01-{d:02d},{20 + d % 7}.1\n" for d in range(1, 26))
+_PREOPEN_CSV = "session,symbol,price,gap_premarket_pct\n"
+
+
 @pytest.mark.spec
 @pytest.mark.parametrize(
-    ("module", "filename", "body"),
+    ("module", "files"),
     [
-        (
-            "windows",
-            "vix.csv",
-            "date,close\n" + "".join(f"2026-01-{d:02d},23.1\n" for d in range(1, 21)),
-        ),
-        ("universe", "preopen.csv", "session,symbol,price,gap_premarket_pct\n"),
-        ("q2_float", "floats.csv", "symbol,provider,float_shares,as_of\n"),
+        ("windows", [("vix.csv", _VIX_CSV)]),
+        ("universe", [("preopen.csv", _PREOPEN_CSV)]),
+        ("q2_float", [("floats.csv", "symbol,provider,float_shares,as_of\n")]),
+        ("sample", [("vix.csv", _VIX_CSV), ("preopen.csv", _PREOPEN_CSV)]),
     ],
 )
 def test_every_spike_entry_point_gates_its_input(
-    tmp_path: Path, module: str, filename: str, body: str
+    tmp_path: Path, module: str, files: list[tuple[str, str]]
 ) -> None:
-    """Not just the two that print a §7 outcome.
+    """Not just the ones that print a §7 outcome.
 
-    The first version of D30 gated `q4_spreads` and `q3_latency` and left these three reading
-    the same declared bytes ungated, while six documents said every measurement module called
-    the gate. A gate with an unguarded side entrance is the guarantee, not the mechanism.
+    The first version of D30 gated `q4_spreads` and `q3_latency` and left the rest reading the
+    same declared bytes ungated, while six documents said every measurement module called the
+    gate. A gate with an unguarded side entrance is the guarantee, not the mechanism.
+
+    `sample` is here because it arrived later, from a branch that did not know about D30 — which
+    is the case this test is really for. It is also the only entry point that reads *two* files,
+    and a composing entry point is where undeclared data most easily enters, each half looking
+    like somebody else's responsibility.
 
     The declared case is asserted too. Without it a module that refused *everything* would pass
-    — which is the same "confirms the happy path" mistake as asserting only the accept case, run
+    — the same "confirms the happy path" mistake as asserting only the accept case, run
     backwards.
     """
     entry = importlib.import_module(f"scripts.spike2a.{module}")
-    path = tmp_path / filename
-    path.write_text(body, encoding="utf-8")
-    assert entry.main([str(path)]) == 3, f"{module} read undeclared input"
+    paths = []
+    for name, body in files:
+        path = tmp_path / name
+        path.write_text(body, encoding="utf-8")
+        paths.append(path)
+    argv = [str(p) for p in paths]
 
-    _declare(tmp_path, provenance.DataOrigin.SIMULATED, path)
-    assert entry.main([str(path)]) == 0, f"{module} refuses correctly declared input"
+    assert entry.main(argv) == 3, f"{module} read undeclared input"
+
+    _declare(tmp_path, provenance.DataOrigin.SIMULATED, *paths)
+    assert entry.main(argv) == 0, f"{module} refuses correctly declared input"
 
 
 @pytest.mark.spec
 def test_q2_withholds_its_disposition_on_simulated_input(declared: Path) -> None:
     """Q2's whole output is §7 threshold comparisons and a named A10 disposition.
 
-    The first version of D30 wired the gate to five entry points and the withholding to two,
+    The first version of D30 wired the gate to the entry points and the withholding to two,
     leaving this module printing "A10 not tripped by this sample" over fabricated floats — the
     same defect as the §7 verdict, one module along.
     """

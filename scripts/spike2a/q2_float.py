@@ -115,7 +115,7 @@ def report(readings: list[FloatReading], measured_on: date, prov: Provenance) ->
     Q2's output is entirely threshold comparisons against §7 and a named **A10** disposition, so
     it is the same hazard Q4's verdict was: a line reading "within threshold" beside a PRD
     assumption is the sentence a reader quotes. The first version of D30 wired the *gate* to all
-    five entry points and the *withholding* to two, leaving this module printing "A10 not tripped
+    every entry point and the *withholding* to two, leaving this module printing "A10 not tripped
     by this sample" over fabricated floats.
     """
     providers = sorted({r.provider for r in readings})

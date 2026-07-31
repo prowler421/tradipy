@@ -30,7 +30,7 @@ src/tradipy/
     gates.py        pre-entry gates and position sizing         (§2.2, §3.1.x)
     poc.py          composition: one candidate through every gate
     __main__.py     the `python -m tradipy` CLI entry point
-tests/              eight pytest files (see below) + registry_baseline.json
+tests/              nine pytest files (see below) + registry_baseline.json
 docs/               PRD.md (normative), PLAN, CHANGELOG, PHASE-2A-SPIKE,
                     reviews/, these guides
 scripts/            regen_registry_baseline.py, check_links.py
@@ -258,10 +258,10 @@ Assertions are written against the **derivation** of a value, not the value itse
 `assert cap == Decimal("0.01")` passes under a wrong rounding rule that happens to agree at
 that input, while `assert cap == floor_to_tick(x) and cap <= x` does not.
 
-Eight files. The first four each defend a defect class that the check built for the previous
+Nine files. The first four each defend a defect class that the check built for the previous
 one could not see; the next two cover the §20 computations and the PoC; the seventh defends the
-documentation's own counts; the eighth defends the instrument that produces spec-deciding
-numbers.
+documentation's own counts; the last two defend the instrument that produces spec-deciding
+numbers and the §7 sample definition it ranges over.
 
 - `test_worked_examples.py` — **arithmetic**: an example that violates its own rules. PRD
   v1.0 shipped four, and all four passed a fully-ticked acceptance checklist.

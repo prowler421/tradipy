@@ -9,7 +9,7 @@ against a tick boundary or summed into P&L (PRD §9.2).
 
 ## Package layout
 
-Eleven library modules and a `__main__` CLI entry point, with a strict one-way dependency
+Fourteen library modules and a `__main__` CLI entry point, with a strict one-way dependency
 graph:
 
 - `rounding`, `rejects`, `bars` — standard library only.
@@ -19,13 +19,19 @@ graph:
 - `scanner` — depends on `params`, `rejects`, `score`, `gates`.
 - `session` — depends on `bars` and `params` (PRD §20.1–§20.6 over an ordered series).
 - `setups` — depends on `bars`, `session`, `params`, `rejects`, `gates` (PRD §3.2–§3.4).
+- `positions` — depends on `params`, `rejects`, `rounding` (PRD §20.12's state machine, §3.1.1's
+  stop management, §7.1.1's scale-in legality).
+- `risk` — depends on `gates`, `params`, `positions`, `rejects`, `rounding`, `setups` (PRD §6.3's
+  pre-trade checks and §7's rule table).
+- `orders` — depends on `params`, `positions`, `rounding`, `setups` (PRD §6.1/§6.2/§6.4/§6.7
+  order construction; **nothing that submits**).
 - `poc` — composes all of the above into one evaluable candidate, one simulated universe and
   the three §3 worked examples as bar series.
 - `__main__` — the `python -m tradipy` front end over `poc`.
 
-`import tradipy` binds the ten library modules named in the package `__all__`
+`import tradipy` binds the thirteen library modules named in the package `__all__`
 (`rounding`, `rejects`, `params`, `bars`, `quotes`, `score`, `gates`, `scanner`, `session`,
-`setups`) as attributes. `tradipy.poc` is not among them and must be imported explicitly — it is the
+`setups`, `positions`, `risk`, `orders`) as attributes. `tradipy.poc` is not among them and must be imported explicitly — it is the
 proof-of-concept composition layer, not part of the invariant surface.
 
 ## `tradipy.rounding`
@@ -96,6 +102,26 @@ class SoftFlag(Enum):
 class ExitReason(Enum):
     BAILED_OUT = "BAILED_OUT"  # §20.12 / §3.2 / §3.3
     INVALIDATED = "INVALIDATED"  # §20.12 / §3.2 / §3.3 / §3.4
+    # PRD §9.2's ClosedTrade.exit_reason — the other four (Phase 5)
+    LADDER_COMPLETE = "LADDER_COMPLETE"  # §9.2 / §3.1.1 — the only non-failure exit
+    STOPPED_OUT = "STOPPED_OUT"  # §9.2 / §20.12 — a state name as well
+    EOD_FLAT = "EOD_FLAT"  # §9.2 / §7 trading-hours row
+    KILL_SWITCH = "KILL_SWITCH"  # §9.2 / §7.2
+
+
+class RiskBlock(Enum):              # PRD §7's rule table — the *account*, not the candidate
+    MAX_RISK_EXCEEDED = "MAX_RISK_EXCEEDED"  # §7 row 1, NON-BYPASSABLE
+    DAILY_LOSS_LIMIT = "DAILY_LOSS_LIMIT"  # §7 row 2, NON-BYPASSABLE
+    MAX_POSITIONS = "MAX_POSITIONS"  # §7 row 3
+    LOSS_STREAK_LOCKOUT = "LOSS_STREAK_LOCKOUT"  # §7 row 4 / §2 Three Strikes
+    BUYING_POWER = "BUYING_POWER"  # §7 row 5 / §2.2
+    PDT_VIOLATION = "PDT_VIOLATION"  # §7 row 6
+    SESSION_DRAWDOWN = "SESSION_DRAWDOWN"  # §7 row 7 (Continuous — no caller yet)
+    MULTI_DAY_DRAWDOWN = "MULTI_DAY_DRAWDOWN"  # §7 row 8 (End of day — no caller yet)
+    OUTSIDE_SESSION_WINDOW = "OUTSIDE_SESSION_WINDOW"  # §7 row 9
+    CORRELATED_EXPOSURE = "CORRELATED_EXPOSURE"  # §7 row 10 / §7.1.3 / D21
+    TRADING_HALTED = "TRADING_HALTED"  # §7 row 11 / §7.2 / §7.1.2
+    DUPLICATE_ORDER = "DUPLICATE_ORDER"  # §6.3 check 8 / §6.7
 ```
 
 - The module holds both because three layers raise `Reject` — `gates` for the pre-entry
@@ -123,6 +149,14 @@ class ExitReason(Enum):
   `SetupOutcome.criteria` carries which part of the pattern was absent and the arithmetic behind
   it, so the single code loses no detail. Like `STOP_TOO_WIDE` it is a name the PRD does not
   state, and §4.2's table should adopt or replace it.
+- **`RiskBlock` is a fourth namespace, K5's argument at one more remove.** A `Reject` says *this
+  candidate is not tradeable*; a `RiskBlock` says *this account may not take this trade right now*,
+  and the same candidate is fine tomorrow. Mixing them would let `scanner` filter a universe on
+  `LOSS_STREAK_LOCKOUT`. There is also an asymmetry no shared enum can express: two §7 rows'
+  Violation Action is *"Flatten all; lock account"*, which is not a rejection of anything.
+  `RiskDecision.reason` is `RiskBlock | Reject | None`, which is what §9.2's own *"§7 rule name or
+  §4.2 code"* describes — §7's two signal-time rows stay `Reject` members raised by `gates`, and
+  giving them a second spelling here would be the v1.2 defect class.
 - **`ExitReason` is a third namespace, on the same argument as the second.** A rejection declines
   a trade that was never taken; an exit closes one that was. Sharing a namespace would permit a
   pre-entry gate returning `BAILED_OUT` and an exit rule returning `SPREAD_TOO_WIDE`. Both member
@@ -138,7 +172,7 @@ The parameter registry — the single source of truth for every tunable threshol
 Mode = Literal["beginner", "experienced"]
 MODES: tuple[str, ...]                             # ("beginner", "experienced")
 
-PARAMS: Mapping[str, Param]                        # read-only; 75 entries
+PARAMS: Mapping[str, Param]                        # read-only; 84 entries
 MODE_PRESETS: Mapping[str, Mapping[str, Decimal]]  # read-only, inner maps too
 HARD_CAPS: Mapping[str, Decimal]                   # read-only
 DISCRIMINATING_CAP_TICKS = 2
@@ -178,7 +212,7 @@ def min_tradeable_price_from_stop_bounds(cfg: Config) -> Decimal
 
 ### The registry
 
-`PARAMS` holds **75** entries keyed by name, each carrying its default, legal range, unit,
+`PARAMS` holds **84** entries keyed by name, each carrying its default, legal range, unit,
 PRD source citation, and — where it is used as a gate threshold — its polarity. A
 threshold is defined there exactly once and every consumer reads it by name; no numeric
 literal for a registered threshold may appear anywhere else in the package. The lint that
@@ -686,7 +720,7 @@ class Resistance: level: Decimal; source: str; candidates: tuple[tuple[str, Deci
 @dataclass(frozen=True)
 class Levels:     # every price §9.2's TradeSignal carries — reported on a *rejected* setup too
     entry_price; pattern_stop; stop_price; r_per_share; ladder; resistance; room
-    min_separation; spread_at_signal; breakout_high; prior_hod
+    min_separation; spread_at_signal; breakout_high; prior_hod; trigger_minute: int
     target_prices -> tuple[Decimal, Decimal]; required_room -> Decimal
 
 @dataclass(frozen=True)
@@ -726,6 +760,208 @@ def vwap_reclaim_exit(session, signal, after, cfg) -> ExitReason | None
 - **§3.4's worked example is rejected by this module**, on §3.1.1's whole-dollar candidate.
   That is a PRD-internal contradiction, raised there, and `python -m tradipy setups` prints it.
 - **Nothing here is calibrated**: of Phase 4's twenty registry rows **all twenty are marked `(bounds: code)`** — eighteen cite §3.2, §3.3 or §3.4, sections with no parameter table and no Bounds column, and the other two cite §20.1 and §20.5, which have none either. See [PHASE-4-DESIGN.md](PHASE-4-DESIGN.md) and PLAN **D33**.
+
+## `tradipy.positions`
+
+PRD §20.12's position state machine, §3.1.1's stop management, §7.1.1's scale-in legality.
+
+```python
+class PositionState(Enum):            # §20.12's twelve states, spelled as §10 persists them
+    IDLE; ARMED; PENDING_ENTRY; OPEN_FULL; T1_FILLED; T2_FILLED; TRAILING; CLOSED
+    EXPIRED; STOPPED_OUT; INVALIDATED; BAILED_OUT
+
+TERMINAL_STATES: frozenset[PositionState]   # CLOSED, EXPIRED only
+OPEN_STATES: frozenset[PositionState]       # shares held — includes PENDING_ENTRY (§7 row 1)
+TRANSITIONS: Mapping[PositionState, frozenset[PositionState]]   # read-only, and *total*
+
+class IllegalTransition(ValueError)
+
+def transition(state: PositionState, to: PositionState) -> PositionState
+def reachable_exit_reasons(state: PositionState) -> frozenset[ExitReason]
+def breakeven_stop(avg_cost: Decimal) -> Decimal
+def position_risk(shares: int, current_stop: Decimal, mark: Decimal) -> Decimal
+def scale_in_permitted(state: PositionState, open_risk_after: Decimal, cfg: Config) -> bool
+
+@dataclass(frozen=True)
+class LegQuantities: t1: int; t2: int; t3: int; shares: int   # sum invariant in __post_init__
+
+def leg_quantities(shares: int, cfg: Config) -> LegQuantities
+```
+
+- **§20.12's diagram and its table disagree, and neither is complete.** The table gives six rows
+  and no rule for `IDLE`, `CLOSED`, `EXPIRED` or the three exit states; the diagram adds
+  `IDLE → ARMED` and routes the exit states to `CLOSED`, but also draws edges from `T1_FILLED` and
+  `T2_FILLED` that the table omits. The reading is **the table where it has a row, the diagram
+  where it has none** — the table's column is an enumeration and is the stricter, and the table
+  alone yields a machine that can neither start nor finish. Cost, stated: a §3 invalidation firing
+  after T1 has no state to move to, so `setups.bull_flag_exit` will return `INVALIDATED` and
+  `transition` will refuse it. Raised in [CHANGELOG.md](CHANGELOG.md).
+- `transition` refuses a **self**-transition. §20.12 lists no state as its own successor, and
+  permitting one would make the audit log it requires unable to tell "no event" from "an event that
+  changed nothing".
+- `reachable_exit_reasons` exists to make a gap visible rather than to be convenient: §7.2's kill
+  switch has enforcement point *"Any"*, and §20.12 provides an edge to `CLOSED` only from
+  `TRAILING`, so `KILL_SWITCH` and `EOD_FLAT` are **unreachable** from the four other open states.
+  A test asserts the emptiness, so correcting §20.12 later fails it deliberately.
+- `leg_quantities` **floors** T1 and T2 and gives T3 the remainder, with the three summing exactly
+  to `shares`. §3.1.1 states no rule for an indivisible count and §2.2 floors the count, so
+  indivisible is the normal case; §21.6 makes an uncovered share a Sev-1, and flooring the two
+  profit legs is the only allocation that cannot drop one. A 1-share position therefore exits
+  entirely on the trail (`t1 == t2 == 0`), and 2 shares put nothing on T2.
+- `position_risk` clamps at zero. Once the stop is at or above the mark — which is exactly what
+  `breakeven_stop` does at T1 — the position cannot lose, and a negative contribution would let one
+  profitable position *fund* risk on another. §7.1.1 says the tranche contributes *"~zero"*, not
+  credit.
+
+## `tradipy.risk`
+
+PRD §6.3's pre-trade validation and §7's rule table. Nothing here senses anything.
+
+```python
+PDT_MIN_EQUITY: Decimal = Decimal(25_000)   # FINRA — law, so a constant and not a registry row
+PDT_MAX_DAY_TRADES: int = 3
+PDT_WINDOW_BUSINESS_DAYS: int = 5
+
+class OrderIntent:  OPEN = "OPEN"; REDUCE = "REDUCE"
+
+@dataclass(frozen=True)
+class OpenPosition:
+    symbol: str; shares: int; mark: Decimal; current_stop: Decimal
+    state: PositionState; correlation_group: str
+    risk -> Decimal                          # from the *current live stop* (§7.1.1)
+
+@dataclass(frozen=True)
+class RiskState:                             # §10's daily_state row + §7.1.1's positions
+    start_of_day_equity: Decimal
+    realized_pnl; unrealized_pnl; consecutive_losses; day_trades_in_window
+    trading_halted: bool; halt_reason: str | None
+    positions: tuple[OpenPosition, ...]
+    session_equity_peak: Decimal | None; multi_day_peak_equity: Decimal | None
+    submitted_keys: frozenset[str]
+    open_positions -> tuple[OpenPosition, ...]
+
+@dataclass(frozen=True)
+class RuleOutcome: rule: str; passed: bool; detail: str; block: RiskBlock | Reject | None
+
+@dataclass(frozen=True)
+class RiskDecision:                          # §9.2's RiskDecision, minus two fields (below)
+    approved: bool; reason: RiskBlock | Reject | None
+    rules_evaluated: tuple[RuleOutcome, ...]
+    open_risk_before: Decimal; open_risk_after: Decimal; approved_shares: int
+    blocks -> tuple[RuleOutcome, ...]        # every failure, not only the reported one
+
+def live_equity(state: RiskState) -> Decimal
+def max_dollar_risk(cfg: Config) -> Decimal
+def total_open_risk(state: RiskState) -> Decimal
+def correlation_group(symbol, catalyst_key=None, sector=None) -> str
+def daily_loss_breached(state: RiskState, cfg: Config) -> bool
+def session_drawdown_breached(state: RiskState, cfg: Config) -> bool
+def multi_day_drawdown_breached(state: RiskState, cfg: Config) -> bool
+
+def approve(signal: SetupSignal, state: RiskState, cfg: Config, *,
+            intent=OrderIntent.OPEN, buying_power=None, correlation=None,
+            idempotency_key=None, spread_now=None) -> RiskDecision
+def approve_all(signals, state, cfg, *, buying_power=None, groups=()) -> tuple[RiskDecision, ...]
+```
+
+- **Every rule is evaluated on every call**, per §9.2's *"every rule checked, for audit"*, and each
+  `RuleOutcome.detail` carries the arithmetic — the same argument `scanner.HardResult` and
+  `setups.Criterion` make. Evaluation does not stop at the first block; `reason` is the first
+  failure and `blocks` is all of them.
+- **Approval never trims.** §9.2's `approved_shares` says *"may be < TradeSignal.shares after
+  caps"* and §7's Violation Action column says *"Reject order"* for every size-related breach. §7
+  governs; `approved_shares` is the request on approval and `0` on a block. Raised, not settled.
+- `RiskDecision` omits §9.2's `signal_id` and `evaluated_at`: the first is the caller's join key
+  and the second is a `datetime` from a clock §21.1 forbids here.
+- **There is no `minute` field on `RiskState`.** §7's trading-hours row is evaluated at the close
+  of the trigger bar, which the signal already carries as `Levels.trigger_minute`. A second copy
+  would be the v1.2 defect class, and the only way the two could differ is §6.6's disconnect
+  queue — which is transport, and refused.
+- **`approve_all` accrues risk sequentially.** §7 row 1 caps the *total*, so evaluating a
+  watchlist's signals independently against one state would approve two orders that are each
+  individually inside the cap. An approved signal is folded in as a `PENDING_ENTRY` position,
+  which is what §7's *"plus pending orders"* describes.
+- **The drawdown predicates have no caller.** §7 marks those rows *Continuous* and *End of day*;
+  the loop that would call them and set `trading_halted` is Phase 6's. Stated because a predicate
+  with no caller is the fifth defect class if it goes unrecorded.
+- **This module does not round**, for the reason `Config.round_for` gives: a risk budget and a
+  dollar risk total are not price levels compared against a tick. It imports `TICK_SIZE` only to
+  quantize a dollar figure for display, because writing `Decimal("0.01")` locally is a second
+  spelling of the price grid — and is `max_pct_of_adv`'s registered default, which the registry
+  lint caught.
+- **Two findings this module reproduces, raised and not resolved:** §7's total-risk cap makes
+  `max_open_positions` > 1 unreachable while a position is at full risk, and §7's daily-loss row
+  makes §7's PDT row unreachable at §2.0's default equity. See
+  [PHASE-5-DESIGN.md](PHASE-5-DESIGN.md) §6.
+
+## `tradipy.orders`
+
+PRD §6.1, §6.2, §6.4 and §6.7 — order **construction**. Nothing that sends anything.
+
+```python
+class OrderSide(Enum):    BUY; SELL
+class OrderType(Enum):    MARKET; LIMIT; STOP; STOP_LIMIT; BRACKET      # §6.1's five
+class LegPurpose(Enum):   ENTRY; STOP; TARGET_1; TARGET_2
+class PartialFillAction(Enum): WAIT; CANCEL_REMAINDER; KEEP_WORKING; COMPLETE
+
+@dataclass(frozen=True)
+class OrderLeg:            # every price validated to be a whole tick in __post_init__ (§20.13)
+    side: OrderSide; order_type: OrderType; quantity: int; purpose: LegPurpose
+    limit_price: Decimal | None; stop_price: Decimal | None
+
+@dataclass(frozen=True)
+class OrderDraft:
+    symbol: str; setup_type: SetupType; idempotency_key: str; oca_group: str
+    legs: tuple[OrderLeg, ...]; quantities: LegQuantities
+    entry -> OrderLeg; protective -> OrderLeg; exit_quantity -> int
+
+def idempotency_key(symbol, setup_type, session_date: str, trigger_minute: int,
+                    account_id: str) -> str
+def entry_limit_price(ask: Decimal, cfg: Config) -> Decimal
+def stop_limit_price(stop: Decimal, cfg: Config) -> Decimal
+def bracket(signal: SetupSignal, ask: Decimal, session_date: str, account_id: str,
+            cfg: Config) -> OrderDraft
+def partial_fill_action(intended: int, filled: int, entry_spread: Decimal,
+                        spread_now: Decimal, seconds_since_submit: int,
+                        cfg: Config) -> PartialFillAction
+```
+
+- **This module is the boundary of the package.** §6.2's lifecycle is
+  `Signal → PreTradeRiskCheck → OrderDraft → Submit`, and the fourth arrow is **refused**, not
+  deferred: D30 admits no broker SDK, vendor client or network module in `src/`. §6.6's recovery,
+  §6.8's retry and backoff and §21.3's reconciliation all require a connection to have existed.
+- **Four legs, not five.** §3.1.1's ladder has three exit tranches and T3 has no leg, because D18
+  requires the ratcheted 9 EMA level to rest as a broker-side stop *amended each bar close* — an
+  amendment stream, not a leg of the opening bracket. The **stop** leg covers the whole position,
+  which is the only allocation under which no share is unprotected (§21.6).
+- **Every draft price is a whole tick, and `OrderLeg` raises rather than rounding.** §20.13 puts
+  rounding *once, at level computation*, so a second rounding point here would contradict it; the
+  stop and target levels arrive already rounded from `gates`. Only the entry limit is rounded in
+  this module, because `ask` is a feed input nothing upstream has touched.
+- **§20.13 states no direction for an entry limit price.** Its table covers stops, targets, gate
+  minima and gate maxima. The reading is `ceil_to_tick` for a buy limit and `floor_to_tick` for the
+  protective sell limit, taken from §20.13's *governing principle* — *"no rounding decision can
+  make a trade look better than it is"* — rather than its table: those are the two directions that
+  cost money. Raised in [CHANGELOG.md](CHANGELOG.md).
+- **`idempotency_key` is §6.7's whole point and half its guarantee.** §6.7: *"A UUID cannot serve
+  this purpose: a freshly generated one is unique by construction, so a duplicate check against it
+  can never fire."* Every input is a fact about the signal, `oca_group` is derived from the key
+  rather than generated, and a field containing the `|` separator raises rather than producing a
+  key two signals could share. What is **not** here is §6.7's other half — *"the DB, not process
+  memory, is the arbiter"* — because there is no store; `RiskBlock.DUPLICATE_ORDER` is raised
+  against a set the caller supplies.
+- **§6.7's `trigger_bar_timestamp` becomes `session_date` + `trigger_minute`.** §21.1 forbids
+  `datetime.now()` in strategy code, which is why a `SessionBar` carries an `int`. A `str` date
+  cannot be read from a clock, and the derivation stays here.
+- `partial_fill_action` is a **decision, not a wait**: §6.4's *"within 30 sec"* becomes a supplied
+  `seconds_since_submit` compared against a registered threshold, the shape `Quote.age_seconds`
+  already uses for §20.14. The spread condition is evaluated **before** the timeout — §6.4 states
+  no ordering, and this is the stricter reading. An over-fill raises: it is a §21.3 reconciliation
+  fault, and returning a plausible action for it would let a caller size a stop to shares it does
+  not hold.
+- **§6.5's slippage model is not here.** It is §6, so §12.1 puts it in this phase, while its only
+  consumer is §8.2's fill model, which is Phase 4b's — a boundary disagreement rather than a
+  choice. `impact_coefficient` therefore stays unregistered.
 
 ## `tradipy.poc`
 

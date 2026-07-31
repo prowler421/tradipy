@@ -10,6 +10,101 @@ Corrections and reversals to [PRD.md](PRD.md), extracted so the spec itself can 
 
 ---
 
+## Unreleased — D34, and the §6/§7 questions implementing it exposed
+
+### Decided
+
+| Decision | Rule | Where |
+|---|---|---|
+| **D34** | **The construction/calibration split extends to Phase 5, with the transport half *refused* rather than deferred.** `positions.py`, `risk.py` and `orders.py` implement §6.3's pre-trade checks, §7's rule table, §20.12's transitions and §6.1's bracket over supplied state. Everything downstream of §6.2's `OrderDraft` is absent because D30 admits no broker. The ladder does **not** move, and §12.1's Phase 3, 4 and 5 rows stay unticked. Phase 5 is blocked twice — by D30 and by §18.7's unrun viability gate — and the decision states the two separately | [PLAN.md](PLAN.md) D34 |
+| **§7's rules get a fourth namespace** | A `Reject` says *this candidate is not tradeable*; a `RiskBlock` says *this account may not take this trade right now*. Mixing them would let the scanner filter a universe on `LOSS_STREAK_LOCKOUT`, which is K5's shape at one more remove — and two §7 rows' Violation Action is *"Flatten all; lock account"*, which is not a rejection of anything. `RiskDecision.reason` is `RiskBlock \| Reject \| None`, which is what §9.2's *"§7 rule name or §4.2 code"* already describes | PRD §7, §9.2; `src/tradipy/rejects.py` |
+| **`ExitReason` gains §9.2's other four** | `LADDER_COMPLETE`, `STOPPED_OUT`, `EOD_FLAT` and `KILL_SWITCH`, transcribed from §9.2's `ClosedTrade.exit_reason` rather than invented — the same discipline the first two got from §20.12's state names | PRD §9.2; `src/tradipy/rejects.py` |
+| **FINRA's PDT constants are not registry rows** | $25,000, the 4th-day-trade test and the 5-business-day window are law, not tunables, so they are module constants in `risk.py` — the argument `rounding.TICK_SIZE` makes from SEC Rule 612. A `Param` carries a legal range and a regulation does not have one | PRD §7; `src/tradipy/risk.py` |
+
+### The two findings that change a verdict — §7's rules are jointly incoherent with §2's defaults, twice
+
+Both are the **third defect class** (joint incoherence): every parameter is inside its own bounds
+and defensible alone, so per-parameter validation passes both clean. Both were reproduced **by
+execution** the first time §7's rules ran against §2's own worked examples, and both are **raised,
+not resolved.**
+
+**1. §7's total-risk cap makes `max_open_positions` > 1 unreachable at full size.** §7's first row
+caps **total** open risk — all positions, from their current live stops, plus pending orders — at
+`start_of_day_equity × max_risk_pct`, which is *the same budget* §2.2 sizes a **single** position
+to. At the `experienced` preset and §3.2's own example: $30,000 × 1% = $300 of budget, and 2,500
+shares × $0.12 = $300 of open risk from one position. §3.3's example adds another $300. Total $600
+against a $300 cap — rejected, while `max_open_positions` (3) still reports headroom. The same
+holds at `beginner`, where budget and share counts both halve.
+
+§7.1.1 derives exactly this consequence for **scale-ins** — *"adds are only ever legal after T1,
+never while the initial position is still at full risk"* — and does not extend it to new
+positions, while §2 advertises up to three concurrent positions and hard-ceilings the row at 3. So
+`max_open_positions` is close to inert: its value changes nothing until the earlier positions are
+past T1, at which point the risk cap permits the add anyway. That is a different claim from the one
+§2's *"Sensitivity: more positions = correlation risk"* makes. It also makes the
+`approved_shares` question below material rather than cosmetic, because the two readings differ on
+what gets written to the audit trail for a case that is not an edge case.
+
+**Candidate resolutions, none taken:** state in §7 that the cap is per-position rather than total,
+which contradicts §7.1.1's own derivation and reopens the A16 contradiction it closed; or state in
+§2 that `max_open_positions` binds only after T1, making the coupling explicit; or denominate the
+total-risk cap separately from the per-trade cap, which is a new parameter and a new decision.
+
+**2. §7's daily-loss row makes §7's PDT row unreachable at §2.0's default equity.** PDT fires only
+when equity is below FINRA's $25,000 floor. Reaching that from §2.0's $30,000 default needs a
+$5,000 loss — 16.7% of equity — while §7's daily-loss row locks the account at `daily_loss_pct`,
+whose registered **ceiling** is 5% ($1,500). So the lockout always fires first and §7's PDT row
+cannot be reached at the default at any legal configuration. It is reachable only for an account
+starting within `daily_loss_pct` of the floor, which §2.0's own bounds permit
+(`start_of_day_equity` has `lo` = $25,000) — so this is not a dead rule, it is a rule whose
+reachability depends on a parameter nothing relates to it.
+
+Not enforced as a coupling, per convention 5 and for A25's reason: the incoherent combination *is*
+the shipped default, so raising would make `Config.default` throw. `tests/test_phase5.py` pins it
+in both directions, so resolving it fails the fixture deliberately.
+
+### Spec questions — open, raised by implementing §6, §7 and §20.12
+
+**Fifteen, plus the two findings above. No threshold moves here and no §6 or §7 rule changes.**
+Each reading is localised to one function and pinned by a test;
+[PHASE-5-DESIGN.md](PHASE-5-DESIGN.md) §5 carries the readings against the code. The nineteen
+Phase 4 raised remain open and untouched.
+
+**The convention, stated because two documents were using different ones:** the count is the number
+of **rows in this table**, and the two joint incoherences above are counted separately because they
+have their own section. [PLAN.md](PLAN.md)'s Phase 5 row said *"fourteen spec questions, two of them
+joint incoherences"*, which is a third convention — total including them — and was wrong under
+either reading after this table grew.
+
+**This number has now been wrong twice in one changeset, and the second time is the instructive
+one.** The first draft said twelve above a list of fourteen. Round 14's disposition then added the
+`§20.12 vs §3, mid-ladder` row for H3 and left the header at fourteen — *in the paragraph that had
+just finished explaining the previous instance*. That is the L1 / K6 shape for the sixth time, and
+prose calling the shape out is evidently no defence against it. `tests/test_documentation.py` now
+derives the row count of every spec-question table in this file and compares it against the
+spelled-out number in the heading, which is the check that should have existed before either draft
+— its `_REGISTRY_COUNT` regex matched only digits, so `**Fourteen**` was invisible to it.
+
+| Where | The question | The reading taken, and why it is not a settlement |
+|-------|--------------|---------------------------------------------------|
+| §20.12 | **The diagram and the table disagree, and neither is complete.** The table gives `T1_FILLED → {T2_FILLED, STOPPED_OUT}` and `T2_FILLED → {TRAILING}`; the diagram's `↓` arrows put all three exit states under both. The table has no row at all for `IDLE`, `CLOSED`, `EXPIRED` or the three exit states | **The table where it has a row, the diagram where it has none** — so `IDLE → ARMED` and the three exit states `→ CLOSED` come from the diagram and nothing else does. The table's column is an enumeration and is the stricter; the table alone yields a machine that can neither start nor finish. **Cost, stated:** a §3 post-entry invalidation firing after T1 has no state to move to — `bull_flag_exit` will return `INVALIDATED` and `transition` will refuse it |
+| §20.12 vs §7.2 | §7.2's kill switch has enforcement point *"Any"* and action *"market-close all positions"*, and §7's trading-hours row implies the same flattening at the close. Both need an edge to `CLOSED` from every open state; §20.12 provides one only from `TRAILING` | Reported, not patched — `reachable_exit_reasons` returns empty for `EOD_FLAT` and `KILL_SWITCH` from `PENDING_ENTRY`, `OPEN_FULL`, `T1_FILLED` and `T2_FILLED`, and a test asserts the emptiness so a later correction to §20.12 fails it |
+| §20.12 vs §3, mid-ladder | **The same gap read across two phases** (round 14's H3). §3's post-entry rules — `setups.bull_flag_exit` and its siblings — return `ExitReason.INVALIDATED` on any bar after entry without consulting a state, and §20.12's table permits `T1_FILLED → STOPPED_OUT` only. So Phase 4's predicates and Phase 5's state machine share §20.12's vocabulary by construction and **still do not compose for a mid-ladder exit** | Not resolved, and re-characterised rather than re-dispositioned: this was recorded as a cost of the §20.12 reading and is better read as a boundary between two phases. Widening the table is a spec change; PHASE-5-DESIGN §6 finding 3 is the record |
+| §9.2 vs §7 | `RiskDecision.approved_shares` — *"may be < TradeSignal.shares after caps"* — against §7's *"Reject order"* on every size-related breach | **Reject, never trim.** §7's rows are NON-BYPASSABLE and its Violation Action column is unambiguous; trimming would have the risk engine invent a share count no §2.2 constraint produced. `approved_shares` is the request on approval and `0` on a block |
+| §7 PDT row | *"equity < $25,000"* — §7.1 defines `start_of_day_equity` and `live_equity` and assigns PDT to neither | `live_equity`. FINRA tests current account equity, and the frozen figure would let a morning loss below $25,000 pass a check whose only purpose is to prevent an illegal trade — the one direction in which being wrong is a regulatory violation rather than a missed trade |
+| §6.3 vs §7 | §6.3 lists **eight** pre-trade checks; §7's enforcement column marks **eleven** rows Pre-order or stricter, including Max correlated exposure, which §6.3 omits entirely | §7's enforcement column governs and §6.3's list is treated as illustrative. A check §7 requires and §6.3 forgot is an omission, not an exemption — the reverse reading silently drops a row §7 marks bypassable-only-by-bounds |
+| §3.1.1 | The 50 / 25 / 25 ladder over an **integer** share count, which §2.2 floors, so indivisible is the normal case. §3.1.1 states no rule | `floor` T1 and T2, remainder to T3, with the three summing **exactly** to the count. §21.6 makes a share with no protective leg a Sev-1, and flooring the two profit legs is the only rounding that cannot leave one uncovered. **Consequence:** a 1-share position has T1 = T2 = 0 and exits entirely on the trail; 2 shares put nothing on T2 |
+| §20.13 | No row for an **entry limit price**, which is the price §6.1 actually submits. The table covers stops, targets, gate minima and gate maxima | Buy limit `ceil_to_tick`; sell stop and sell stop-limit `floor_to_tick`; target legs `ceil_to_tick`. Taken from §20.13's *governing principle* — *"no rounding decision … can make a trade look better than it is"* — rather than its table: ceiling a buy and flooring a sell are the two directions that cost money. Only the entry limit is code-originated; the other three are §20.13's own rows |
+| §9.2 vs §20.12 | §9.2's `ClosedTrade.exit_reason` has **six** values; §20.12 has state names matching **three**. `LADDER_COMPLETE`, `EOD_FLAT` and `KILL_SWITCH` are not states, and §20.12's `EXPIRED` is a state with no exit reason | Both vocabularies carried, and the mapping between them made explicit rather than assumed to be the identity. `EXPIRED` having no exit reason is *consistent* — a position that expired never opened, so it produces no `ClosedTrade` — but it is stated rather than inferred |
+| §7 row 2 | `daily_loss_pct` has **three** stated enforcement points: *Continuous (1 sec)*, *post-fill*, and §6.3's pre-order list. One of the three needs a feed | The pre-order one is implemented; the predicate exists for the other two and no loop calls it. **G2 narrows, it does not close.** Claiming otherwise would be the F8 shape — an unqualified claim about a check whose scope is smaller than the sentence |
+| §6.5 vs §12.1 | §6.5's slippage model is in **§6**, which is Phase 5's section, while its only consumer is §8.2's fill model, which is Phase 4b's — and D22's stress requirement is a Phase 4b deliverable | Not implemented, and `impact_coefficient` stays **unregistered** despite §6.5 being the one §6 table with a Bounds column. Either §6.5 belongs in §8, or Phase 5 owns a formula with no caller — which is the fifth defect class. The boundary disagreement is the question |
+| §21.5 / §7.2 | The kill switch's trigger is a file sentinel at `$XDG_STATE_HOME/tradipy/kill`, and no module in this package opens a file (D30) | The trigger arrives as `RiskState.trading_halted` / `halt_reason`, which is §10's own `daily_state` schema. So §21.5's path has a reader **nowhere**, which is a registered-but-unenforced shape outside the registry's reach |
+| §7 row 4 | The loss-streak action is *"Lock new entries; **allow exits**"*, and §6.3's eight checks are written as *"before every order submission"* — which would block a protective exit | `approve()` takes the order's intent explicitly rather than inferring it from a side. Inferring is wrong in both directions: a short entry is a `SELL` and a long exit is a `SELL`. §6.3 states no such distinction, so the intent parameter is this layer's and is raised here |
+| §6.7 / §21.1 | §6.7's key is `sha256(symbol\|setup_type\|**trigger_bar_timestamp**\|account_id)`, and §21.1 forbids `datetime.now()` in strategy code — which is why a `SessionBar` carries an `int` minute | `session_date` (an ISO `str` the caller supplies) plus `trigger_minute` (§20.1's ordinal). Keeps §6.7's derivation *here* — same setup, same bar, same key on a retry — while the only imported fact is which session it is, and a `str` cannot be read from a clock |
+| §6.4 | *"within 30 sec"*, and *"cancel remainder only if spread widens > 2× entry spread"* — §6.4 states no ordering between the two conditions | `seconds_since_submit` supplied and the threshold applied here, the same shape `Quote.age_seconds` uses for §20.14. The spread condition is evaluated **before** the timeout, which is the stricter reading: §6.4 attaches no time bound to it, so a fill past 50% that then sees the spread double is cut immediately |
+
+---
+
 ## Unreleased — D33, and the §3 questions implementing it exposed
 
 ### Decided

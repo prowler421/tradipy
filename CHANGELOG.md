@@ -9,6 +9,137 @@ All notable changes to the tradipy **package** are documented here. This file fo
 
 ## [Unreleased]
 
+### Added — Phase 5, §7 pre-order risk and §6 order construction (PLAN D34)
+
+**The transport half of §12.1's Phase 5 is refused, not deferred.** §6.2's lifecycle is
+`Signal → PreTradeRiskCheck → OrderDraft → Submit`, and nothing here reaches the fourth arrow:
+D30 admits no broker SDK, vendor client or network module in `src/`. §12.1's Phase 5 dependency
+column names *"IBKR paper"* and its risk column names *"order routing"*, so what is absent is the
+half the roadmap names first. `docs/PHASE-5-DESIGN.md` §1.1 and §2 are the record.
+
+- **`src/tradipy/positions.py`** — PRD §20.12's state machine as a read-only transition table plus
+  a pure `transition()` that raises `IllegalTransition` on anything the table omits; §3.1.1's
+  `breakeven_stop`; `leg_quantities`, which splits the 50/25/25 ladder over an integer share count
+  with the three legs summing **exactly** to it (§21.6 makes an uncovered share a Sev-1); and
+  §7.1.1's `scale_in_permitted`, which checks the state *and* the arithmetic because §7.1.1's
+  conclusion — *"adds are only ever legal after T1"* — is a claim about states.
+  - **§20.12's diagram and its table disagree** on the permitted transitions and neither is
+    complete. The reading is *the table where it has a row, the diagram where it has none*,
+    recorded on `TRANSITIONS` with its cost stated: a §3 invalidation firing after T1 has no state
+    to move to. Raised in `docs/CHANGELOG.md`.
+- **`src/tradipy/risk.py`** — §6.3's eight pre-trade checks and **nine of** §7's eleven
+  non-signal-time rows, returning §9.2's `RiskDecision` with every rule evaluated and its
+  arithmetic in a `detail` string. The output is asserted against `EVALUATED_RULES`, so a rule
+  dropped from the loop raises instead of shortening a list nobody counted. Rows 7 and 8 have
+  predicates and **no block path** — §7 marks them *Continuous* and *End of day* — which
+  `UNREACHABLE_BLOCKS` enumerates and a test asserts. State arrives as a frozen `RiskState` — §10's `daily_state` row plus the open positions
+  §7.1.1 needs — so no broker, clock, file or database is involved. `total_open_risk` is measured
+  from **current live stops** per §7.1.1, and pending orders count per §7's own *"plus pending
+  orders"*. §7's Continuous rows are predicates that no loop calls; that loop is Phase 6's.
+  - Approval **never trims**: §7's Violation Action is *"Reject order"* and §9.2's
+    `approved_shares` says *"may be <"*. §7 governs; the conflict is raised.
+  - `approve_all` accrues risk **sequentially**, because §7 row 1 caps the *total* — evaluating a
+    watchlist's signals independently against one state gets it wrong in the permissive direction.
+- **`src/tradipy/orders.py`** — §6.1's four-leg bracket as an `OrderDraft` (entry, stop, T1, T2;
+  T3 trails and has no leg, per D18), §6.7's `sha256` idempotency key, §6.4's partial-fill
+  decision, and §6.1's entry-limit and stop-limit offsets. Every price on a draft is validated to
+  be a whole tick on construction: §20.13 requires it of anything submitted, and a draft is the
+  last representation before submission.
+  - **§20.13 states no direction for an entry limit price.** Taken from its governing principle
+    instead — buy limits `ceil`, sell limits `floor`, so rounding costs money rather than saves it.
+- **`RiskBlock`** — a fourth reason-code namespace for §7's account-level rules, twelve members.
+  K5's argument at one more remove: a `Reject` says *this candidate is not tradeable*, a
+  `RiskBlock` says *this account may not take this trade right now*. **`ExitReason`** gained
+  §9.2's other four values (`LADDER_COMPLETE`, `STOPPED_OUT`, `EOD_FLAT`, `KILL_SWITCH`).
+- **`Levels.trigger_minute`** — §20.1's ordinal minute of the trigger bar, which §6.7's key needs
+  and which §21.1 forbids reading from a clock. It belongs on the signal because a caller free to
+  supply a different one can produce two keys for one setup.
+- **Nine registry rows**, all `(bounds: code)`: `max_correlated_positions`,
+  `session_last_entry_minute`, `entry_limit_offset_ticks`, `stop_limit_offset_ticks`,
+  `t1_scale_out_pct`, `t2_scale_out_pct`, `min_partial_fill_pct`,
+  `partial_fill_timeout_seconds`, `partial_fill_spread_widening_multiple`. Registry: 75 → **84**.
+  FINRA's PDT constants are deliberately **not** rows — they are law, like `TICK_SIZE`'s SEC Rule
+  612 basis — and §6.5's `impact_coefficient`, §6.6's signal expiry and §6.8's retry settings are
+  deliberately absent because nothing here would read them.
+- **One new coupling** in `validate_couplings`: `t1_scale_out_pct + t2_scale_out_pct < 1`. At a sum
+  of 1 or more §3.1.1's T3 tranche is empty, which silently deletes the trail §21.2 protects it
+  with while every per-parameter bound still passes.
+- **`python -m tradipy risk`** — takes the §3 signals through §7's rules to a bracket, printing
+  every rule's arithmetic and stopping at the draft. Exits 0.
+- **`tests/test_phase5.py`** plus a §6/§7/§20.12 block in `test_enforcement.py` — **294 test
+  functions** across thirteen files, up from 237 across twelve. **Twelve of those came from review
+  rather than from the build** — nine from the adversarial fact-check of
+  `docs/PHASE-5-DESIGN.md` (a derived boundary-coverage guard, an assertion that `approve` cannot
+  drop a rule, one that the two unreachable `RiskBlock` members stay unreachable, and three
+  boundary fixtures that turned a "six of nine" claim into nine of nine), one from round 14's H6,
+  and two from the **re-review of round 14's own disposition**, which found a count that
+  disposition had broken. That last pair is the more useful number: the build wrote 45 fixtures for
+  this phase and review wrote 12, and every one of the 12 covers something the build believed was
+  already true.
+
+### Changed — review round 14 (`docs/reviews/REVIEW-2026-08-01-round14.md`)
+
+The first cold read of Phase 5, by a party that did not build it. Seven findings, prefixed `H*`;
+H1–H3 confirm what the build already raised, H4/H5/H7 agree with what it already stated, and one
+was fixed:
+
+- **H6, fixed inline** per convention 8. `python -m tradipy risk` now derives §6.7's idempotency key
+  **before** `approve` — which is the ordering §6.7 requires (*"persisted before order
+  submission"*) — and passes it through a new `approve_all(..., keys=...)` parameter shaped like the
+  existing `groups`. `approve_all` folds an approved key into `submitted_keys`, without which §6.3's
+  eighth check was inert across a batch: a caller with no store could not reach the duplicate case
+  at all. `risk.py` still does not import `orders`, because §6.2 puts `PreTradeRiskCheck` before
+  `OrderDraft`. The demo's audit trail is now the same length a production caller's would be.
+- **H3 re-characterised, no code change.** §20.12's chosen reading was recorded as a cost of that
+  reading; read across two phases it is a **boundary**. `setups.bull_flag_exit` returns
+  `ExitReason.INVALIDATED` on any bar after entry without consulting a state, and §20.12 permits
+  `T1_FILLED → STOPPED_OUT` only — so Phase 4's post-entry predicates and Phase 5's state machine
+  share §20.12's vocabulary by construction and still do not compose for a mid-ladder exit.
+  `docs/PHASE-5-DESIGN.md` §6 now carries it as finding 3 and `docs/CHANGELOG.md` has its own row.
+- **A count this same disposition broke, fixed with the guard that should have caught it.** Adding
+  H3's row took `docs/CHANGELOG.md`'s Phase 5 spec-question table to fifteen rows under a
+  **Fourteen** header — the L1 / K6 shape for the sixth time, and the second time inside one
+  changeset. Found by re-review, not by tooling, because `test_documentation.py`'s patterns matched
+  only digits. `tests/test_documentation.py` now derives each spec-question table's row count and
+  compares it against the word stated above it, with a liveness guard for a section that states
+  none; `docs/PLAN.md`'s Phase 5 row is reconciled to the same convention (the table is the count;
+  the two joint incoherences are counted separately) after using a third one. The guard was
+  verified by planting both directions of the defect and the removal of the count.
+- **No new defect class.** H1 and H2 are further populations of the third; the count stays at six.
+
+### Found — two joint incoherences between §7's rules and §2's defaults
+
+Both reproduced **by execution** the first time §7's rules ran against §2's own worked examples,
+both **raised and not resolved**, both the third defect class, and both invisible to every earlier
+check because each needs *two* parameters read together:
+
+- **§7's total-risk cap makes `max_open_positions` > 1 unreachable at full size.** The cap is on
+  *total* open risk against the same budget §2.2 sizes a *single* position to, so the second
+  position is rejected whenever the first is still at full risk — while §2 advertises three.
+- **§7's daily-loss row makes §7's PDT row unreachable at the default equity.** Falling below
+  FINRA's $25,000 floor from $30,000 needs a 16.7% loss; `daily_loss_pct` locks the account at 5%
+  at most.
+
+Both are pinned in both directions by `tests/test_phase5.py`, so resolving either fails a fixture
+deliberately. Neither is enforced as a coupling, per convention 5 and A25's precedent: the
+incoherent combination *is* the shipped default.
+
+### Changed
+
+- **`docs/development.md`'s source tree was missing `session.py` and `setups.py`** — stale since
+  Phase 4, fixed inline per convention 8.
+- `tests/test_documentation.py`'s number-word table stopped at twelve, so a fourteen-module
+  package made the module-count guard raise `KeyError` instead of reporting drift. Extended.
+
+### Still open
+
+- **G2 narrows, it does not close.** `daily_loss_pct` now has §6.3's pre-order enforcement point.
+  §7 states three; the *Continuous (1 s)* and *post-fill* halves need a feed and a fill.
+- **Two guarantees are computed and cannot be enforced**, and are pinned *absent* by tests rather
+  than left ambiguous: §6.7's *"the DB — not process memory — is the arbiter"* has no store, and
+  §7.1.2's restart survival has no persistence.
+- **Fourteen spec questions**, in `docs/CHANGELOG.md`. Phase 4's nineteen remain untouched.
+
 ### Added — Phase 4, the §3 strategy engine (PLAN D33)
 
 - **`src/tradipy/session.py`** — PRD §20.1, §20.2, §20.3, §20.5 and §20.6 over an ordered series:

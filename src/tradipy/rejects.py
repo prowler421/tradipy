@@ -25,15 +25,22 @@ cannot land — convention 6 — because a type annotation is not a runtime guar
 :class:`ExitReason` is the third, added with Phase 4 on the same argument one step further out:
 a *rejection* declines a trade that was never taken and an *exit* closes one that was, so a
 pre-entry gate returning ``BAILED_OUT`` and an exit rule returning ``SPREAD_TOO_WIDE`` are both
-nonsense that a shared namespace would permit. Its two members are transcribed from §20.12's
-state names rather than named here.
+nonsense that a shared namespace would permit. Its members are transcribed from §20.12's state
+names and §9.2's ``ClosedTrade.exit_reason`` values rather than named here.
+
+:class:`RiskBlock` is the fourth, added with Phase 5 (**D34**) for §7's rule table. A
+:class:`Reject` says *this candidate is not tradeable*; a ``RiskBlock`` says *this account may
+not take this trade right now*, and the same candidate is fine tomorrow. Mixing them would let
+:mod:`tradipy.scanner` filter a universe on ``LOSS_STREAK_LOCKOUT``, which is K5's shape exactly.
+There is also a concrete asymmetry that no shared enum can express: two §7 rows' Violation Action
+is *"Flatten all; lock account"*, which is not a rejection of anything.
 """
 
 from __future__ import annotations
 
 from enum import Enum
 
-__all__ = ["Reject", "SoftFlag", "ExitReason"]
+__all__ = ["Reject", "SoftFlag", "ExitReason", "RiskBlock"]
 
 
 class Reject(Enum):
@@ -194,3 +201,102 @@ class ExitReason(Enum):
     #: VWAP (all three setups) or, for §3.3, a close back below the prior HOD within
     #: ``hod_reclaim_invalidation_candles``.
     INVALIDATED = "INVALIDATED"
+
+    # --- PRD §9.2 `ClosedTrade.exit_reason`, the remaining four (Phase 5) --
+    # §9.2 enumerates six exit reasons; §20.12 has state names matching only three of them
+    # (`STOPPED_OUT`, `INVALIDATED`, `BAILED_OUT`). The three below have no §20.12 state, and
+    # §20.12's `EXPIRED` has no exit reason — consistently, because a position that expired
+    # never opened and so produces no `ClosedTrade`. Both halves of that asymmetry are raised in
+    # docs/CHANGELOG.md rather than reconciled here.
+
+    #: PRD §9.2 / §20.12 / §3.1.1 — the full ladder ran: T1, T2, then the trail closed the
+    #: final tranche. The `TRAILING -> CLOSED` edge, and the only exit that is not a failure.
+    LADDER_COMPLETE = "LADDER_COMPLETE"
+
+    #: PRD §9.2 / §20.12 — a protective stop filled. A §20.12 *state* as well as an exit reason,
+    #: reachable from `OPEN_FULL`, `T1_FILLED` and `TRAILING` per that section's table.
+    STOPPED_OUT = "STOPPED_OUT"
+
+    #: PRD §9.2 / §7 — flattened at the end of the enabled session window. §7's trading-hours
+    #: row rejects new *entries* outside the window; closing what is already open is this.
+    EOD_FLAT = "EOD_FLAT"
+
+    #: PRD §9.2 / §7.2 — the emergency kill switch flattened everything. Distinct from
+    #: :attr:`RiskBlock.TRADING_HALTED`, which declines an entry: this closes a position.
+    KILL_SWITCH = "KILL_SWITCH"
+
+
+class RiskBlock(Enum):
+    """Why the **account** may not take a trade right now — PRD §7's rule table.
+
+    One member per §7 row that is not already a :class:`Reject`, named for the rule rather than
+    for the condition, because §9.2's ``RiskDecision.reject_reason`` is *"§7 rule name or §4.2
+    code"* and §7 is the table those names come from.
+
+    §7's two signal-time rows are **deliberately absent**: Min R:R and Spread check are
+    :func:`tradipy.gates.check_room` and :func:`tradipy.gates.check_spread`, they already return
+    :class:`Reject` members, and giving them a second spelling here would be the v1.2 defect
+    class. :class:`~tradipy.risk.RiskDecision` carries ``RiskBlock | Reject | None`` for exactly
+    that reason.
+    """
+
+    #: PRD §7 row 1 — **NON-BYPASSABLE.** Total open risk across all positions, measured from
+    #: their *current live stops* plus the pending order (§7.1.1), would exceed
+    #: ``start_of_day_equity × max_risk_per_trade_pct``. Note this is a cap on the **total**,
+    #: not per position, which is what makes ``max_open_positions`` > 1 unreachable at full size
+    #: — raised in docs/CHANGELOG.md and pinned by ``tests/test_enforcement.py``.
+    MAX_RISK_EXCEEDED = "MAX_RISK_EXCEEDED"
+
+    #: PRD §7 row 2 — **NON-BYPASSABLE.** Realized + unrealized P&L at or below
+    #: ``-start_of_day_equity × daily_loss_pct``. §7 gives this rule three enforcement points
+    #: (continuous at 1 s, post-fill, and §6.3's pre-order list); only the pre-order one is
+    #: implemented, which narrows open question **G2** rather than closing it.
+    DAILY_LOSS_LIMIT = "DAILY_LOSS_LIMIT"
+
+    #: PRD §7 row 3 — open positions already at ``max_open_positions``.
+    MAX_POSITIONS = "MAX_POSITIONS"
+
+    #: PRD §7 row 4 / §2 "Three Strikes Rule" — ``consecutive_losses >=
+    #: max_consecutive_losses``. §7's action is *"Lock new entries; **allow exits**"*, which is
+    #: why :func:`tradipy.risk.approve` takes the order's intent explicitly rather than inferring
+    #: it from a side.
+    LOSS_STREAK_LOCKOUT = "LOSS_STREAK_LOCKOUT"
+
+    #: PRD §7 row 5 / §2.2 — ``shares × entry > buying_power × max_bp_usage_pct``. §2.2 states
+    #: the same constraint as a *sizing* cap, where :func:`tradipy.gates.position_size` applies
+    #: it; §7 states it as a pre-order *rejection*. Both are implemented, at their own points.
+    BUYING_POWER = "BUYING_POWER"
+
+    #: PRD §7 row 6 — the order would open the **4th** day trade in a rolling 5-business-day
+    #: window while equity is below FINRA's $25,000 threshold. Not bypassable per §7.
+    PDT_VIOLATION = "PDT_VIOLATION"
+
+    #: PRD §7 row 7 — session peak-to-trough drawdown beyond ``session_dd_pct``. §7's
+    #: enforcement point is *Continuous*, so in Phase 5 this is produced by a predicate that no
+    #: loop calls; the loop is Phase 6's.
+    SESSION_DRAWDOWN = "SESSION_DRAWDOWN"
+
+    #: PRD §7 row 8 — rolling 5-day drawdown beyond ``multi_day_dd_pct``. Enforcement point
+    #: *End of day*, so the same caveat as :attr:`SESSION_DRAWDOWN` applies.
+    MULTI_DAY_DRAWDOWN = "MULTI_DAY_DRAWDOWN"
+
+    #: PRD §7 row 9 — outside the enabled session window. Evaluated against §20.1's ordinal
+    #: minute from the open, not a wall clock (§21.1).
+    OUTSIDE_SESSION_WINDOW = "OUTSIDE_SESSION_WINDOW"
+
+    #: PRD §7 row 10 / §7.1.3 / **D21** — more than ``max_correlated_positions`` sharing a
+    #: correlation group. The group is *assigned* from a supplied catalyst key or sector, because
+    #: sourcing either is a feed; the rule enforced here is the count.
+    CORRELATED_EXPOSURE = "CORRELATED_EXPOSURE"
+
+    #: PRD §7 row 11 / §7.2 / §7.1.2 — the account is locked: kill switch, daily-loss lockout or
+    #: a drawdown lock carried over. This is §10's ``daily_state.trading_halted``, supplied
+    #: rather than sensed, because §7.2's trigger is a file sentinel and no module here reads a
+    #: file (D30).
+    TRADING_HALTED = "TRADING_HALTED"
+
+    #: PRD §6.7 — an order already exists for this ``idempotency_key``. §6.3's eighth check.
+    #: **The weakest member of this enum, and it says so:** §6.7 requires the *database* to be
+    #: the arbiter so protection survives a crash mid-submission, and Phase 5 has no store — so
+    #: this is raised against a set of keys the caller hands in. See docs/PHASE-5-DESIGN.md §1.1.
+    DUPLICATE_ORDER = "DUPLICATE_ORDER"

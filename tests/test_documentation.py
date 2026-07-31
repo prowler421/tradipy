@@ -49,6 +49,14 @@ CHECKED_DOCS: tuple[Path, ...] = (
     DOCS / "development.md",
     DOCS / "CHANGELOG.md",
     DOCS / "PHASE-2A-SPIKE.md",
+    # The two design records were **outside** this tuple until Phase 5, which is a gap of exactly
+    # the shape this file exists to close: they are the documents that state the most counts about
+    # the code, and none of those counts was checked. Found by the adversarial fact-check of
+    # PHASE-5-DESIGN, which turned up a registry-row claim, a boundary-fixture claim and a
+    # test-count claim that a reader had to verify by hand. A guard that omits the documents most
+    # likely to drift is a guard whose scope nobody stated.
+    DOCS / "PHASE-4-DESIGN.md",
+    DOCS / "PHASE-5-DESIGN.md",
     REPO / "CLAUDE.md",
     REPO / "README.md",
     REPO / "CONTRIBUTING.md",
@@ -68,6 +76,10 @@ WORDS = {
     10: "ten",
     11: "eleven",
     12: "twelve",
+    13: "thirteen",
+    14: "fourteen",
+    15: "fifteen",
+    16: "sixteen",
 }
 
 
@@ -300,3 +312,97 @@ def test_every_registered_marker_is_documented_and_used() -> None:
     tests_readme = _text(REPO / "tests" / "README.md")
     undocumented = sorted(m for m in declared if m not in tests_readme)
     assert not undocumented, f"markers not documented in tests/README.md: {undocumented}"
+
+
+# ---------------------------------------------------------------------------
+# Spec-question table sizes — the count stated as a word above its own table
+# ---------------------------------------------------------------------------
+#
+# `_REGISTRY_COUNT` above matches **digits**, so a heading reading `**Fourteen**` over a list of
+# fifteen is invisible to it. That is not hypothetical: it happened twice inside one changeset in
+# `docs/CHANGELOG.md`'s Phase 5 section — once in the first draft, and again when a review
+# disposition added a row to the table and left the number alone, in the paragraph that had just
+# finished explaining the first instance. Six occurrences of this shape are now on record (L1, K6
+# row 3, PLAN's round count, PHASE-5-DESIGN §6's first draft, its boundary-fixture claim, and this
+# one), and prose calling the shape out has demonstrably not stopped it.
+#
+# Scope, stated because an unqualified claim about a checker is what F8 was about: this counts the
+# **rows** of each `### Spec questions` table in `docs/CHANGELOG.md` and compares them against the
+# first spelled-out number in the paragraph beneath the heading. It does not check the changelog's
+# other tables, it does not check any other document, and it cannot tell whether a row *should*
+# exist. A table whose heading states no number at all is skipped and reported by the guard below.
+
+_WORD_TO_INT = {word: value for value, word in WORDS.items()}
+
+#: A count stated as a word, in **count position**: the first token of a bold run opening a line,
+#: as in ``**Fifteen, plus the two findings above.**``. Deliberately narrow. The first version of
+#: this took the first number-word anywhere in the paragraph and read *"localised to **one**
+#: function"* as a claim that the table had one row — a pattern too greedy produces false failures,
+#: which get suppressed, which is how a lint stops being trusted. That warning is already written
+#: above ``_REGISTRY_COUNT``; this is what ignoring it looks like.
+_STATED_WORD_COUNT = re.compile(
+    r"^\*\*(" + "|".join(_WORD_TO_INT) + r")\b", re.I | re.MULTILINE
+)
+
+
+def _changelog_question_tables() -> list[tuple[str, int, int | None]]:
+    """Every ``### Spec questions`` section: its heading, its row count, and its stated number."""
+    lines = _text(DOCS / "CHANGELOG.md").splitlines()
+    starts = [i for i, line in enumerate(lines) if line.startswith("### Spec questions")]
+    out: list[tuple[str, int, int | None]] = []
+    for start in starts:
+        end = next(
+            (i for i in range(start + 1, len(lines)) if lines[i].startswith("#")), len(lines)
+        )
+        body = lines[start + 1 : end]
+        rows = [
+            line
+            for line in body
+            if line.startswith("|")
+            and not re.fullmatch(r"\|[\s\-|:]+\|", line)
+            and not line.startswith("| Where |")
+        ]
+        prose = "\n".join(line for line in body if not line.startswith("|"))
+        found = _STATED_WORD_COUNT.search(prose)
+        stated = _WORD_TO_INT[found.group(1).lower()] if found else None
+        out.append((lines[start], len(rows), stated))
+    return out
+
+
+@pytest.mark.spec
+def test_each_spec_question_table_matches_the_count_stated_above_it() -> None:
+    """A ``### Spec questions`` heading's number must equal the rows beneath it.
+
+    The count is the table, everywhere it is quoted — ``docs/PHASE-4-DESIGN.md`` §6 and
+    ``docs/PHASE-5-DESIGN.md`` §6 both defer to ``docs/CHANGELOG.md`` for the number rather than
+    restating it, precisely so that this is the only place it can drift.
+    """
+    wrong = [
+        f"{heading!r}: states {stated}, table has {rows}"
+        for heading, rows, stated in _changelog_question_tables()
+        if stated is not None and stated != rows
+    ]
+    assert not wrong, "spec-question count drifted:\n  " + "\n  ".join(wrong)
+
+
+@pytest.mark.spec
+def test_the_spec_question_count_check_is_live() -> None:
+    """Guard on the guard: the check above must be evaluating at least one real count.
+
+    A lint that matches nothing passes forever, which is how the registry lint stayed blind to 7 of
+    29 parameters. Sections that state **no** count in count position are simply not checked, and
+    that is the scope statement rather than a defect — most of these sections are short enough that
+    a stated total adds nothing. What must not happen is *every* section going unchecked, because
+    then the mechanism is decorative.
+    """
+    tables = _changelog_question_tables()
+    assert tables, "no '### Spec questions' section found — check the parser, not the result"
+    counted = [(h, r, s) for h, r, s in tables if s is not None]
+    assert counted, (
+        "no spec-question section states a count in count position — either the phrasing changed "
+        "or _STATED_WORD_COUNT no longer matches it, and the check above is now inert"
+    )
+    # And the parser must be reading rows, not zero of them.
+    assert all(rows > 0 for _, rows, _ in counted), (
+        f"a counted section parsed to zero rows: {[(h, r) for h, r, _ in counted if r == 0]}"
+    )

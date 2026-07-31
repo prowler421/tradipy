@@ -16,16 +16,18 @@ between prose, comments, and code. Read it before changing behavior.
 
 ## Architecture
 
-Eleven small, pure modules under `src/tradipy/`, plus a CLI:
+Fourteen small, pure modules under `src/tradipy/`, plus a CLI:
 
 - `rounding.py` — tick arithmetic and polarity-aware threshold rounding. The governing
   principle is *"rounding must never weaken a constraint."* `Polarity.MINIMUM` rounds up;
   `Polarity.MAXIMUM` rounds down and clamps to one tick.
-- `rejects.py` — the `Reject` reason codes, the `SoftFlag` codes for §4.2's seven Soft rows, and
-  the `ExitReason` codes for §3's post-entry rules. Three enums, not one: a soft row flags and
-  never rejects, an exit closes a position that a rejection declined to open, and splitting the
-  namespaces makes mixing them a type error rather than a review finding (round 10, K5; the third
-  arrived with Phase 4 and its members are transcribed from §20.12).
+- `rejects.py` — the `Reject` reason codes, the `SoftFlag` codes for §4.2's seven Soft rows, the
+  `ExitReason` codes for §3's post-entry rules and §9.2's closed trades, and the `RiskBlock` codes
+  for §7's rule table. Four enums, not one: a soft row flags and never rejects, an exit closes a
+  position that a rejection declined to open, and a `RiskBlock` is a fact about the *account*
+  rather than the candidate — so splitting the namespaces makes mixing them a type error rather
+  than a review finding (round 10, K5; the third arrived with Phase 4, transcribed from §20.12,
+  and the fourth with Phase 5).
   Separate from `gates` so `quotes` need not depend on `gates`; `Reject` is re-exported from
   `tradipy.gates` for compatibility.
 - `params.py` — the parameter registry: the single source of truth for every tunable
@@ -52,9 +54,29 @@ Eleven small, pure modules under `src/tradipy/`, plus a CLI:
   defines nothing — *flag*, *consolidation candle*, *dip*, *leg* — the reading taken is on the
   function and raised in `docs/CHANGELOG.md`; `docs/PHASE-4-DESIGN.md` §5 is the list. Out of
   scope and stated: §20.12's state machine, T3's EMA trail (D18), §7's pre-order rules.
+- `positions.py` — PRD §20.12's position state machine as a transition **table** plus a pure
+  transition function, §3.1.1's stop-to-breakeven and its 50/25/25 ladder split over an integer
+  share count, and §7.1.1's scale-in legality. §20.12's diagram and its table disagree on the
+  permitted transitions and neither is complete; the reading taken is *the table where it has a
+  row, the diagram where it has none*, recorded on `TRANSITIONS` and raised in `docs/CHANGELOG.md`.
+- `risk.py` — PRD §6.3's eight pre-trade checks and nine of §7's eleven non-signal-time rows,
+  returning §9.2's `RiskDecision` with **every** rule evaluated, asserted against
+  `EVALUATED_RULES` so a rule dropped from the loop raises rather than shortening a list.
+  Rows 7 and 8 — the drawdowns — have predicates and **no block path**, because §7 marks them
+  *Continuous* and *End of day*; `UNREACHABLE_BLOCKS` enumerates that and a test asserts it. State is handed in as a frozen `RiskState`
+  (§10's `daily_state` row plus the open positions §7.1.1 needs) — no broker, clock, file or
+  database. §7's two signal-time rows stay in `gates` and are re-applied here, because §7 marks
+  their enforcement point pre-order as well. Does **not** round. Approval never trims: §7 says
+  *"Reject order"* and §9.2's `approved_shares` says *"may be <"*; §7 governs and the conflict is
+  raised.
+- `orders.py` — PRD §6.1's bracket as an `OrderDraft`, §6.7's `sha256` idempotency key, §6.4's
+  partial-fill decision. **The boundary of the whole package:** §6.2's lifecycle is
+  `Signal → PreTradeRiskCheck → OrderDraft → Submit`, and the fourth arrow is *refused*, not
+  deferred (D30). Every price on a draft is validated to be a whole tick, because a draft is the
+  last representation before submission (§20.13).
 - `poc.py` / `__main__.py` — the proof of concept. `poc` composes the gates into one
   evaluation and holds the simulated scanner universe; `__main__` is
-  `python -m tradipy demo` / `evaluate` / `scan`, argparse and nothing else. Explicitly not
+  `python -m tradipy demo` / `evaluate` / `scan` / `setups` / `risk`, argparse and nothing else. Explicitly not
   the strategy engine: it gates a candidate and filters a universe it was handed, it does not
   find one.
 
@@ -62,22 +84,28 @@ Data flows one way. `rounding`, `rejects` and `bars` import only the standard li
 `params` imports `rounding`; `quotes` and `gates` import `params`, `rejects` and `rounding`;
 `score` imports `params`; `session` imports `bars` and `params`; `scanner` imports `params`,
 `rejects`, `score` and `gates`; `setups` imports `bars`, `session`, `params`, `rejects`,
-`rounding` and `gates`; `poc` imports the lot, and `__main__` imports `poc` plus `setups` for one
-type annotation. Everything is `Decimal`.
+`rounding` and `gates`; `positions` imports `params`, `rejects` and `rounding`; `risk` imports
+`gates`, `params`, `positions`, `rejects`, `rounding` and `setups`; `orders` imports `params`,
+`positions`, `rounding` and `setups`. `poc` imports everything up to and including `setups` and
+**none of the three Phase 5 modules** — Phase 5 composes at the CLI, so `__main__` imports `poc`
+plus `setups`, `positions`, `risk` and `orders`. Everything is `Decimal`.
 
 ## Repository layout
 
 ```
 src/tradipy/        # the library (rounding, rejects, params, bars, quotes, score, gates,
-                    # scanner, session, setups) plus poc.py and __main__.py — the runnable
-                    # proof of concept
+                    # scanner, session, setups, positions, risk, orders) plus poc.py and
+                    # __main__.py — the runnable proof of concept
 tests/              # pytest suite — worked examples, registry, boundary/polarity marks,
                     # enforcement fixtures, and doc-count consistency
 docs/               # start at docs/README.md (index)
   PRD.md            #   normative; §20 governs on any conflict
-  PLAN.md           #   workstreams, sequencing, decision log D1–D33 (no D31), risks
+  PLAN.md           #   workstreams, sequencing, decision log D1–D34 (no D31), risks
   CHANGELOG.md      #   PRD corrections — NOT the root CHANGELOG.md, which tracks the package
   PHASE-2A-SPIKE.md #   data spike scope with binding pre-registration
+  PHASE-4-DESIGN.md #   design record for the §3 strategy engine (D33)
+  PHASE-5-DESIGN.md #   design record for §7 pre-order risk / §6 orders (D34) — and for
+                    #   what it refused to build, which is the half §12.1 names first
   api.md architecture.md development.md
   reviews/          #   every independent review round, kept unedited as the record
 scripts/            # maintenance helpers — registry baseline, link checker

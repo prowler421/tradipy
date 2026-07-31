@@ -1,6 +1,6 @@
 # Documentation index
 
-Seven documents plus this index and a review archive. They are not interchangeable, and two of
+Eight documents plus this index and a review archive. They are not interchangeable, and two of
 them are authoritative in ways the others are not — so read this page before citing any of them.
 
 ## Start here
@@ -16,6 +16,7 @@ them are authoritative in ways the others are not — so read this page before c
 | Run the data spike | [PHASE-2A-SPIKE.md](PHASE-2A-SPIKE.md), [PHASE-2A-REPORT.md](PHASE-2A-REPORT.md) |
 | Assess Phase 3 readiness | [PHASE-3-READINESS.md](PHASE-3-READINESS.md) |
 | Understand what Phase 4 built, and what it refused to claim | [PHASE-4-DESIGN.md](PHASE-4-DESIGN.md) |
+| Understand what Phase 5 built, and what it *refused to build* | [PHASE-5-DESIGN.md](PHASE-5-DESIGN.md) |
 
 ## The two authoritative documents
 
@@ -33,18 +34,19 @@ and a change usually belongs in exactly one.
 
 | Document | Role |
 |---|---|
-| [PLAN.md](PLAN.md) | Workstreams 0–11, the sequencing table, the decision log D1–D30, and the risk register. The defect-classes section is the most cited part of the repository, and PLAN is where its count is maintained — deliberately not restated here, so that this page cannot go stale against it |
+| [PLAN.md](PLAN.md) | Workstreams 0–11, the sequencing table, the decision log D1–D34 (no D31), and the risk register. The defect-classes section is the most cited part of the repository, and PLAN is where its count is maintained — deliberately not restated here, so that this page cannot go stale against it |
 | [PHASE-2A-SPIKE.md](PHASE-2A-SPIKE.md) | Scope and **binding pre-registration** for the data feasibility spike (PRD §5.5 / V7). Its §7 thresholds were committed before any data was pulled and are not to be retrofitted to a result |
 | [PHASE-2A-REPORT.md](PHASE-2A-REPORT.md) | Completion report per §6 — Q1–Q4 status, measured vs pipeline-only |
 | [PHASE-3-READINESS.md](PHASE-3-READINESS.md) | Gate checklist for whether Phase 3 (scanner) may start (D29). Also the only record of **review round 11**, which wrote no review file |
 | [PHASE-4-DESIGN.md](PHASE-4-DESIGN.md) | Design record for the §3 strategy engine (D33): module shape, the nineteen readings and questions §3 forced, the scope boundary, and what simulated-only construction cannot establish |
+| [PHASE-5-DESIGN.md](PHASE-5-DESIGN.md) | Design record for §7 pre-order risk and §6 order construction (D34). The one phase whose §12.1 scope is partly **forbidden** rather than deferred, so its §1.1 and §2 are load-bearing: it states what it refused to build, the two gates it did not pass, and the two guarantees it computes and cannot enforce |
 
 ## Engineering guides
 
 | Document | Role |
 |---|---|
 | [architecture.md](architecture.md) | Module structure, the one-way dependency graph, and the five design invariants the test suite defends |
-| [api.md](api.md) | Public surface of all eleven library modules, with signatures and worked snippets |
+| [api.md](api.md) | Public surface of all fourteen library modules, with signatures and worked snippets |
 | [development.md](development.md) | Environment, `make` targets, the testing markers, the release process, and the mutation protocol |
 
 See also [../tests/README.md](../tests/README.md), which is where the **documented open
@@ -69,6 +71,7 @@ of what was found; corrections go to the changelogs, not into the review that fo
 | [claude-PHASE-3-REVIEW.md](reviews/claude-PHASE-3-REVIEW.md) | The **Phase 3 gate** and the same interval, conducted independently of round 9 and completed after it; findings prefixed `K*` so the two do not collide | 7; two MEDIUM-HIGH — a completion report quoting the previous commit's numbers under a claim of regeneration, and `q1_vendors` asserting a §7 Q1 negative from an empty matrix. Candidate **seventh defect class** raised, not decided. Phase 3 gate verdict unchanged: not ready |
 | *(round 11 — no file)* | `make check` at the Phase 3 merge. Its record is the first-row note in [PHASE-3-READINESS.md](PHASE-3-READINESS.md) | **Red**: eleven `ruff` errors, two unformatted files, three `basedpyright` errors, all introduced by Phase 3 and all fixed there. Used no finding prefix, which is why round 12 uses `L` |
 | [REVIEW-2026-07-31-round13.md](reviews/REVIEW-2026-07-31-round13.md) | `session.py` and `setups.py` with fresh eyes, and round 12 verified — the first round to read Phase 4 without having written it | 7, prefixed `M*`; one **HIGH** — §3.4 criterion 9 (HOD proximity consolidation) was implemented, documented and reachable with **no fixture that activated its branch**, so nothing would have noticed it breaking. **M7** is the same shape on the *prior HOD* reading. M3–M5 are three dead conditions in `setups.py`, fixed inline per convention 8. All eight of round 12's `L` findings hold |
+| [REVIEW-2026-08-01-round14.md](reviews/REVIEW-2026-08-01-round14.md) | The **Phase 5 build** (D34) — `positions.py`, `risk.py`, `orders.py`, their fixtures and PHASE-5-DESIGN. The first cold read of Phase 5, by a party that did not write it | 7, prefixed `H*`; two **MEDIUM-HIGH** — **H1**, §7's total-open-risk cap makes `max_open_positions` > 1 unreachable while a position is at full risk, and **H3**, §20.12 cannot express a post-T1 invalidation or a kill-switch flatten, so Phase 4's post-entry predicates and Phase 5's state machine do not compose mid-ladder. H1, H2 and H3 were already raised by the build; **H6 fixed inline** per convention 8. **No new defect class** — H1 and H2 are further populations of the third. `make check` **not run** for the second round running, and the round says so |
 | [REVIEW-2026-07-31-round12.md](reviews/REVIEW-2026-07-31-round12.md) | Rounds 9 and 10 verified, and **Phase 4** — which this round also built, so it is explicitly not an independent review of it | 8, prefixed `L*`; one **HIGH** — §3.4's worked example is rejected by §3.1.1's own room gate, the next whole dollar being nearer than the HOD its table names. Reproduced by execution; raised, not resolved. Also K3 partially closed, and a test count that went wrong again one commit after K6 fixed it. No new defect class: L2 is a new *population* of the third |
 
 **On the naming.** `REVIEW-v1.2` and `REVIEW-v1.3` are named for the PRD version they reviewed;
@@ -97,8 +100,12 @@ including the mandatory adversarial fact-check.
   [`../tests/test_enforcement.py`](../tests/test_enforcement.py) and the
   [`guarantee-test`](../.claude/skills/guarantee-test/SKILL.md) skill.
 - **Counts stated in prose are checked.** `tests/test_documentation.py` asserts that the numbers
-  these documents quote — registered parameters, baseline entries, reject codes, library modules
-  — match the code. A count stated twice with one copy updated is the v1.2 defect class, and it
-  has recurred inside this documentation set as recently as this month.
+  these documents quote — registered parameters, baseline entries, reject codes, library modules,
+  and the size of each spec-question table — match the thing they describe. A count stated twice
+  with one copy updated is the v1.2 defect class, and it has now recurred inside this documentation
+  set **six times**, most recently when a review disposition added a row to a table and left the
+  word above it alone — in the paragraph that had just finished explaining the previous instance.
+  Two gaps that allowed it are closed: the checker's patterns matched only **digits**, so
+  `**Fourteen**` was invisible, and the two design records were outside its scope entirely.
 - **Relative links are checked.** `make links` (also a pre-commit hook and a CI step) validates
   every relative Markdown link and heading anchor in the repository.

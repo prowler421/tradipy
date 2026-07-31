@@ -9,6 +9,12 @@ All notable changes to the tradipy **package** are documented here. This file fo
 
 ## [Unreleased]
 
+### Fixed
+
+- **Q4 quote selection (review H4/H6).** `signal_bars.csv` requires `signal_at`; `feeds.quote_at_or_before`
+  picks the NBBO in force at that instant and derives `age_seconds` for §20.14. Stops every setup
+  on a symbol-session from sharing the session's last tick. `tests/test_spike2a_q4_quote_selection.py`.
+
 ### Changed — all data is simulated (PLAN D30, `CLAUDE.md` convention 9)
 
 - **`scripts/spike2a/q3_collect.py`, `scripts/spike2a/q4_collect_real_data.py` and

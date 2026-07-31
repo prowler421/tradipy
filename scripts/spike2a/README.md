@@ -127,7 +127,7 @@ is true for every row, so the gap filter would stop rejecting anything, and `5 >
 every row, so every session would be reported as a vendor coverage failure that never happened.
 `PreOpenFacts.check_units()` therefore rejects any of the three above `1`, and `classify()` calls
 it before anything else. `rvol` is *not* a fraction — `min_rvol` is a plain multiple of ADV.
-| `signal_bars.csv` | `symbol,session,setup,price,r` |
+| `signal_bars.csv` | `symbol,session,setup,price,r,signal_at` — `signal_at` is ISO 8601 UTC; Q4 selects the last quote at or before it |
 | `quotes.csv` | `symbol,captured_at,bid,ask,bid_size,ask_size[,age_seconds]` |
 | `floats.csv` | `symbol,provider,float_shares,as_of[,short_interest_shares]` |
 | `latency.csv` | `kind,seconds[,note]` — `kind` is `data_to_signal` or `signal_to_order` |
@@ -167,11 +167,15 @@ round 7 found it by running the test. The lesson is not about the lint, which
 worked: run `make check` and read the output, because a sentence saying a check exists is not the
 check's result.
 
-The second obligation below is guarded by nothing at all, and it was the round-7 defect with teeth:
-`synthetic_data_generator.py` claimed in its own docstring to derive R from the library's stop
-functions while multiplying by a hand-written percentage. Correcting it moved the §7 Q4 verdict on
-the same synthetic sample from INERT to CALIBRATED — so an R computed by hand is not a hygiene
-matter, it changes the answer.
+The second obligation below **is now guarded, by a test rather than by the schema** — it was the
+round-7 defect with teeth: `synthetic_data_generator.py` claimed in its own docstring to derive R
+from the library's stop functions while multiplying by a hand-written percentage. Correcting it
+moved the §7 Q4 verdict on the same synthetic sample from INERT to CALIBRATED — so an R computed by
+hand is not a hygiene matter, it changes the answer. The schema still cannot enforce it —
+`signal_bars.csv`'s `r` column parses identically regardless of how it was derived — but the
+generator now is: `tests/test_spike2a_instrumentation.py` asserts by AST that `generate_signal_bars`
+calls `apply_stop_floor_and_ceiling` and by runtime that `R = entry − stop`, and reintroducing the
+hand-derived fraction fails both immediately.
 
 Spike-only acceptance thresholds — §7's 30%, 2%, 95%, p95 seconds — live in `prereg.py` as `int`
 percents and counts. They are **not** registered parameters and must not become any: a registered

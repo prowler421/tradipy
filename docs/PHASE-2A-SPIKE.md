@@ -1,11 +1,12 @@
 # Phase 2a — Data Feasibility Spike
 
-> **Suspended by [PLAN](PLAN.md) D30 — this spike cannot run.** The project reads simulated data
-> only, and §7 binds its thresholds to *measured* data. Q1–Q4 are therefore unanswerable until
-> the data ladder reaches `PAPER`, which is a recorded decision and not a step taken while
-> chasing a measurement. **Nothing in §7 is amended** — it is exactly as pre-registered on
-> 2026-07-29, and D30 removes its subject rather than its thresholds. Everything below is
-> retained because it is what the spike will be when it resumes; read it in the future tense.
+> **Suspended by [PLAN](PLAN.md) D30 — measured Q1–Q4 await the PAPER rung.** Instrumentation is
+> complete; see [PHASE-2A-REPORT.md](PHASE-2A-REPORT.md) and [PHASE-3-READINESS.md](PHASE-3-READINESS.md).
+> The project reads simulated data only, and §7 binds its thresholds to *measured* data. Q1–Q4 are
+> therefore unanswerable until the data ladder reaches `PAPER`, which is a recorded decision and
+> not a step taken while chasing a measurement. **Nothing in §7 is amended** — it is exactly as
+> pre-registered on 2026-07-29, and D30 removes its subject rather than its thresholds. Everything
+> below is retained because it is what the spike will be when it resumes; read it in the future tense.
 > `scripts/spike2a/TEST_SETUP.md` states what advancing the ladder costs.
 
 **Status: instrumented, not run against real data, and now suspended. Scope and pre-registration

@@ -763,11 +763,15 @@ def test_q3_withholds_its_disposition_on_simulated_input(declared: Path) -> None
 # not the mechanism.
 def _runnable_inputs(directory: Path) -> tuple[Path, Path]:
     bars = directory / "signal_bars.csv"
-    bars.write_text("symbol,session,setup,price,r\nAXTI,2026-07-07,bull_flag,10.00,0.30\n", "utf-8")
+    bars.write_text(
+        "symbol,session,setup,price,r,signal_at\n"
+        "AXTI,2026-07-07,bull_flag,10.00,0.30,2026-07-07T09:35:00+00:00\n",
+        "utf-8",
+    )
     quotes = directory / "quotes.csv"
     quotes.write_text(
         "symbol,captured_at,bid,ask,bid_size,ask_size\n"
-        "AXTI,2026-07-07T13:31:00+00:00,10.00,10.02,100,100\n",
+        "AXTI,2026-07-07T09:35:00+00:00,10.00,10.02,100,100\n",
         "utf-8",
     )
     return bars, quotes

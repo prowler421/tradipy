@@ -13,7 +13,8 @@ them are authoritative in ways the others are not — so read this page before c
 | Set up and contribute | [development.md](development.md), then [../CONTRIBUTING.md](../CONTRIBUTING.md) |
 | Know what is built and what is next | [PLAN.md](PLAN.md) |
 | Know why a rule changed | [CHANGELOG.md](CHANGELOG.md) |
-| Run the data spike | [PHASE-2A-SPIKE.md](PHASE-2A-SPIKE.md) |
+| Run the data spike | [PHASE-2A-SPIKE.md](PHASE-2A-SPIKE.md), [PHASE-2A-REPORT.md](PHASE-2A-REPORT.md) |
+| Assess Phase 3 readiness | [PHASE-3-READINESS.md](PHASE-3-READINESS.md) |
 
 ## The two authoritative documents
 
@@ -33,6 +34,8 @@ and a change usually belongs in exactly one.
 |---|---|
 | [PLAN.md](PLAN.md) | Workstreams 0–11, the sequencing table, the decision log D1–D30, and the risk register. The defect-classes section is the most cited part of the repository — six rows as of round 7, and the count is deliberately not restated here |
 | [PHASE-2A-SPIKE.md](PHASE-2A-SPIKE.md) | Scope and **binding pre-registration** for the data feasibility spike (PRD §5.5 / V7). Its §7 thresholds were committed before any data was pulled and are not to be retrofitted to a result |
+| [PHASE-2A-REPORT.md](PHASE-2A-REPORT.md) | Completion report per §6 — Q1–Q4 status, measured vs pipeline-only |
+| [PHASE-3-READINESS.md](PHASE-3-READINESS.md) | Gate checklist for whether Phase 3 (scanner) may start (D29) |
 
 ## Engineering guides
 
@@ -59,6 +62,7 @@ of what was found; corrections go to the changelogs, not into the review that fo
 | [REVIEW-2026-07-28.md](reviews/REVIEW-2026-07-28.md) | The **code**, first time | 12; four unenforced guarantees → package v0.1.0, D26–D28 |
 | [REVIEW-2026-07-29.md](reviews/REVIEW-2026-07-29.md) | The code again, verifying the round above | 9; ten of twelve F-findings confirmed closed, F8 not |
 | [REVIEW-2026-07-30.md](reviews/REVIEW-2026-07-30.md) | The **Phase 2a instrumentation** (`scripts/spike2a/`), first time; round 6 verified | 15, three HIGH; `make check` red against four documents saying the guardrail was enforced; the **sixth defect class** |
+| [REVIEW-2026-07-31.md](reviews/REVIEW-2026-07-31.md) | D30 and the H5 join, verifying round 7; `src/tradipy/` unchanged | 1, LOW-MEDIUM; two documents understated a fix that shipped in the same commit as D30 — no new defect class |
 
 **On the naming.** `REVIEW-v1.2` and `REVIEW-v1.3` are named for the PRD version they reviewed;
 `REVIEW-2026-07-28` onward are dated because they review *code*, which has its own version

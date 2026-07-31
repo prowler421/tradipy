@@ -46,6 +46,33 @@ from typing import Protocol, runtime_checkable
 from tradipy.quotes import Quote
 
 
+def quote_at_or_before(samples: list[QuoteSample], instant: datetime) -> QuoteSample | None:
+    """Return the last NBBO observation at or before ``instant``, with derived ``age_seconds``.
+
+    §20.14's staleness test applies to the quote in force at the signal instant, not to an
+    arbitrary last tick of the session — which is what ``samples[-1]`` produced when several
+    setups shared one symbol-session bucket (review round 7, H4). When ``age_seconds`` is not
+    supplied in the CSV, it is derived from ``instant - captured_at`` so the validity half of
+    Q4 can fire on measured input (H6).
+    """
+    if not samples:
+        return None
+    eligible = [s for s in samples if s.captured_at <= instant]
+    if not eligible:
+        return None
+    chosen = eligible[-1]
+    age = Decimal(str(max((instant - chosen.captured_at).total_seconds(), 0)))
+    return QuoteSample(
+        symbol=chosen.symbol,
+        captured_at=chosen.captured_at,
+        bid=chosen.bid,
+        ask=chosen.ask,
+        bid_size=chosen.bid_size,
+        ask_size=chosen.ask_size,
+        age_seconds=age,
+    )
+
+
 @dataclass(frozen=True)
 class QuoteSample:
     """One NBBO observation, with the instant it was in force.

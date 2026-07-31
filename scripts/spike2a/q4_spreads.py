@@ -37,10 +37,11 @@ import csv
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 
-from scripts.spike2a.feeds import CsvQuoteFeed, QuoteFeed, QuoteSample
+from scripts.spike2a.feeds import CsvQuoteFeed, QuoteFeed, QuoteSample, quote_at_or_before
 from scripts.spike2a.prereg import (
     Q4_CALIBRATED,
     Q4_CHEAP_STOCK_CEILING_USD,
@@ -274,8 +275,15 @@ def load_signal_bars(path: Path, feed: QuoteFeed) -> tuple[list[SignalBar], list
             if not samples:
                 missing.append(f"{session} {symbol}")
                 continue
-            # The quote in force at the signal instant. With one sample per signal bar this is
-            # that sample; with a full session of ticks the collection script narrows it first.
+            signal_at_raw = row.get("signal_at", "").strip()
+            if not signal_at_raw:
+                missing.append(f"{session} {symbol} (missing signal_at)")
+                continue
+            signal_at = datetime.fromisoformat(signal_at_raw)
+            quote = quote_at_or_before(samples, signal_at)
+            if quote is None:
+                missing.append(f"{session} {symbol} (no quote at or before signal)")
+                continue
             bars.append(
                 SignalBar(
                     symbol=symbol,
@@ -283,7 +291,7 @@ def load_signal_bars(path: Path, feed: QuoteFeed) -> tuple[list[SignalBar], list
                     setup=row.get("setup", "").strip() or "unknown",
                     price=Decimal(row["price"]),
                     r=Decimal(row["r"]),
-                    quote=samples[-1],
+                    quote=quote,
                 )
             )
     return bars, missing

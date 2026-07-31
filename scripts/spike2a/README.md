@@ -46,8 +46,12 @@ uv run python -m scripts.spike2a.synthetic_data_generator
 # The two §7 sample windows, chosen by the VIX rule. Input: date,close
 uv run python -m scripts.spike2a.windows data/spike2a/vix.csv 2026-07-29
 
-# Which symbol-sessions enter the sample. Input: the pre-open facts per symbol-session
+# Which symbol-sessions pass the §4.2 filter rule, over whatever the file contains — see below
+# for why this is not yet the §7 sample on its own
 uv run python -m scripts.spike2a.universe data/spike2a/preopen.csv
+
+# The full §7 sample: the two selected windows, then the filter rule applied within them
+uv run python -m scripts.spike2a.sample data/spike2a/vix.csv data/spike2a/preopen.csv 2026-07-29
 
 # Q4 — the measurement that matters
 uv run python -m scripts.spike2a.q4_spreads data/spike2a/signal_bars.csv data/spike2a/quotes.csv
@@ -60,11 +64,22 @@ uv run python -m scripts.spike2a.q2_float data/spike2a/floats.csv 2026-07-29
 uv run python -m scripts.spike2a.q3_latency data/spike2a/latency.csv
 ```
 
-**`universe.py` does not filter to the windows `windows.py` selects** — §7 defines the sample as
-every qualifying symbol-session *in the two windows*, and joining the two halves is an open
-finding from review round 7, not a step you can run today. Until it is joined, `universe.py`
-reports on whatever `preopen.csv` contains, and it is the caller's job to have restricted the file
-to the selected sessions.
+**`universe.py` alone does not filter to the windows `windows.py` selects, and that is by
+design.** §7 defines the sample as every qualifying symbol-session *in the two windows*;
+`universe.select_sample` applies only the filter half, unchanged, so a caller can run it directly
+against a file already restricted by other means — see `universe.py`'s own module docstring, which
+now states this. `sample.py` is the join — it computes the windows from a VIX series, restricts a
+pre-open file to them, then calls `universe.select_sample` on what remains, reporting sessions
+outside the windows as their own count rather than mixing them into a filter rejection or a §7
+exclusion, and every parsed row is unit-checked regardless of window membership (a malformed row
+outside the windows would otherwise never reach `universe.classify`, the only other caller of that
+guard). "Outside windows" further splits into a session genuinely not selected by §7's window rule
+and a session inside a window's calendar range but missing from the VIX series — the latter is a
+disagreement between `vix.csv` and `preopen.csv`, not a property of the sample definition, and
+`sample.py`'s CLI prints it as its own line when it occurs. This closes review round 7's H5; see
+`docs/CHANGELOG.md`'s "Decided" section under Unreleased for why a composing module was chosen
+over the other two options that finding named, and for the two further defects a read-only review
+caught before merge.
 
 `IbkrHistoricalTicksFeed` needs `ib_insync`, which is **not** a package dependency and must not
 become one — install it into a throwaway environment. Its default port is 7497, the TWS *paper*

@@ -249,8 +249,7 @@ def banner(prov: Provenance) -> list[str]:
     lines = [f"data origin      {prov.origin.value} ({prov.generator}{seed})"]
     if not prov.answers_prereg:
         lines.append(
-            "                 a synthetic run is not a data pull — nothing below answers "
-            "Q1-Q4 (§7)"
+            "                 a synthetic run is not a data pull — nothing below answers Q1-Q4 (§7)"
         )
     return lines
 

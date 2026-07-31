@@ -539,7 +539,7 @@ def test_widening_the_permitted_origins_cannot_pass_unnoticed() -> None:
     point, not a nuisance: changing it *and* this assertion *and* the PLAN decision together is
     the recorded advance, and changing the line alone is not available.
     """
-    assert provenance.PERMITTED_ORIGINS == frozenset({provenance.DataOrigin.SIMULATED}), (
+    assert frozenset({provenance.DataOrigin.SIMULATED}) == provenance.PERMITTED_ORIGINS, (
         "the permitted origins changed. If the ladder is being advanced, that is a PLAN "
         "decision superseding D30 — and for LIVE, the PRD §18.8 evidence bar as well."
     )

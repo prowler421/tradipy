@@ -51,16 +51,18 @@ tests/              # pytest suite — worked examples, registry, boundary/polar
                     # enforcement fixtures, and doc-count consistency
 docs/               # start at docs/README.md (index)
   PRD.md            #   normative; §20 governs on any conflict
-  PLAN.md           #   workstreams, sequencing, decision log D1–D29, risks
+  PLAN.md           #   workstreams, sequencing, decision log D1–D30, risks
   CHANGELOG.md      #   PRD corrections — NOT the root CHANGELOG.md, which tracks the package
   PHASE-2A-SPIKE.md #   data spike scope with binding pre-registration
   api.md architecture.md development.md
   reviews/          #   every independent review round, kept unedited as the record
 scripts/            # maintenance helpers — registry baseline, link checker
   spike2a/          #   the Phase 2a spike. Throwaway (PHASE-2A-SPIKE §8) but **inside** the
-                    #   registry lint's scope, and the source of the sixth defect class
-data/spike2a/       # spike inputs — gitignored, empty on a clean clone. Anything generated
-                    # locally is synthetic; the generator writes a PROVENANCE.txt saying so
+                    #   registry lint's scope, and the source of the sixth defect class.
+                    #   provenance.py is the D30 gate and is not throwaway
+data/spike2a/       # spike inputs — gitignored, empty on a clean clone. Every file is
+                    # synthetic (D30); the generator declares it in PROVENANCE.txt and the
+                    # measurement modules refuse to read anything that file does not cover
 .claude/skills/     # guarantee-test, review-round (mirrored as .cursor/rules/*.mdc)
 .github/workflows/  # CI and release; dependabot.yml covers Actions only
 ```
@@ -105,6 +107,21 @@ data/spike2a/       # spike inputs — gitignored, empty on a clean clone. Anyth
    putting it through the full apparatus costs more than the defect. **The judgement is the
    convention's weak point** — when unsure whether a finding is trivial, disposition it. A
    finding that turns out to recur, or to have a behaviour consequence, was never trivial.
+9. **All data is simulated, and nothing may reach a market.** PLAN D30 puts every dataset on a
+   three-rung ladder — `SIMULATED` → `PAPER` → `LIVE` — and the current rung is `SIMULATED`. In
+   practice: no broker SDK, market-data vendor client or network module may be imported anywhere
+   in `src/`, `scripts/` or `tests/`; every dataset carries a `PROVENANCE.txt` declaring its
+   origin and naming each file it covers with that file's digest; and data whose origin is
+   undeclared is **refused, not assumed simulated** — the file that most needs a declaration is
+   the one somebody added without writing one. `scripts/spike2a/provenance.py` is the gate and
+   `tests/test_enforcement.py` enforces it. The import half is a **denylist** of twenty roots, so
+   a green lint is not proof that nothing can reach a market; the provenance gate is the backstop,
+   because it constrains what may be read rather than what may be imported. Advancing a rung means editing `PERMITTED_ORIGINS`,
+   which a test pins deliberately so the edit cannot pass unnoticed: it is a recorded decision,
+   and for `LIVE` the PRD §18.8 evidence bar as well. The consequence is stated rather than
+   worked around — PHASE-2A-SPIKE §7 binds to *measured* data, so Q1–Q4 are unanswerable,
+   Phase 3 stays gated through D29, and a spike run prints a *pipeline outcome*, never a §7
+   verdict.
 
 ## Coding standards
 
@@ -153,6 +170,8 @@ it, do not resolve it silently in code.
 - [ ] `Decimal` used for all price/P&L comparisons.
 - [ ] Tests added/updated and assert the derivation, with the right marker.
 - [ ] Every new guarantee has a test that performs the violation it forbids.
+- [ ] No broker, vendor or network import in `src/`, `scripts/` or `tests/`; any new dataset is
+      declared in a `PROVENANCE.txt` and read through `provenance.require` (D30).
 - [ ] `make check` passes, and `uv run python -m tradipy demo` still exits 0.
 - [ ] Root `CHANGELOG.md` updated for code/tooling; `docs/CHANGELOG.md` for spec decisions.
 - [ ] No unnecessary dependency, abstraction, or framework introduced.

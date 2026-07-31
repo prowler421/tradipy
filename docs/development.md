@@ -30,12 +30,15 @@ src/tradipy/
     gates.py        pre-entry gates and position sizing         (§2.2, §3.1.x)
     poc.py          composition: one candidate through every gate
     __main__.py     the `python -m tradipy` CLI entry point
-tests/              seven pytest files (see below) + registry_baseline.json
+tests/              eight pytest files (see below) + registry_baseline.json
 docs/               PRD.md (normative), PLAN, CHANGELOG, PHASE-2A-SPIKE,
                     reviews/, these guides
 scripts/            regen_registry_baseline.py, check_links.py
-    spike2a/        the Phase 2a spike — throwaway, in the registry lint's scope
-data/spike2a/       spike inputs. Gitignored; empty on a clean clone
+    spike2a/        the Phase 2a spike — throwaway, in the registry lint's scope, and
+                    suspended by D30. provenance.py is the exception: it is the D30
+                    gate, it is tested, and it is not throwaway
+data/spike2a/       spike inputs. Gitignored; empty on a clean clone; every file
+                    simulated and declared in PROVENANCE.txt (D30)
 .github/workflows/  ci.yml, release.yml
 ```
 
@@ -255,9 +258,10 @@ Assertions are written against the **derivation** of a value, not the value itse
 `assert cap == Decimal("0.01")` passes under a wrong rounding rule that happens to agree at
 that input, while `assert cap == floor_to_tick(x) and cap <= x` does not.
 
-Seven files. The first four each defend a defect class that the check built for the previous
+Eight files. The first four each defend a defect class that the check built for the previous
 one could not see; the next two cover the §20 computations and the PoC; the seventh defends the
-documentation's own counts.
+documentation's own counts; the eighth defends the instrument that produces spec-deciding
+numbers.
 
 - `test_worked_examples.py` — **arithmetic**: an example that violates its own rules. PRD
   v1.0 shipped four, and all four passed a fully-ticked acceptance checklist.
@@ -279,6 +283,10 @@ documentation's own counts.
 - `test_poc.py` — the PoC chain and the CLI, including that the demo's self-check is not
   vacuous. A demo that silently stops checking is worse than no demo, because its green
   output is what people trust instead of reading the code.
+- `test_spike2a_instrumentation.py` — **unvalidated instrument**: spike code that produces
+  spec-deciding numbers while restating the library. The sixth defect class, found when a
+  hand-derived R in the generator moved a §7 verdict from INERT to CALIBRATED under a docstring
+  claiming the library's stop functions.
 - `test_documentation.py` — the **documentation's own counts**: registered parameters, frozen
   baseline entries, library modules, the re-exported count in `__all__`, every `Reject` member
   documented, every declared marker documented and applied. The v1.2 class applied to prose.
@@ -354,8 +362,8 @@ The project uses [Semantic Versioning](https://semver.org/) and
 3. `make check` and commit.
 4. Tag: `git tag vX.Y.Z && git push --tags`.
 
-The release workflow (`.github/workflows/release.yml`) builds the sdist and wheel with
-`uv build`. Publishing to an index is left as a commented, opt-in step.
+The release workflow (`.github/workflows/release.yml`) runs `make check`, then builds the sdist
+and wheel with `uv build`. Publishing to an index is left as a commented, opt-in step.
 
 ## Continuous integration
 

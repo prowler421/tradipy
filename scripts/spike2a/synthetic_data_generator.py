@@ -4,9 +4,14 @@
 end to end before a vendor answers — nothing more. No number computed from its output is an
 answer to Q1–Q4, and in particular a §7 verdict printed over these files says something about
 this file's random number generator and nothing about `max_spread_r`. §7's thresholds are binding
-against *measured* data; a synthetic run is not a data pull and cannot license amending them. The
-files carry a `PROVENANCE.txt` beside them saying so, because a reader who finds four plausible
-CSVs and a documented command to run them has no other way to tell.
+against *measured* data; a synthetic run is not a data pull and cannot license amending them.
+
+The files carry a `PROVENANCE.txt` beside them saying so, because a reader who finds four
+plausible CSVs and a documented command to run them has no other way to tell. That marker used
+to be written and never read. It is now **machine-readable and load-bearing**: it declares
+`origin SIMULATED` and lists each file with its SHA-256, `scripts/spike2a/provenance.py` parses
+it, and the measurement modules refuse to run on input it does not cover. Under PLAN **D30** this
+generator is the only source of data in the repository.
 
 Generates market-microstructure-shaped data loosely following IBKR conventions:
 - VIX history to select sample windows (12 months prior to spike start)
@@ -29,6 +34,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 
+from scripts.spike2a.provenance import PROVENANCE_FILENAME, DataOrigin, render
 from scripts.spike2a.windows import select_windows
 from tradipy.gates import apply_stop_floor_and_ceiling
 from tradipy.params import Config
@@ -356,7 +362,16 @@ def write_csv(
 
 
 def main() -> None:
-    """Generate all synthetic data files."""
+    """Generate all synthetic data files.
+
+    Seeding happens **here**, not under ``__main__``. It used to be under ``__main__`` while this
+    function unconditionally wrote a ``PROVENANCE.txt`` asserting the output came from
+    ``random.seed(SEED)`` — true via the command line, false for any programmatic call, and the
+    file said so either way. A provenance marker that is conditionally true is the defect it
+    exists to prevent.
+    """
+    random.seed(SEED)
+
     data_dir = Path(__file__).parent.parent.parent / "data" / "spike2a"
     data_dir.mkdir(parents=True, exist_ok=True)
 
@@ -458,31 +473,41 @@ def main() -> None:
     )
     print(f"   → {len(all_quotes)} NBBO samples generated\n")
 
-    # The marker travels with the files, not with the reader's memory of where they came from.
-    (data_dir / "PROVENANCE.txt").write_text(
-        "SYNTHETIC — fabricated by scripts/spike2a/synthetic_data_generator.py.\n"
-        "\n"
-        "Not market data. Not vendor data. Generated from random.seed(SEED) below, to exercise\n"
-        "the Q4 pipeline before a vendor answers.\n"
-        "\n"
-        f"seed              {SEED}\n"
-        f"spike start       {spike_start}\n"
-        f"active window     {active_window.start}..{active_window.end} "
-        f"(mean VIX {active_window.mean_vix:.2f}, by the §7 rule over vix.csv)\n"
-        f"quiet window      {quiet_window.start}..{quiet_window.end} "
-        f"(mean VIX {quiet_window.mean_vix:.2f})\n"
-        f"symbol-sessions   {len(all_preopen)}\n"
-        f"signal bars       {len(signal_bars)}\n"
-        f"NBBO samples      {len(all_quotes)}\n"
-        "\n"
-        "No number computed from these files answers Q1-Q4, and a §7 verdict printed over them\n"
-        "is a statement about this generator. §7's thresholds are binding against measured data;\n"
-        "a synthetic run is not a data pull. See docs/PHASE-2A-SPIKE.md §7.\n",
+    # The marker travels with the files, and now names each one with its digest: a declaration
+    # covering a directory lets an undeclared file sit beside a declared one and inherit its
+    # claim. `provenance.require` is what reads this back, and it is the reason the pipeline can
+    # no longer print a §7 verdict over fabricated input (PLAN D30).
+    covered = [
+        data_dir / name for name in ("vix.csv", "preopen.csv", "signal_bars.csv", "quotes.csv")
+    ]
+    (data_dir / PROVENANCE_FILENAME).write_text(
+        render(
+            origin=DataOrigin.SIMULATED,
+            generator="scripts/spike2a/synthetic_data_generator.py",
+            seed=SEED,
+            covered=covered,
+            detail=(
+                f"spike start       {spike_start}\n"
+                f"active window     {active_window.start}..{active_window.end} "
+                f"(mean VIX {active_window.mean_vix:.2f}, by the §7 rule over vix.csv)\n"
+                f"quiet window      {quiet_window.start}..{quiet_window.end} "
+                f"(mean VIX {quiet_window.mean_vix:.2f})\n"
+                f"symbol-sessions   {len(all_preopen)}\n"
+                f"signal bars       {len(signal_bars)}\n"
+                f"NBBO samples      {len(all_quotes)}\n"
+                "\n"
+                "Not market data. Not vendor data. Fabricated to exercise the Q4 pipeline.\n"
+                "No number computed from these files answers Q1-Q4: §7's thresholds are binding\n"
+                "against measured data, and a synthetic run is not a data pull. See\n"
+                "docs/PHASE-2A-SPIKE.md §7 and PLAN D30."
+            ),
+        ),
         encoding="utf-8",
     )
 
     print(f"✓ All synthetic data written to {data_dir}/")
-    print(f"  and {data_dir}/PROVENANCE.txt, which says it is synthetic — keep them together")
+    print(f"  and {data_dir}/{PROVENANCE_FILENAME}, which declares it SIMULATED and lists each")
+    print("  file with its digest — the measurement modules refuse to run without it")
     print("\nReady to exercise the pipeline (NOT to answer Q4):")
     print(
         f"  uv run python -m scripts.spike2a.q4_spreads "
@@ -491,5 +516,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    random.seed(SEED)
     main()

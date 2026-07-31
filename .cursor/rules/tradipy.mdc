@@ -5,14 +5,14 @@ alwaysApply: true
 
 # tradipy — assistant rules
 
-tradipy is the **invariant layer** of a Ross Cameron momentum trading system. Its whole
-reason to exist is that six review rounds each found a defect class the previous check
-could not see — four in `docs/PRD.md`, a fifth in the code that implements it, and a sixth in
-the code that measures it (`scripts/spike2a/`, which every earlier check was aimed away from).
-The code
-makes the PRD's rules executable. Treat the PRD as normative: `docs/PRD.md §20` (Computation
-Semantics) governs on any conflict with code. **If code and PRD diverge, that is a spec
-question — raise it, do not resolve it silently in code.**
+**Canonical guidance:** [`CLAUDE.md`](../CLAUDE.md) at the repository root (architecture,
+testing, release, review checklist). This file repeats only what must stay in every-edit
+context; read CLAUDE.md for the full picture.
+
+tradipy is the **invariant layer** of a Ross Cameron momentum trading system. Treat
+`docs/PRD.md` as normative — §20 (Computation Semantics) governs on any conflict with code.
+**If code and PRD diverge, that is a spec question — raise it, do not resolve it silently
+in code.**
 
 ## Preserve the architecture
 - A registered threshold is defined **once** in `src/tradipy/params.py` and read by name.
@@ -30,40 +30,28 @@ question — raise it, do not resolve it silently in code.**
   §3.1.1, §3.4, §20.10 and §20.14 have no Bounds column.
 - All money is `Decimal`. Never introduce `float` where a value is compared to a tick
   boundary or accumulated into P&L (PRD §9.2).
-
-## Typing and style
-- Target Python 3.13. Use modern typing (`X | None`, `dict[...]`, `collections.abc`),
-  `pathlib`, `dataclasses`, and `enum`. No legacy `typing.List`/`Optional`.
-- Prefer explicit types on public functions. Keep functions small and readable over clever.
-- Formatting and linting are Ruff's job (`make format`, `make lint`). Do not hand-format. The
-  one exemption is the `PARAMS` registry, fenced with `# fmt: off` / `# fmt: on` so the PRD
-  table stays readable row by row. Do not remove or widen that fence.
-- The `×`, `–`, and `−` glyphs quoted from the PRD are allow-listed in Ruff's
-  `allowed-confusables`. Never ASCII-ify them: `test_parameter_registry.py` matches the
-  literal `×` in the PRD to find unregistered thresholds.
+- **All data is simulated (PLAN D30).** Datasets sit on a `SIMULATED` → `PAPER` → `LIVE`
+  ladder whose current rung is the first. Every dataset declares its origin in a
+  `PROVENANCE.txt` naming each covered file with its digest, and is read through
+  `scripts/spike2a/provenance.py`'s `require()`; undeclared data is refused, not assumed
+  simulated. PHASE-2A-SPIKE §7 binds to *measured* data, so a spike run prints a pipeline
+  outcome, never a §7 verdict.
 
 ## Don't
 - Do not add dependencies. The runtime is stdlib-only; `uv add` is deliberately not in the
   pre-approved command list in `.claude/settings.json`, so adding one should require asking.
-- Do not add abstractions, frameworks, Docker, or logging unless a concrete need exists.
-  `python -m tradipy` exists because the rules needed to be exercisable by hand; it is a thin
-  argparse layer over the library and is not licence for more surface.
-- Do not "fix" a documented open finding by silently enforcing it. The couplings that are
-  deliberately surfaced rather than enforced are documented on
-  `min_tradeable_price_from_stop_bounds` and `signal_cap_ticks_at_min_r` — not on
-  `validate_couplings`, which documents what *is* enforced. `tests/README.md` lists all five.
+- Do not import a broker SDK, market-data vendor client or network module anywhere in
+  `src/`, `scripts/` or `tests/`. `tests/test_enforcement.py` fails on any of them. It is a
+  denylist, so passing it is not proof — the provenance gate is the real backstop.
+- Do not widen `PERMITTED_ORIGINS` to make a refusal go away. A test pins it deliberately;
+  advancing the ladder is a recorded PLAN decision, and for `LIVE` the PRD §18.8 bar too.
+- Do not "fix" a documented open finding by silently enforcing it. Open couplings are
+  documented on `min_tradeable_price_from_stop_bounds` and `signal_cap_ticks_at_min_r`;
+  `tests/README.md` lists them all.
 
 ## Always
-- Add or update tests for any behavior change (`tests/`), and keep assertions written
-  against the **derivation**, not a magic value. Use the `spec`, `boundary` and `polarity`
-  markers where they apply — `--strict-markers` is on.
-- **For every guarantee, write the test that breaks it.** Not the happy path — the test that
-  performs the violation the guarantee forbids and asserts it fails. This is the fifth defect
-  class: four guarantees were unenforced at once in v0.0.1, three with a passing test right
-  beside the hole. See `tests/test_enforcement.py`.
-- Update the **root** `CHANGELOG.md` (Keep a Changelog, under `[Unreleased]`) for code,
-  tooling and packaging. Spec corrections and reversals go in `docs/CHANGELOG.md`, which is
-  grouped by PRD version — the two files are not interchangeable.
-- Regenerate the registry baseline only deliberately, via
-  `uv run python scripts/regen_registry_baseline.py`, and read the diff.
-- Run `make check` (lint + format check + typecheck + test) before considering work done.
+- Add or update tests for any behavior change; assert the **derivation**, not a magic value.
+  Use the `spec`, `boundary` and `polarity` markers where they apply.
+- **For every guarantee, write the test that breaks it.** See `tests/test_enforcement.py`.
+- Update the **root** `CHANGELOG.md` for code/tooling; spec reversals go in `docs/CHANGELOG.md`.
+- Run `make check` before considering work done.

@@ -9,8 +9,59 @@ All notable changes to the tradipy **package** are documented here. This file fo
 
 ## [Unreleased]
 
+### Changed — all data is simulated (PLAN D30, `CLAUDE.md` convention 9)
+
+- **`scripts/spike2a/q3_collect.py`, `scripts/spike2a/q4_collect_real_data.py` and
+  `feeds.IbkrHistoricalTicksFeed` are removed.** All three imported `ib_insync` and read real
+  IBKR data; `q3_collect.py` additionally placed `whatIfOrder` previews in a loop and its
+  docstring named the live socket (7496) in two places, contradicting both PHASE-2A-SPIKE §3.2
+  and `feeds.py`'s own comment. They were added in this same `[Unreleased]` section, which is
+  where the entries below still describe them — left standing rather than rewritten, because the
+  history is the point: the code was correct under §3.2 as written, since §3.2 forbade *trading*
+  and reading a market is not trading. Recoverable at `3ca9e7b`, the last commit
+  that contains them.
+- **`scripts/spike2a/provenance.py`** — a `SIMULATED` → `PAPER` → `LIVE` ladder, a
+  `PERMITTED_ORIGINS` constant holding the current rung, and `require()`, which every measurement
+  module now calls before reading anything. `PROVENANCE.txt` becomes machine-readable: it declares
+  an origin and names each file it covers with that file's SHA-256, so a file cannot inherit a
+  neighbour's declaration and a declared file cannot be edited afterwards. Undeclared input raises
+  rather than defaulting to `SIMULATED` — the file that most needs a declaration is the one
+  somebody added without writing one.
+- **`q4_spreads.report()` and `q3_latency.report()` take a `Provenance`**, required rather than
+  defaulted. On simulated input Q4 prints `pipeline outcome (NOT a §7 verdict)` and raises no D7
+  disposition, and Q3 withholds the §5.5/§4.4 disposition entirely. This is the mitigation PLAN's
+  sixth defect-class row proposed and review round 7 declined to build: *"any value capable of
+  triggering a D7 disposition must be reproducible from a provenance-marked input."* The marker
+  had existed since the generator landed and was read by nothing, so the pipeline printed
+  `§7 verdict: …` over fabricated quotes in the format it would use for measured ones.
+- **Twenty-one enforcement tests, including an import lint,** in `tests/test_enforcement.py`:
+  no broker SDK, vendor client or network module may be imported in `src/`, `scripts/` or
+  **`tests/`** — unlike the registry lint, which exempts `tests/` because a fixture must state a
+  literal, there is no analogous reason to import a broker from a test. AST-based, so a module
+  named in a docstring is a string and an `import` is an import; guarded by a planted-import test
+  covering module scope, aliases, submodules, function-local and constructor-local forms. Each
+  guarantee was verified by removing its guard and confirming the test goes red.
+- **`test_widening_the_permitted_origins_cannot_pass_unnoticed`** pins `PERMITTED_ORIGINS` to
+  `{SIMULATED}`. It fails when that line changes, deliberately: advancing the ladder is a PLAN
+  decision — and for `LIVE`, the PRD §18.8 evidence bar — so changing the line, the assertion and
+  the decision together is the recorded advance, and changing the line alone is not available.
+
+### Fixed
+
+- **`random.seed(SEED)` moved from `__main__` into `synthetic_data_generator.main()`.** `main()`
+  unconditionally wrote a `PROVENANCE.txt` asserting its output came from `random.seed(SEED)` —
+  true via the command line, false for any programmatic call, and the file said so either way. A
+  provenance marker that is conditionally true is the defect it exists to prevent. Output is
+  unchanged: 156 symbol-sessions, 147 signal bars, 8,820 NBBO samples, and Q4 still reports 1.36%
+  aggregate with 14.29% in the cheapest decile.
+
 ### Added
 
+- **`tests/test_spike2a_instrumentation.py`** — calibrates Phase 2a instrumentation against
+  the library: AST check that ``generate_signal_bars`` calls ``apply_stop_floor_and_ceiling``,
+  runtime checks that ``R = entry − stop`` and rejected stops are dropped, and that ``q4_spreads``
+  imports ``spread_caps`` / ``spread_at_signal`` rather than reimplementing them. Sixth
+  defect-class mitigation; not full spike coverage (PHASE-2A-SPIKE §8).
 - **`scripts/spike2a/`** — the Phase 2a data feasibility spike, instrumented. Throwaway
   investigative code per PHASE-2A-SPIKE.md §8: not imported by `src/tradipy/`, no coverage
   obligation, and Phase 3 gets written fresh against the PRD rather than grown from it. Seven
@@ -19,8 +70,10 @@ All notable changes to the tradipy **package** are documented here. This file fo
   exclusions), `feeds.py` (the swappable NBBO fetch layer), `q4_spreads.py`, `q2_float.py`,
   `q3_latency.py` — plus `__init__.py`, and `synthetic_data_generator.py` below. Stdlib-only and
   CSV-driven, so the whole pipeline runs with no broker and no
-  subscription; `ib_insync` is imported lazily inside one constructor and is deliberately not a
-  package dependency. Q4 computes its caps with `gates.spread_caps` and its spread with
+  subscription; `ib_insync` was imported lazily inside one constructor and was deliberately not
+  a package dependency. *(Superseded by D30 above, which removed that constructor and two of
+  the modules, and added `provenance.py`. Left standing as the record of what shipped.)*
+  Q4 computes its caps with `gates.spread_caps` and its spread with
   `quotes.spread_at_signal` rather than reimplementing either (§4.3). **No `src/tradipy/` change
   and no new dependency.**
 - **`scripts/spike2a/synthetic_data_generator.py`** — fabricates `vix.csv`, `preopen.csv`,
@@ -53,7 +106,6 @@ All notable changes to the tradipy **package** are documented here. This file fo
   is reached; `test_the_lint_catches_a_planted_literal` asserts the detection half fires on a file
   in a subdirectory. Two tests because the roots can be right while the offender construction
   drops every hit, which is the failure mode the `normalize()` blind spot actually had.
-
 - **`tests/test_documentation.py`** — asserts that counts stated in prose match the code:
   registered parameters, frozen-baseline entries, library-module count, the re-exported count in
   `__all__`, every `Reject` member being documented, and every declared pytest marker being both
@@ -78,6 +130,15 @@ All notable changes to the tradipy **package** are documented here. This file fo
 
 ### Changed
 
+- **Release workflow** — runs ``make check`` before ``uv build`` so tagged releases cannot ship
+  without the same gate CI uses.
+- **Pre-commit** — ``ruff-check`` hook renamed to ``lint`` (explicit scope: ``src tests scripts``,
+  matching ``make lint`` and CI).
+- **Root ``README.md``** — review-round and defect-class counts aligned with ``docs/README.md``
+  and PLAN Workstream 11 (six rounds, six classes).
+- **``.cursor/rules/tradipy.mdc``** — deduplicated against ``CLAUDE.md``; canonical detail lives
+  in ``CLAUDE.md``, the rule file keeps only always-on constraints.
+- **``CONTRIBUTING.md``** — points assistant conventions to ``CLAUDE.md``.
 - **`[tool.ruff.lint.isort] known-first-party` gains `"scripts"`** (`pyproject.toml`). Ruff's
   default `src` is `[".", "src"]`; this project overrides it to `["src", "tests"]`, dropping `.`,
   so `scripts.spike2a.*` resolved as third-party and isort wanted a section break before
@@ -118,6 +179,11 @@ All notable changes to the tradipy **package** are documented here. This file fo
 - **`docs/development.md`** documents the manual mutation protocol. It is *not* automated, and
   says so — a mutation harness whose own correctness is undemonstrated is a mechanism built and
   not wired.
+
+### Removed
+
+- **Makefile** — dropped dead ``mutants`` phony target (mutation protocol remains manual per
+  ``docs/development.md``; no recipe ever existed).
 
 ### Fixed
 

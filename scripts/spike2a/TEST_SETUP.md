@@ -1,72 +1,57 @@
-# Testing `scripts/spike2a/` against a real IBKR paper account
+# Advancing past simulated data
 
-This is the runbook for the two collectors that talk to a live paper gateway —
-`q3_collect.py` (latency) and `q4_collect_real_data.py` (NBBO ticks) — as opposed to
-`synthetic_data_generator.py`, which fabricates input and needs no connection. See
-[README.md](README.md) for the synthetic path, the input schemas, and the two obligations the
-schemas cannot enforce; this file does not repeat them.
+**This was a runbook for two collectors that no longer exist.** PLAN **D30** puts every dataset
+in this repository on the simulated rung of a three-rung ladder — simulated, then paper, then a
+funded account — and `q3_collect.py`, `q4_collect_real_data.py` and
+`feeds.IbkrHistoricalTicksFeed` were removed with it. They are recoverable at `3ca9e7b`, the
+last commit that contains them. Nothing in this package connects to anything. See
+[README.md](README.md) for the path that does run.
 
-**Moved from the repository root and rewritten in review round 7.** The original draft reported
-a synthetic Q4 run — `154 signal bars, 0.00% overall, verdict INERT` — as "already ran and
-analyzed" with no synthetic label, over a `max_spread_r` derivation that round 7's H3 finding
-found and fixed (the corrected number is `CALIBRATED`, `2/147`, cheapest decile `14.29%` — see
-`docs/reviews/REVIEW-2026-07-30.md`). Printing a verdict without saying what produced it is
-exactly H7. Nothing below reports a result; it only says how to collect real input.
+The file is kept, rewritten, because deleting it would lose the part that outlives the scripts:
+what the next rung actually costs. A rung is advanced by a recorded decision, not by restoring a
+file.
 
-## What's real here and what isn't
+## The ladder
 
-**Everything downstream of `synthetic_data_generator.py` is fabricated**, `PROVENANCE.txt` says
-so, and no number computed from it answers Q1–Q4 (§7). The two scripts below are the only things
-in this package that touch real data, and only while TWS/Gateway is running:
+| Rung | What it means | What advancing to it requires |
+|---|---|---|
+| **SIMULATED** | Current. Every input is fabricated by `synthetic_data_generator.py` and declared in `PROVENANCE.txt` | — |
+| **PAPER** | Read-only market data, and orders that reach a paper account only | A PLAN decision superseding D30's `PERMITTED_ORIGINS`; a `QuoteFeed` implementation and a collector to replace what was removed; the four items below |
+| **LIVE** | A funded account | Everything above, plus the PRD **§18.8** evidence bar in full — positive expectancy net of modeled slippage and fees over ≥100 trades per MVP setup, out-of-sample, with Monte Carlo 95th-percentile max drawdown inside the account's risk tolerance |
 
-- `q4_collect_real_data.py` writes `data/spike2a/quotes_real.csv` — real NBBO ticks. It does
-  **not** write `age_seconds`: that column is a quote's age at the *signal instant*, which this
-  collector does not know, and a written `0` would assert every tick was fresh — see the
-  module's own docstring.
-- `q3_collect.py` writes `data/spike2a/q3_measurements.csv` — real latency samples.
+`PERMITTED_ORIGINS` in `provenance.py` is the single line that encodes the current rung.
+Widening it without the corresponding decision is the failure D30 exists to prevent, so
+`tests/test_enforcement.py` asserts what it currently holds — the test fails when the line
+changes, which is the point. Changing both together is the recorded decision; changing the line
+alone is not possible.
 
-**Neither produces `signal_bars.csv`.** There is no generator for real signal bars against an
-arbitrary symbol: that needs real pre-open facts, real setup detection, and R from
-`gates.apply_stop_floor_and_ceiling` applied to a real stop (obligation 2 in the README) — none
-of which exist for MSFT/RGTI today. Running `q4_spreads.py` against `quotes_real.csv` therefore
-needs a hand-authored `signal_bars.csv` for the same symbols and sessions; there is nothing here
-that builds one automatically. **Do not point `q4_spreads.py` at the synthetic `quotes.csv` and
-a hand-authored `signal_bars.csv` and read the result as a real-data verdict** — that repeats H7
-with an extra step.
+## What the paper rung has to solve, and why it is not one afternoon
 
-## Prerequisites
+These were true before D30 and stayed true; they are the reason "just point it at a real feed"
+was never a small change.
 
-- **IBKR TWS or Gateway** running on `localhost:7497` (paper mode — **not** 7496, which is live;
-  §3.2 forbids live trading of any size for any reason)
-- **`ib_insync`**, installed into a throwaway environment (`uv pip install ib_insync`). It is
-  deliberately not a package dependency — see `feeds.py`'s module docstring
-- **API enabled** in TWS: Edit → Global Configuration → API → Enable ActiveX and Socket Clients
+- **`reqHistoricalTicks` BID_ASK at the sample's volume and lookback is unverified.** Three
+  limits could each sink it — a 1000-tick per-request ceiling needing paging, historical tick
+  depth shorter than the §7 window rule's 12-month range and not uniform across symbols, and
+  pacing violations that arrive as empty responses rather than errors. A negative answer there
+  is a **Q1** finding, not a bug.
+- **There is no generator for real signal bars.** `signal_bars.csv` needs real pre-open facts,
+  real setup detection, and R from `gates.apply_stop_floor_and_ceiling` applied to a real stop
+  (README obligation 2). A hand-authored file paired with real quotes is not a real-data run,
+  and reading it as one is the H7 defect with an extra step.
+- **Latency has to be measured, not modeled.** Q3's `signal_to_order` leg was specified as a
+  `whatIf` preview round trip — a margin check that never reaches a venue. It understates true
+  fill latency and does not cover venue routing, and any report of it must say so.
+- **Credentials.** Nothing here has ever stored one, and nothing should. A local socket
+  authenticated by TWS/Gateway is the only shape that keeps that true.
 
-## Running the collectors
+## What does not change on any rung
 
-```bash
-# Real NBBO ticks for a symbol list and date range → data/spike2a/quotes_real.csv
-uv run python -m scripts.spike2a.q4_collect_real_data MSFT,RGTI 2026-07-21 2026-07-29
+Any Q1–Q4 result — recalibration, inertness, a coverage gap — is raised as a spec question in
+`docs/CHANGELOG.md`, per D7. It is not applied in code by whoever runs the collection. That held
+when the collectors existed and holds now; D30 removed the data, not the disposition rule.
 
-# Real latency samples for 300 seconds → data/spike2a/q3_measurements.csv
-uv run python -m scripts.spike2a.q3_collect MSFT,RGTI 300
-uv run python -m scripts.spike2a.q3_latency data/spike2a/q3_measurements.csv
-```
-
-`IBKR_HOST` / `IBKR_PORT` override the connection if TWS/Gateway is not on the default paper
-socket. Both scripts read credentials from nothing — they connect to a local socket that is
-already authenticated by TWS/Gateway, and store no IBKR credential anywhere in the repository or
-on disk.
-
-## Checklist
-
-- [ ] TWS/Gateway running on port 7497 (paper), API enabled
-- [ ] `ib_insync` installed into a throwaway environment
-- [ ] `q4_collect_real_data.py` run and `quotes_real.csv` written
-- [ ] A `signal_bars.csv` hand-authored for the same symbols/sessions, R from
-      `apply_stop_floor_and_ceiling`, if you intend to run Q4 against the real ticks
-- [ ] `q3_collect.py` run for a long enough window to get a meaningful p95, and
-      `q3_latency.py` run against its output
-
-Any Q3/Q4 result — recalibration, inertness, a coverage gap — is raised as a spec question in
-`docs/CHANGELOG.md`, per D7. It is not applied in code by this checklist or by whoever runs it.
+Simulated data cannot answer Q1–Q4 at all. §7 binds its thresholds to measured data and states
+that a synthetic run is not a data pull — untouched by D30, and enforced by
+`provenance.Provenance.answers_prereg`, which is why `q4_spreads.py` prints a pipeline outcome
+today and not a §7 verdict.

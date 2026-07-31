@@ -1,8 +1,10 @@
 # Contributing to tradipy
 
 Thanks for helping keep tradipy correct. This project has an unusually strong bias toward
-*provable* correctness, because its entire reason to exist is to catch the defect classes
-that ordinary review misses. A few conventions matter more than usual here.
+*provable* correctness, because its whole reason to exist is to catch the defect classes
+that ordinary review misses. **Assistant-oriented conventions** (architecture detail, review
+checklist, mutation protocol) live in [`CLAUDE.md`](CLAUDE.md); this file is for human
+contributors.
 
 ## Ground rules
 
@@ -25,6 +27,14 @@ that ordinary review misses. A few conventions matter more than usual here.
    anywhere — docstring, README, architecture doc — write the test that attempts X and
    asserts it fails. Four guarantees were unenforced at once in v0.0.1, three of them with a
    passing happy-path test right beside the hole. See `tests/test_enforcement.py`.
+6. **All data is simulated** (`CLAUDE.md` convention 9, decided as PLAN **D30**). Datasets sit
+   on a `SIMULATED` → `PAPER` → `LIVE` ladder and the current rung is the first. Do not import
+   a broker SDK, market-data vendor client or network module in `src/`, `scripts/` or `tests/`;
+   a lint fails on any of the twenty roots it enumerates. Declare any dataset you add in a
+   `PROVENANCE.txt` — `python -m scripts.spike2a.provenance <file>` writes one — and read it
+   through `provenance.require`, which refuses undeclared input rather than assuming it is
+   simulated. If a refusal is in your way, that is the mechanism working: advancing a rung is a
+   recorded decision, not an edit to `PERMITTED_ORIGINS`.
 
 ## Getting set up
 

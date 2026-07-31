@@ -2,8 +2,16 @@
 
 **Throwaway investigative code.** Scope, method and the binding pre-registration are in
 [docs/PHASE-2A-SPIKE.md](../../docs/PHASE-2A-SPIKE.md). This file says how to run it and what it
-is not. For the two collectors that need a live IBKR paper connection instead of the fabricated
-input below, see [TEST_SETUP.md](TEST_SETUP.md).
+is not.
+
+> **The spike is suspended by [PLAN](../../docs/PLAN.md) D30.** Every dataset here is simulated,
+> the two collectors that pulled real IBKR ticks are gone, and §7 binds its thresholds to
+> measured data — so **nothing in this directory can answer Q1–Q4**. What runs, runs on
+> fabricated input and reports a *pipeline outcome*. [TEST_SETUP.md](TEST_SETUP.md) records what
+> advancing the ladder costs.
+
+`provenance.py` is the exception to "throwaway": it is the D30 gate, the measurement modules
+refuse to run without it, and `tests/test_enforcement.py` tests it.
 
 ## What this is not
 
@@ -20,8 +28,10 @@ scanner by accretion."* So:
 |---|---|---|
 | **Q1** — real-time candidate list | Vendor trials | **No.** And IBKR alone is a *pre-determined* negative: §7 requires ≥ 200 concurrent symbols and §1 records IBKR's ~100 market-data line cap. §3.3 says to establish that concretely rather than assume it |
 | **Q2** — float / short-interest quality | Two independent providers | **Half.** The staleness condition runs on one provider and can trip A10 alone. The disagreement condition cannot — `q2_float.disagreement` returns `None`, never `0` |
-| **Q3** — latency | Paper connection | **Arithmetic yes, collection no.** The percentile and verdict logic is written and checkable; the `ib_insync` timestamping is not, because guessing at its event ordering measures the guess |
-| **Q4** — realized spread distribution | Historical intraday NBBO | **Yes, on a CSV.** Whether the IBKR paper tier serves `reqHistoricalTicks` BID_ASK for a 400-symbol-session sample is **unverified** — see `feeds.IbkrHistoricalTicksFeed` for the three limits to check |
+| **Q3** — latency | Paper connection | **Arithmetic yes, collection no.** The percentile logic is written and checkable; the broker-side timestamping is not, because guessing at its event ordering measures the guess. On simulated input the §5.5/§4.4 disposition is **withheld entirely** — a fabricated p95 reports the generator's parameters |
+| **Q4** — realized spread distribution | Historical intraday NBBO | **The pipeline runs, on declared simulated CSVs, and reports a pipeline outcome rather than a §7 verdict.** Whether the IBKR paper tier serves `reqHistoricalTicks` BID_ASK for a 400-symbol-session sample is **unverified** — see [TEST_SETUP.md](TEST_SETUP.md) for the three limits to check |
+
+Under D30 none of the four is answerable; the column says what *executes*, not what is settled.
 
 Q4 runs first. §7's budget clause makes that binding rather than advisory: it needs no
 subscription, so a budget overrun cannot cost the one answer that can invalidate a shipped
@@ -34,10 +44,27 @@ broker, no subscription and no network. Run from the repository root.
 
 **`data/spike2a/` is gitignored and empty on a clean clone**, so nothing below runs until the
 files exist. `synthetic_data_generator.py` fabricates four of the six, which is enough to exercise
-Q4 and nothing more — it writes a `PROVENANCE.txt` beside them saying so, and no number computed
-from its output answers Q1–Q4. `floats.csv` and `latency.csv` have no generator: Q2 and Q3 are
-blocked on a second float provider and a paper connection, so their inputs are hand-authored when
-those arrive.
+Q4 and nothing more — no number computed from its output answers Q1–Q4. `floats.csv` and
+`latency.csv` have no generator: Q2 and Q3 are blocked on a second float provider and a paper
+connection, so their inputs are hand-authored when those arrive — and must be declared, or the
+modules refuse them.
+
+**Declaration is not optional.** The generator writes a `PROVENANCE.txt` naming `origin
+SIMULATED` and listing each file with its SHA-256. **All five measurement entry points** —
+`windows`, `universe`, `q2_float`, `q3_latency`, `q4_spreads` — call `provenance.require` before
+reading anything and exit `3` if a file is missing from it, has changed since, or declares an
+origin D30 does not permit. Undeclared data is refused rather than assumed simulated.
+
+For input with no generator, declare it by hand:
+
+```bash
+uv run python -m scripts.spike2a.provenance data/spike2a/latency.csv
+```
+
+That **merges** into the existing marker rather than replacing it, so a hand-authored declaration
+and the generator's four files coexist. The generator does not merge — it rewrites the marker with
+its own four files, so **re-declare hand-authored input after regenerating**. Editing any declared
+file also breaks its digest, which is the mechanism working, not a bug.
 
 ```bash
 # Fabricate vix.csv, preopen.csv, signal_bars.csv, quotes.csv + PROVENANCE.txt. Synthetic.
@@ -66,10 +93,10 @@ finding from review round 7, not a step you can run today. Until it is joined, `
 reports on whatever `preopen.csv` contains, and it is the caller's job to have restricted the file
 to the selected sessions.
 
-`IbkrHistoricalTicksFeed` needs `ib_insync`, which is **not** a package dependency and must not
-become one — install it into a throwaway environment. Its default port is 7497, the TWS *paper*
-socket, because §3.2 forbids live trading of any size for any reason and a default pointing at
-the live socket is one typo from breaking that.
+**There is no broker-backed feed to run instead.** `IbkrHistoricalTicksFeed` was removed by D30
+along with the two collectors, and no broker SDK, vendor client or network module may be imported
+in `src/`, `scripts/` or `tests/` — `tests/test_enforcement.py` fails on any of the twenty roots
+it enumerates. Twenty, not all: it is a denylist, and a new vendor's client is not on it.
 
 ## Input schemas
 
@@ -102,6 +129,13 @@ it before anything else. `rvol` is *not* a fraction — `min_rvol` is a plain mu
    that is not the shipped one.
 
 ## The guardrail
+
+Convention 9 — all data is simulated — **is mechanical here too.** An import lint over `src/`,
+`scripts/` and `tests/` fails on any of twenty enumerated broker, vendor and network roots;
+`provenance.py` refuses undeclared input at all five entry points; and the §7 verdict wording is
+unreachable on simulated data. Each has a
+test that performs the violation, and each was checked by removing the guard and confirming the
+test goes red — the discipline the `guarantee-test` skill exists for.
 
 Convention 1 — no literal for a registered threshold — **is mechanical here.** The registry
 lint's roots were extended from `src/tradipy/*.py` to include `scripts/` recursively, which

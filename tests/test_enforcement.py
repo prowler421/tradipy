@@ -40,11 +40,15 @@ immediately adjacent to the hole.
 from __future__ import annotations
 
 import ast
+import importlib
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
+from scripts.spike2a import provenance, q2_float, q3_latency, q4_spreads
+from scripts.spike2a.feeds import QuoteSample
 from tradipy.gates import (
     _rounded,
     apply_stop_floor_and_ceiling,
@@ -385,3 +389,543 @@ def test_partial_config_names_every_missing_parameter() -> None:
     with pytest.raises(ValueError, match="missing") as exc:
         Config({"min_stop_distance": D("0.10")})
     assert "room_gate_multiple" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# D30 — every dataset is simulated, and nothing can reach a market to change that
+# ---------------------------------------------------------------------------
+#
+# **Read the import lint as a denylist, not a proof.** It enumerates twenty roots across
+# `src/`, `scripts/` and `tests/`; a new vendor's client, or `subprocess` calling `curl`,
+# passes it clean. The provenance gate below is the backstop, because it constrains what may
+# be *read* rather than what may be imported. A green lint is not the guarantee.
+#
+# The guarantee: *"this project reads simulated data only."* Round 7 shipped the same sentence
+# in prose — PHASE-2A-SPIKE §3.2, "live trading, of any size, for any reason" — beside two
+# committed scripts that connected to IBKR and pulled real ticks, because §3.2 forbade *trading*
+# and they only *read*. A guarantee whose wording does not cover the code beside it is the fifth
+# defect class with better prose. These are the attacks.
+
+
+def _broker_or_network_imports(path: Path) -> list[str]:
+    """Every import in ``path`` whose root module can reach a market or a socket.
+
+    AST, not text search, for the reason ``test_parameter_registry`` parses rather than greps: a
+    module named in a docstring is a string, an ``import`` is an import, and a lint that cannot
+    tell them apart fires on the sentence explaining why it exists. This file is itself the
+    proof — it names every forbidden module below and imports none of them.
+    """
+    found: list[str] = []
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        roots: list[str] = []
+        if isinstance(node, ast.Import):
+            roots = [alias.name.split(".")[0] for alias in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            roots = [node.module.split(".")[0]]
+        found += [
+            f"{path.name}:{node.lineno} imports {root}"
+            for root in roots
+            if root in FORBIDDEN_IMPORT_ROOTS
+        ]
+    return found
+
+
+#: Broker SDKs, market-data vendors, and the network stack. The vendors are listed even though
+#: none was ever a dependency: D30's cost is that reaching for one is easy and reviewing for one
+#: is not, and PRD §5.1 names Polygon and Benzinga as the intended sources, so they are exactly
+#: what a future contributor would reach for first.
+FORBIDDEN_IMPORT_ROOTS = frozenset(
+    {
+        # Brokers
+        "ib_insync",
+        "ibapi",
+        "ib_async",
+        # Market-data vendors (PRD §5.1)
+        "alpaca",
+        "polygon",
+        "benzinga",
+        "yfinance",
+        "finnhub",
+        "alpha_vantage",
+        "tradier",
+        # The network itself — the layer under all of the above
+        "socket",
+        "urllib",
+        "http",
+        "requests",
+        "httpx",
+        "aiohttp",
+        "websocket",
+        "websockets",
+        "ftplib",
+        "xmlrpc",
+    }
+)
+
+#: Everything Python in the repository. Unlike the registry lint, ``tests/`` **is** in scope:
+#: that lint exempts fixtures because a fixture must state a literal (convention 4), and no
+#: analogous reason exists to import a broker from a test.
+LINTED_TREES = ("src", "scripts", "tests")
+
+
+def _linted_files() -> list[Path]:
+    repo = Path(__file__).resolve().parents[1]
+    return sorted(p for tree in LINTED_TREES for p in (repo / tree).rglob("*.py"))
+
+
+@pytest.mark.spec
+def test_no_broker_or_network_import_reaches_the_repository() -> None:
+    """D30's import half, as the thing that fails when it stops being true.
+
+    Not D30's headline claim — see the section comment. This is a denylist, so it proves the
+    twenty enumerated roots are absent and nothing more.
+    """
+    files = _linted_files()
+    assert len(files) > 20, "the lint found almost nothing — check LINTED_TREES, not the result"
+
+    offenders = [hit for path in files for hit in _broker_or_network_imports(path)]
+    assert not offenders, (
+        "these can reach a market or a socket, and D30 permits neither:\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+@pytest.mark.spec
+def test_the_broker_import_lint_catches_a_planted_import(tmp_path: Path) -> None:
+    """The guard on the guard.
+
+    A lint that scans a clean tree passes whether or not it works. Each form below is one a
+    contributor would plausibly write, and the last two are the ones a text search for
+    ``import ib_insync`` at column zero would miss.
+    """
+    planted = {
+        "module_scope.py": "from ib_insync import IB, Stock\n",
+        "plain_import.py": "import ib_insync\n",
+        "aliased.py": "import ib_insync as ib\n",
+        "submodule.py": "import urllib.request\n",
+        "inside_a_function.py": "def fetch():\n    import requests\n    return requests\n",
+        "lazily_in_a_constructor.py": (
+            "class Feed:\n"
+            "    def __init__(self):\n"
+            "        try:\n"
+            "            from ib_insync import IB\n"
+            "        except ImportError:\n"
+            "            raise RuntimeError('spike-only prerequisite')\n"
+        ),
+    }
+    for name, body in planted.items():
+        path = tmp_path / name
+        path.write_text(body, encoding="utf-8")
+        assert _broker_or_network_imports(path), f"the lint is blind to {name}: {body!r}"
+
+    # And it does not fire on a mention. `feeds.py` explains at length why a broker feed was
+    # removed; a lint that flags the explanation makes the explanation unwritable.
+    innocent = tmp_path / "docstring_only.py"
+    innocent.write_text(
+        '"""Removed at D30: this used to import ib_insync and call requests.get."""\n'
+        'MENTIONED = "ib_insync"\n',
+        encoding="utf-8",
+    )
+    assert not _broker_or_network_imports(innocent)
+
+
+@pytest.mark.spec
+def test_widening_the_permitted_origins_cannot_pass_unnoticed() -> None:
+    """The tripwire on the one line that encodes the current rung of the ladder.
+
+    ``PERMITTED_ORIGINS`` is what a contributor edits to make a refusal go away, and editing it
+    is exactly the decision D30 reserves. This test fails when that line changes — which is the
+    point, not a nuisance: changing it *and* this assertion *and* the PLAN decision together is
+    the recorded advance, and changing the line alone is not available.
+    """
+    assert provenance.PERMITTED_ORIGINS == frozenset({provenance.DataOrigin.SIMULATED}), (
+        "the permitted origins changed. If the ladder is being advanced, that is a PLAN "
+        "decision superseding D30 — and for LIVE, the PRD §18.8 evidence bar as well."
+    )
+
+
+def _declare(directory: Path, origin: provenance.DataOrigin, *covered: Path) -> None:
+    (directory / provenance.PROVENANCE_FILENAME).write_text(
+        provenance.render(
+            origin=origin,
+            generator="tests/test_enforcement.py",
+            seed=None,
+            covered=covered,
+            detail="fixture",
+        ),
+        encoding="utf-8",
+    )
+
+
+@pytest.fixture
+def declared(tmp_path: Path) -> Path:
+    """A directory holding one file, correctly declared ``SIMULATED``."""
+    data = tmp_path / "kept.csv"
+    data.write_text("symbol,bid,ask\nAXTI,10.00,10.02\n", encoding="utf-8")
+    _declare(tmp_path, provenance.DataOrigin.SIMULATED, data)
+    return data
+
+
+@pytest.mark.spec
+def test_the_gate_accepts_correctly_declared_simulated_data(declared: Path) -> None:
+    """The precondition for every refusal below. Without it they could pass vacuously."""
+    prov = provenance.require(declared)
+    assert prov.origin is provenance.DataOrigin.SIMULATED
+    assert prov.is_simulated and not prov.answers_prereg
+
+
+@pytest.mark.spec
+def test_undeclared_data_is_refused_rather_than_assumed_simulated(tmp_path: Path) -> None:
+    """The default matters more than the check.
+
+    Treating a missing marker as ``SIMULATED`` would be the friendly reading and would restore
+    the original hole: the file that most needs a declaration is the one somebody added without
+    writing one.
+    """
+    orphan = tmp_path / "orphan.csv"
+    orphan.write_text("symbol\nAXTI\n", encoding="utf-8")
+    with pytest.raises(provenance.UndeclaredProvenanceError, match="no PROVENANCE.txt"):
+        provenance.require(orphan)
+
+
+@pytest.mark.spec
+def test_an_undeclared_file_does_not_inherit_its_neighbours_declaration(declared: Path) -> None:
+    """The concrete history: ``quotes_real.csv``, written by the deleted collector into the same
+    directory as a ``PROVENANCE.txt`` reading "SYNTHETIC", carrying no marker of its own."""
+    intruder = declared.parent / "quotes_real.csv"
+    intruder.write_text("symbol,bid,ask\nMSFT,410.00,410.02\n", encoding="utf-8")
+    with pytest.raises(provenance.UndeclaredProvenanceError, match="not covered"):
+        provenance.require(intruder)
+
+
+@pytest.mark.spec
+def test_a_file_edited_after_its_declaration_is_refused(declared: Path) -> None:
+    """A declaration describes bytes, not a filename."""
+    declared.write_text("symbol,bid,ask\nAXTI,10.00,10.50\n", encoding="utf-8")
+    with pytest.raises(provenance.UndeclaredProvenanceError, match="does not match the digest"):
+        provenance.require(declared)
+
+
+@pytest.mark.spec
+@pytest.mark.parametrize("origin", [provenance.DataOrigin.PAPER, provenance.DataOrigin.LIVE])
+def test_real_data_is_refused_however_honestly_it_declares_itself(
+    declared: Path, origin: provenance.DataOrigin
+) -> None:
+    """A well-formed declaration naming a forbidden origin is still a refusal.
+
+    This is the case the removal of the collectors does not cover: a contributor who writes a
+    new one, declares its output truthfully, and expects the pipeline to run.
+    """
+    _declare(declared.parent, origin, declared)
+    with pytest.raises(provenance.ForbiddenOriginError, match="not permitted"):
+        provenance.require(declared)
+
+
+@pytest.mark.spec
+def test_a_malformed_declaration_is_refused_like_a_missing_one(declared: Path) -> None:
+    """The other half of "undeclared is not simulated": a marker with no readable origin."""
+    marker = declared.parent / provenance.PROVENANCE_FILENAME
+    marker.write_text("origin  ATLANTIS\ncovers\n", encoding="utf-8")
+    with pytest.raises(provenance.UndeclaredProvenanceError, match="expected one of"):
+        provenance.require(declared)
+
+
+@pytest.mark.spec
+def test_a_declaration_survives_the_round_trip_for_a_long_filename(tmp_path: Path) -> None:
+    """``render`` → ``read`` must agree, including where the name overruns its column.
+
+    The guard on the guard, per the skill's step 5. Padded to a fixed width with no separator,
+    an 18-character name ran into its digest, the entry parsed as one token and was dropped —
+    so a file could be declared and then refused as undeclared. ``q3_measurements.csv``, at 19
+    characters, is the name the deleted Q3 collector wrote, which is how close this came to
+    mattering.
+    """
+    long_name = tmp_path / "q3_measurements.csv"
+    long_name.write_text("kind,seconds\ndata_to_signal,0.4\n", encoding="utf-8")
+    short_name = tmp_path / "vix.csv"
+    short_name.write_text("date,close\n2026-07-07,23.1\n", encoding="utf-8")
+
+    _declare(tmp_path, provenance.DataOrigin.SIMULATED, long_name, short_name)
+    prov = provenance.read(tmp_path)
+    assert set(prov.files) == {"q3_measurements.csv", "vix.csv"}
+    provenance.require(long_name, short_name)
+
+
+def _rejected_rows(n: int) -> list[q4_spreads.Classification]:
+    """``n`` signal bars, every one rejected — a 100% rate, which §7 calls RECALIBRATE.
+
+    Built rather than sampled because the disposition block is what is under test and it only
+    appears at that outcome. An empty ``rows`` list reaches ``CALIBRATED`` via "no gated bars",
+    where the block is unreachable on *either* branch — which is how the first version of the
+    test below asserted the absence of a string that was never going to be present.
+    """
+    quote = QuoteSample(
+        symbol="AXTI",
+        captured_at=datetime(2026, 7, 7, 13, 31, tzinfo=UTC),
+        bid=D("10.00"),
+        ask=D("10.40"),
+        bid_size=100,
+        ask_size=100,
+    )
+    bar = q4_spreads.SignalBar(
+        symbol="AXTI",
+        session="2026-07-07",
+        setup="vwap_reclaim",
+        price=D("10.00"),
+        r=D("0.30"),
+        quote=quote,
+    )
+    return [
+        q4_spreads.Classification(
+            bar=bar,
+            spread=D("0.40"),
+            signal_cap=D("0.04"),
+            scan_cap=D("0.10"),
+            rejected=True,
+            reason="SPREAD_TOO_WIDE",
+        )
+        for _ in range(n)
+    ]
+
+
+@pytest.mark.spec
+def test_a_simulated_run_cannot_print_a_prereg_verdict_or_raise_a_disposition(
+    declared: Path,
+) -> None:
+    """§7 binds to measured data, so simulated input must produce neither a §7 verdict nor a D7
+    disposition — PLAN's rule that any value capable of triggering one must be reproducible from
+    a provenance-marked input, applied at the only place that prints one.
+
+    Paired with the test below deliberately. Alone, this asserts the absence of two strings,
+    which would pass just as well if the strings had been deleted from the module.
+    """
+    simulated = provenance.require(declared)
+    text = q4_spreads.report(_rejected_rows(10), [], simulated)
+
+    assert "pipeline outcome (NOT a §7 verdict)" in text
+    assert "§7 verdict:" not in text
+    assert "raise as a spec decision" not in text, "a simulated run must not raise a disposition"
+    assert "SIMULATED" in text, "the origin travels with the numbers"
+
+
+@pytest.mark.spec
+def test_a_measured_run_prints_both__so_the_test_above_is_not_vacuous() -> None:
+    """The contrast case: on the same rows, both strings are reachable.
+
+    ``Provenance`` is built directly instead of through :func:`provenance.require`, because
+    ``require`` would — correctly — refuse a ``PAPER`` origin. What is under test here is the
+    *report*, not the gate, and conflating the two would make this test unwritable without
+    weakening the gate to write it.
+    """
+    measured = provenance.Provenance(
+        origin=provenance.DataOrigin.PAPER,
+        generator="a paper-stage collector that does not exist yet",
+    )
+    assert measured.answers_prereg
+
+    text = q4_spreads.report(_rejected_rows(10), [], measured)
+    assert "§7 verdict:" in text
+    assert "NOT a §7 verdict" not in text
+    assert "raise as a spec decision" in text, "RECALIBRATE must still raise D7 on real data"
+
+
+@pytest.mark.spec
+def test_q3_withholds_its_disposition_on_simulated_input(declared: Path) -> None:
+    """Unmeasured is not a pass, and neither is invented.
+
+    A p95 over fabricated intervals reports the generator's parameters. The measurements below
+    would otherwise clear both §7 thresholds and print "Both p95s within §7's thresholds", which
+    is the sentence a reader would quote.
+    """
+    simulated = provenance.require(declared)
+    measurements = [
+        q3_latency.Measurement(kind="data_to_signal", seconds=D("0.4")),
+        q3_latency.Measurement(kind="signal_to_order", seconds=D("0.2")),
+    ]
+
+    text = q3_latency.report(measurements, simulated)
+    assert "disposition WITHHELD" in text
+    assert "within §7's thresholds" not in text
+
+    measured = provenance.Provenance(
+        origin=provenance.DataOrigin.PAPER, generator="a collector that does not exist yet"
+    )
+    assert "within §7's thresholds" in q3_latency.report(measurements, measured)
+
+
+# The gate is only worth what its call sites are worth. `Config.polarity()` was documented as
+# deciding rounding direction, was tested, and had zero callers — so these assert the wiring,
+# not the mechanism.
+def _runnable_inputs(directory: Path) -> tuple[Path, Path]:
+    bars = directory / "signal_bars.csv"
+    bars.write_text("symbol,session,setup,price,r\nAXTI,2026-07-07,bull_flag,10.00,0.30\n", "utf-8")
+    quotes = directory / "quotes.csv"
+    quotes.write_text(
+        "symbol,captured_at,bid,ask,bid_size,ask_size\n"
+        "AXTI,2026-07-07T13:31:00+00:00,10.00,10.02,100,100\n",
+        "utf-8",
+    )
+    return bars, quotes
+
+
+@pytest.mark.spec
+def test_q4_main_refuses_undeclared_input_rather_than_measuring_it(tmp_path: Path) -> None:
+    bars, quotes = _runnable_inputs(tmp_path)
+    assert q4_spreads.main([str(bars), str(quotes)]) == 3
+
+    _declare(tmp_path, provenance.DataOrigin.SIMULATED, bars, quotes)
+    assert q4_spreads.main([str(bars), str(quotes)]) == 0
+
+
+@pytest.mark.spec
+def test_q3_main_refuses_undeclared_input_rather_than_measuring_it(tmp_path: Path) -> None:
+    latency = tmp_path / "latency.csv"
+    latency.write_text("kind,seconds\ndata_to_signal,0.4\n", encoding="utf-8")
+    assert q3_latency.main([str(latency)]) == 3
+
+    _declare(tmp_path, provenance.DataOrigin.SIMULATED, latency)
+    assert q3_latency.main([str(latency)]) == 0
+
+
+@pytest.mark.spec
+@pytest.mark.parametrize(
+    ("module", "filename", "body"),
+    [
+        (
+            "windows",
+            "vix.csv",
+            "date,close\n" + "".join(f"2026-01-{d:02d},23.1\n" for d in range(1, 21)),
+        ),
+        ("universe", "preopen.csv", "session,symbol,price,gap_premarket_pct\n"),
+        ("q2_float", "floats.csv", "symbol,provider,float_shares,as_of\n"),
+    ],
+)
+def test_every_spike_entry_point_gates_its_input(
+    tmp_path: Path, module: str, filename: str, body: str
+) -> None:
+    """Not just the two that print a §7 outcome.
+
+    The first version of D30 gated `q4_spreads` and `q3_latency` and left these three reading
+    the same declared bytes ungated, while six documents said every measurement module called
+    the gate. A gate with an unguarded side entrance is the guarantee, not the mechanism.
+
+    The declared case is asserted too. Without it a module that refused *everything* would pass
+    — which is the same "confirms the happy path" mistake as asserting only the accept case, run
+    backwards.
+    """
+    entry = importlib.import_module(f"scripts.spike2a.{module}")
+    path = tmp_path / filename
+    path.write_text(body, encoding="utf-8")
+    assert entry.main([str(path)]) == 3, f"{module} read undeclared input"
+
+    _declare(tmp_path, provenance.DataOrigin.SIMULATED, path)
+    assert entry.main([str(path)]) == 0, f"{module} refuses correctly declared input"
+
+
+@pytest.mark.spec
+def test_q2_withholds_its_disposition_on_simulated_input(declared: Path) -> None:
+    """Q2's whole output is §7 threshold comparisons and a named A10 disposition.
+
+    The first version of D30 wired the gate to five entry points and the withholding to two,
+    leaving this module printing "A10 not tripped by this sample" over fabricated floats — the
+    same defect as the §7 verdict, one module along.
+    """
+    simulated = provenance.require(declared)
+    fresh = [
+        q2_float.FloatReading(
+            symbol="AXTI", provider="finviz", float_shares=D("5000000"), as_of=date(2026, 7, 25)
+        )
+    ]
+    on = date(2026, 7, 29)
+
+    assert "A10 disposition WITHHELD" in q2_float.report(fresh, on, simulated)
+
+    # The contrast, so the assertion above is not the absence of an unreachable string. With one
+    # provider the reachable measured outcome is PARTIAL, not "not tripped" — §7's disagreement
+    # condition needs two sources, and `disagreement` returns None rather than zero for exactly
+    # that reason. Asserting the "not tripped" wording here would have been asserting a string
+    # this fixture cannot produce under either branch.
+    measured = provenance.Provenance(
+        origin=provenance.DataOrigin.PAPER, generator="a second provider that does not exist yet"
+    )
+    text = q2_float.report(fresh, on, measured)
+    assert "A10 disposition WITHHELD" not in text
+    assert "PARTIAL. The staleness half is within threshold" in text
+
+
+# `declare` is the only writer besides the generator, so it is the only other place a false
+# declaration can originate.
+@pytest.mark.spec
+def test_declaring_a_file_does_not_evict_the_ones_already_declared(tmp_path: Path) -> None:
+    """The merge, and the header it must not overwrite.
+
+    ``declare`` runs against a directory the generator wrote. Replacing the header would leave
+    four generator-produced files described as "hand-authored", with the seed dropped — a marker
+    that is false about data it did not produce, which is the defect the marker exists to
+    prevent. (This happened: the first version of ``declare`` did exactly that.)
+    """
+    generated = tmp_path / "quotes.csv"
+    generated.write_text("symbol,bid,ask\nAXTI,10.00,10.02\n", encoding="utf-8")
+    (tmp_path / provenance.PROVENANCE_FILENAME).write_text(
+        provenance.render(
+            origin=provenance.DataOrigin.SIMULATED,
+            generator="scripts/spike2a/synthetic_data_generator.py",
+            seed=42,
+            covered=[generated],
+            detail="spike start       2026-07-29\nNot market data. Not vendor data.",
+        ),
+        encoding="utf-8",
+    )
+
+    by_hand = tmp_path / "latency.csv"
+    by_hand.write_text("kind,seconds\ndata_to_signal,0.4\n", encoding="utf-8")
+    provenance.declare(by_hand)
+
+    after = provenance.read(tmp_path)
+    assert set(after.files) == {"quotes.csv", "latency.csv"}, "the merge dropped an entry"
+    assert after.generator == "scripts/spike2a/synthetic_data_generator.py"
+    assert after.seed == 42, "the seed that produced quotes.csv was dropped"
+    assert "Not market data" in after.detail, "the generator's own description was overwritten"
+    provenance.require(generated, by_hand)
+
+
+@pytest.mark.spec
+def test_declaring_cannot_relabel_a_marker_that_does_not_parse(tmp_path: Path) -> None:
+    """Only a *missing* marker is the fresh-start case.
+
+    ``read`` raises the same exception type for absent and malformed, and ``declare`` used to
+    catch it — so ``origin PAPERR``, one keystroke from a real declaration, was silently
+    rewritten to ``SIMULATED``. That is the default this module refuses everywhere else.
+    """
+    data = tmp_path / "quotes.csv"
+    data.write_text("symbol,bid,ask\nMSFT,410.00,410.02\n", encoding="utf-8")
+    (tmp_path / provenance.PROVENANCE_FILENAME).write_text("origin  PAPERR\n", encoding="utf-8")
+
+    with pytest.raises(provenance.UndeclaredProvenanceError, match="expected one of"):
+        provenance.declare(data)
+
+
+@pytest.mark.spec
+def test_declaring_cannot_relabel_honestly_declared_real_data(tmp_path: Path) -> None:
+    data = tmp_path / "quotes.csv"
+    data.write_text("symbol,bid,ask\nMSFT,410.00,410.02\n", encoding="utf-8")
+    _declare(tmp_path, provenance.DataOrigin.LIVE, data)
+
+    with pytest.raises(provenance.ForbiddenOriginError, match="refusing to overwrite"):
+        provenance.declare(data)
+
+
+@pytest.mark.spec
+def test_the_declare_cli_unblocks_input_that_has_no_generator(tmp_path: Path) -> None:
+    """``floats.csv`` and ``latency.csv`` have no generator, so without this they are unreadable.
+
+    A gate with no supported way past it is not a gate, it is an outage — and the documented Q2
+    and Q3 commands both failed with exit 3 until this existed.
+    """
+    latency = tmp_path / "latency.csv"
+    latency.write_text("kind,seconds\ndata_to_signal,0.4\n", encoding="utf-8")
+    assert q3_latency.main([str(latency)]) == 3
+
+    assert provenance._main([str(latency)]) == 0
+    assert q3_latency.main([str(latency)]) == 0

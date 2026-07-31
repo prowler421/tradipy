@@ -20,6 +20,15 @@ the disagreement as a property of the market.
 **Rejections are recorded, not dropped** (§4.2, §20.14): a rejection-rate question cannot be
 answered from accepted candidates, and §20.14 requires ``spread_at_signal`` persisted for every
 signal including rejected ones.
+
+**Nothing here runs without a declared origin.** :func:`scripts.spike2a.provenance.require` gates
+:func:`main`, and under PLAN **D30** the only permitted origin is ``SIMULATED``. That has a
+consequence this module has to carry rather than paper over: §7's thresholds bind against
+*measured* data, so on simulated input the three-way outcome below is a **pipeline outcome, not a
+§7 verdict**, and the D7 disposition block does not fire. The wording is not cosmetic — round 7
+found this pipeline printing "§7 verdict: INERT" over fabricated quotes, twice, with different
+answers, and PLAN's own rule is that any value capable of triggering a D7 disposition must be
+reproducible from a provenance-marked input.
 """
 
 from __future__ import annotations
@@ -42,6 +51,7 @@ from scripts.spike2a.prereg import (
     Q4_RECALIBRATE_ABOVE_PCT,
     pct,
 )
+from scripts.spike2a.provenance import Provenance, ProvenanceError, banner, require
 from tradipy.gates import spread_caps
 from tradipy.params import MODE_PRESETS, Config
 from tradipy.quotes import spread_at_signal
@@ -279,8 +289,13 @@ def load_signal_bars(path: Path, feed: QuoteFeed) -> tuple[list[SignalBar], list
     return bars, missing
 
 
-def report(rows: list[Classification], missing: list[str]) -> str:
-    """D4, in the three cuts §4.3 requires: overall, per setup, per price decile."""
+def report(rows: list[Classification], missing: list[str], prov: Provenance) -> str:
+    """D4, in the three cuts §4.3 requires: overall, per setup, per price decile.
+
+    ``prov`` is required, not optional. A default would make the un-declared call the easy one
+    to write, and the whole failure this parameter exists to prevent is a report that does not
+    say what produced it.
+    """
     overall = _rate("overall", rows)
     by_setup = {
         setup: _rate(setup, [c for c in rows if c.bar.setup == setup])
@@ -290,9 +305,20 @@ def report(rows: list[Classification], missing: list[str]) -> str:
     outcome, why = verdict(overall, deciles)
     decile_lines = [f"  {r}" for r in deciles] or ["  (none)"]
 
+    # §7 binds to measured data. On simulated input the same arithmetic runs and the same three
+    # outcomes are reachable, but the label must not be one a reader can act on — see the module
+    # docstring for what happened when it was.
+    headline = (
+        f"§7 verdict: {outcome.upper()} — {why}"
+        if prov.answers_prereg
+        else f"pipeline outcome (NOT a §7 verdict): {outcome.upper()} — {why}"
+    )
+
     lines = [
         "Q4 — realized spread vs the §3.1.3 signal-time cap",
         "=" * 62,
+        "",
+        *banner(prov),
         "",
         f"signal bars      {len(rows)}",
         f"coverage gaps    {len(missing)}  (Q1 finding, per §7 exclusion 2)",
@@ -306,9 +332,20 @@ def report(rows: list[Classification], missing: list[str]) -> str:
         "per price decile (cheapest first)",
         *decile_lines,
         "",
-        f"§7 verdict: {outcome.upper()} — {why}",
+        headline,
         "",
     ]
+
+    if not prov.answers_prereg:
+        lines += [
+            "This run exercises the pipeline. It does not answer Q4, and no D7 disposition",
+            "follows from it: §7's thresholds are binding against measured data, and a synthetic",
+            "run is not a data pull. See docs/PHASE-2A-SPIKE.md §7 and PLAN D30.",
+            "",
+        ]
+        if missing:
+            lines += [f"coverage gaps ({len(missing)}) describe the generator, not a vendor.", ""]
+        return "\n".join(lines)
 
     if outcome == Q4_RECALIBRATE:
         lines += [
@@ -334,15 +371,22 @@ def report(rows: list[Classification], missing: list[str]) -> str:
 def main(argv: list[str]) -> int:
     """``python -m scripts.spike2a.q4_spreads <signal_bars.csv> <quotes.csv>``
 
-    Both inputs are CSVs so that the pipeline runs today, against
-    :class:`~scripts.spike2a.feeds.CsvQuoteFeed`, with no broker and no subscription. Swap in
-    :class:`~scripts.spike2a.feeds.IbkrHistoricalTicksFeed` once the paper tier is confirmed to
-    serve BID_ASK ticks for the sample; nothing below changes.
+    Both inputs are CSVs, read through :class:`~scripts.spike2a.feeds.CsvQuoteFeed`, with no
+    broker and no subscription — which under D30 is the only shape there is. Both must be covered
+    by a ``PROVENANCE.txt`` declaring a permitted origin; the gate runs **before** the data is
+    read, so a refusal cannot be mistaken for a measurement of an empty sample.
     """
     if len(argv) < 2:
         print(__doc__)
         print("usage: python -m scripts.spike2a.q4_spreads <signal_bars.csv> <quotes.csv>")
         return 2
+
+    bars_path, quotes_path = Path(argv[0]), Path(argv[1])
+    try:
+        prov = require(bars_path, quotes_path)
+    except ProvenanceError as exc:
+        print(f"refusing to measure: {exc}", file=sys.stderr)
+        return 3
 
     # The §2.0 mode preset is immaterial to Q4 and the default is used deliberately rather than
     # the `experienced` preset the §3 examples and `python -m tradipy demo` pass. None of
@@ -356,11 +400,11 @@ def main(argv: list[str]) -> int:
         "max_spread_r",
     }, "a mode preset now moves a spread cap; Q4 must state which mode it measured"
 
-    feed = CsvQuoteFeed(Path(argv[1]))
-    bars, missing = load_signal_bars(Path(argv[0]), feed)
+    feed = CsvQuoteFeed(quotes_path)
+    bars, missing = load_signal_bars(bars_path, feed)
     rows = [classify(b, cfg) for b in bars]
 
-    print(report(rows, missing))
+    print(report(rows, missing, prov))
     # `CsvQuoteFeed.unparsed` exists so a malformed quote file cannot read as a vendor coverage
     # failure. It was written and never read: the first generated sample had 4,620 of 9,240 rows
     # timestamped 09:60-09:89, exactly half the tape was dropped, and the run printed a clean

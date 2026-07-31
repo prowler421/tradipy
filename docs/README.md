@@ -31,7 +31,7 @@ and a change usually belongs in exactly one.
 
 | Document | Role |
 |---|---|
-| [PLAN.md](PLAN.md) | Workstreams 0–11, the sequencing table, the decision log D1–D29, and the risk register. The defect-classes section is the most cited part of the repository — six rows as of round 7, and the count is deliberately not restated here |
+| [PLAN.md](PLAN.md) | Workstreams 0–11, the sequencing table, the decision log D1–D30, and the risk register. The defect-classes section is the most cited part of the repository — six rows as of round 7, and the count is deliberately not restated here |
 | [PHASE-2A-SPIKE.md](PHASE-2A-SPIKE.md) | Scope and **binding pre-registration** for the data feasibility spike (PRD §5.5 / V7). Its §7 thresholds were committed before any data was pulled and are not to be retrofitted to a result |
 
 ## Engineering guides
@@ -75,6 +75,12 @@ including the mandatory adversarial fact-check.
 - **A finding fixable in one line, with no spec implication, gets fixed — not dispositioned.**
   `CLAUDE.md` convention 8. Seven rounds of review machinery exist for defects that recur or need a
   spec call.
+- **All data is simulated.** `CLAUDE.md` convention 9, decided as [PLAN](PLAN.md) **D30**. Every
+  dataset sits on a `SIMULATED` → `PAPER` → `LIVE` ladder whose current rung is the first; no
+  broker, vendor or network module may be imported anywhere in `src/`, `scripts/` or `tests/`;
+  and data with no declared origin is refused rather than assumed simulated. The cost is that
+  [PHASE-2A-SPIKE](PHASE-2A-SPIKE.md) §7 binds to *measured* data, so Q1–Q4 stay unanswered and
+  a spike run prints a pipeline outcome, never a §7 verdict.
 - **Every guarantee needs the test that breaks it.** For any sentence of the form "X cannot
   happen", write the test that attempts X and asserts it fails. See
   [`../tests/test_enforcement.py`](../tests/test_enforcement.py) and the

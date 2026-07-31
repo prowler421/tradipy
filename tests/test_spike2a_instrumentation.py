@@ -88,7 +88,7 @@ def test_signal_bar_r_equals_entry_minus_library_stop(seeded: None) -> None:
     bars = generate_signal_bars(_sample_preopen())
     assert bars, "fixture pre-open row should yield at least one signal bar"
 
-    for _symbol, _session, setup, price, r in bars:
+    for _symbol, _session, setup, price, r, _signal_at in bars:
         stop_pct = _STOP_PCT_BY_SETUP[setup]
         entry = ceil_to_tick(price * _ENTRY_PREMIUM)
         stop, reject = apply_stop_floor_and_ceiling(entry, price * stop_pct, cfg)

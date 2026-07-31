@@ -30,7 +30,7 @@ from __future__ import annotations
 import csv
 import random
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -209,7 +209,7 @@ def generate_preopen_facts(
 
 def generate_signal_bars(
     preopen: list[tuple[date, str, Decimal, Decimal, Decimal, Decimal, Decimal, Decimal]],
-) -> list[tuple[str, date, str, Decimal, Decimal]]:
+) -> list[tuple[str, date, str, Decimal, Decimal, str]]:
     """Generate signal bars for the three MVP setups.
 
     Each pre-open fact can fire as any of the three setups with some probability.
@@ -226,7 +226,7 @@ def generate_signal_bars(
     generator has to make — but the floor, the ceiling and the tick rounding are the library's.
     Bars whose stop the library rejects are dropped, not clamped.
     """
-    bars: list[tuple[str, date, str, Decimal, Decimal]] = []
+    bars: list[tuple[str, date, str, Decimal, Decimal, str]] = []
     cfg = Config.default()
 
     # The five leading-underscore names are the pre-open facts a signal bar does not depend on.
@@ -264,13 +264,30 @@ def generate_signal_bars(
 
             r = entry - stop
             if r > Decimal("0"):
-                bars.append((symbol, session, setup, price, r))
+                # Each setup fires at a distinct instant so Q4 does not gate every setup on the
+                # session's last tick (review round 7, H4). Offsets are generator fiction, not
+                # bar geometry — only R comes from the library.
+                minute_offset = (
+                    random.randint(5, 45)
+                    + {"bull_flag": 0, "hod_breakout": 3, "vwap_reclaim": 6}[setup]
+                )
+                hours, mins = divmod(30 + minute_offset, 60)
+                signal_at = datetime(
+                    session.year,
+                    session.month,
+                    session.day,
+                    9 + hours,
+                    mins,
+                    0,
+                    tzinfo=UTC,
+                ).isoformat()
+                bars.append((symbol, session, setup, price, r, signal_at))
 
     return bars
 
 
 def generate_nbbo_quotes(
-    signal_bars: list[tuple[str, date, str, Decimal, Decimal]],
+    signal_bars: list[tuple[str, date, str, Decimal, Decimal, str]],
     regime: MarketRegime,
     samples_per_bar: int = 60,  # 1 per minute for an hour
 ) -> list[tuple[str, str, Decimal, Decimal, Decimal, Decimal]]:
@@ -283,6 +300,7 @@ def generate_nbbo_quotes(
     - Random microstructure noise
     """
     quotes: list[tuple[str, str, Decimal, Decimal, Decimal, Decimal]] = []
+    seen: set[tuple[str, str]] = set()
 
     setup_spread_bps = {
         "bull_flag": regime.spread_bps_mean - 2,  # Tighter (more liquid)
@@ -293,7 +311,8 @@ def generate_nbbo_quotes(
     # `_r` is unused here on purpose: the quote generator must not see R. A spread drawn as a
     # function of the same R the signal-time cap divides by would manufacture the correlation Q4
     # exists to measure.
-    for symbol, session, setup, price, _r in signal_bars:
+    for symbol, session, setup, price, _r, signal_at in signal_bars:
+        signal_dt = datetime.fromisoformat(signal_at)
         # Base spread from regime and setup
         base_bps = setup_spread_bps.get(setup, regime.spread_bps_mean)
 
@@ -317,17 +336,24 @@ def generate_nbbo_quotes(
         # constraints that consume it.
         spread = max(TICK_SIZE, ceil_to_tick(price * Decimal(str(spread_bps / 10000))))
 
-        # Generate quotes over the hour after signal (60 samples, 1/min)
-        base_time = session.isoformat()
+        # Quotes from the open through the signal instant (and one minute after), not a fixed
+        # hour ending at 10:29 regardless of when the setup fired.
+        end_minute = (signal_dt.hour - 9) * 60 + signal_dt.minute - 30 + 1
+        end_minute = max(end_minute, 1)
+        minute_span = min(samples_per_bar, end_minute)
 
-        for minute in range(samples_per_bar):
+        for minute in range(minute_span):
             # `divmod` because `09:{30+minute}` emitted 09:60 through 09:89 for the second half of
             # every bar — 4,620 of 9,240 rows of the first generated sample, which
             # `datetime.fromisoformat` rejected and `CsvQuoteFeed` counted as unparsed. Exactly
             # half the tape was discarded and nothing printed the counter that recorded it.
             # `+00:00` rather than `Z` for `fromisoformat` on interpreters before 3.11.
             hours, minutes = divmod(30 + minute, 60)
-            captured_at = f"{base_time}T{9 + hours:02d}:{minutes:02d}:00+00:00"
+            captured_at = f"{session.isoformat()}T{9 + hours:02d}:{minutes:02d}:00+00:00"
+            dedupe_key = (symbol, captured_at)
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
 
             # Mid-price walks randomly; bid/ask straddle it on the tick grid, with `ask - bid`
             # exactly `spread` — half of an odd-cent spread is not a price.
@@ -446,7 +472,7 @@ def main() -> None:
     write_csv(
         data_dir / "signal_bars.csv",
         signal_bars,
-        ["symbol", "session", "setup", "price", "r"],
+        ["symbol", "session", "setup", "price", "r", "signal_at"],
     )
     print(f"   → {len(signal_bars)} signal bars (multiple setups per symbol-session possible)\n")
 

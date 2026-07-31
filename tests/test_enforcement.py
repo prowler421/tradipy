@@ -418,11 +418,15 @@ def _broker_or_network_imports(path: Path) -> list[str]:
     found: list[str] = []
     tree = ast.parse(path.read_text(encoding="utf-8"))
     for node in ast.walk(tree):
-        roots: list[str] = []
+        # `continue` rather than a default empty list, so `node` stays narrowed to the two
+        # statement types past this point — `ast.AST` has no `lineno` and the report needs one.
+        roots: list[str]
         if isinstance(node, ast.Import):
             roots = [alias.name.split(".")[0] for alias in node.names]
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
             roots = [node.module.split(".")[0]]
+        else:
+            continue
         found += [
             f"{path.name}:{node.lineno} imports {root}"
             for root in roots
@@ -585,7 +589,7 @@ def test_undeclared_data_is_refused_rather_than_assumed_simulated(tmp_path: Path
     """
     orphan = tmp_path / "orphan.csv"
     orphan.write_text("symbol\nAXTI\n", encoding="utf-8")
-    with pytest.raises(provenance.UndeclaredProvenanceError, match="no PROVENANCE.txt"):
+    with pytest.raises(provenance.UndeclaredProvenanceError, match=r"no PROVENANCE\.txt"):
         provenance.require(orphan)
 
 

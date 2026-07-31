@@ -10,12 +10,19 @@ signal in twenty, and the mean says it is fine. The pass thresholds are stated o
 that reason, and :func:`percentile` is the whole arithmetic content of this module.
 
 **What "signal-to-order" means here, and what it does not.** It is the interval from a signal
-being decided to the order acknowledgement returning from the broker — measured with a
-``whatIf`` order preview against the paper account, never a live order. §3.2 of the spike doc
-forbids live trading of any size for any reason; a ``whatIf`` order is a margin-check round trip
-that never reaches a venue, which is the closest available proxy that stays inside that rule. It
-therefore **understates** true fill latency, and the report says so rather than leaving a reader
-to assume the number covers execution.
+being decided to the order acknowledgement returning from the broker. It was specified as a
+``whatIf`` order preview against a paper account — a margin-check round trip that never reaches a
+venue — and it therefore **understates** true fill latency and does not cover venue routing. The
+report says so rather than leaving a reader to assume the number covers execution.
+
+**No collector exists to produce that measurement.** PLAN **D30** puts the project on simulated
+data, and the collection script was removed with it; ``scripts/spike2a/TEST_SETUP.md`` records
+what restoring it costs. What remains here is the arithmetic and the threshold comparison, which
+can be checked without a connection — and a gate, because latency is the one Q where simulated
+input is not merely uninformative but actively misleading. A fabricated p95 measures the
+generator's parameters. So on ``SIMULATED`` input this module reports the distribution and
+**withholds the §5.5/§4.4 disposition entirely**: unmeasured is not a pass, and neither is
+invented.
 """
 
 from __future__ import annotations
@@ -30,6 +37,7 @@ from scripts.spike2a.prereg import (
     Q3_MAX_DATA_TO_SIGNAL_P95_SECONDS,
     Q3_MAX_SIGNAL_TO_ORDER_P95_SECONDS,
 )
+from scripts.spike2a.provenance import Provenance, ProvenanceError, banner, require
 
 #: The percentiles §7 asks to see. p95 is the threshold; the rest are context, because a
 #: threshold reported alone cannot show whether it was missed narrowly or by an order of
@@ -113,18 +121,30 @@ def summarize(measurements: list[Measurement]) -> list[Summary]:
     return out
 
 
-def report(measurements: list[Measurement]) -> str:
+def report(measurements: list[Measurement], prov: Provenance) -> str:
     """D3, distribution first."""
     summaries = summarize(measurements)
     lines = [
         "Q3 — measured latency",
         "=" * 62,
         "",
+        *banner(prov),
+        "",
         *(f"{s}\n" for s in summaries),
     ]
 
     failing = [s.kind for s in summaries if s.fails]
     unmeasured = [s.kind for s in summaries if not s.n]
+
+    if not prov.answers_prereg:
+        lines += [
+            "§5.5 / §4.4 disposition WITHHELD",
+            "  These intervals were not observed on a wire. A p95 computed from simulated input",
+            "  reports the generator's parameters, so it can neither pass nor fail §7 — and a",
+            "  latency figure is the easiest number in this spike to quote out of context.",
+            "  Q3 stays unanswered until the ladder reaches PAPER (PLAN D30).",
+        ]
+        return "\n".join(lines)
 
     lines.append("§5.5 / §4.4 disposition")
     if failing:
@@ -161,22 +181,30 @@ def from_csv_row(row: dict[str, str]) -> Measurement | None:
 def main(argv: list[str]) -> int:
     """``python -m scripts.spike2a.q3_latency <latency.csv>``
 
-    The collection side — connecting to the paper gateway, timestamping a bar arrival against the
-    signal decision, and issuing the ``whatIf`` preview — is deliberately not written yet. It is
-    the one part of the spike that cannot be built or verified without the connection, and
-    guessing at ``ib_insync``'s event ordering before seeing it produces a measurement of the
-    guess. This module is the arithmetic and the verdict, which can be checked now.
+    The collection side — connecting to a gateway, timestamping a bar arrival against the signal
+    decision, and issuing the order preview — does not exist under D30. It is also the one part
+    of the spike that could never have been verified without the connection: guessing at a
+    broker library's event ordering before seeing it produces a measurement of the guess. This
+    module is the arithmetic and the threshold comparison, which can be checked now, on declared
+    input, without claiming to have answered Q3.
     """
     if not argv:
         print(__doc__)
         print("usage: python -m scripts.spike2a.q3_latency <latency.csv>")
         return 2
 
-    with Path(argv[0]).open(newline="", encoding="utf-8") as fh:
+    path = Path(argv[0])
+    try:
+        prov = require(path)
+    except ProvenanceError as exc:
+        print(f"refusing to measure: {exc}", file=sys.stderr)
+        return 3
+
+    with path.open(newline="", encoding="utf-8") as fh:
         parsed = [from_csv_row(r) for r in csv.DictReader(fh)]
     measurements = [m for m in parsed if m is not None]
 
-    print(report(measurements))
+    print(report(measurements, prov))
     if len(parsed) != len(measurements):
         print(f"\n{len(parsed) - len(measurements)} unparsable row(s) skipped")
     return 0

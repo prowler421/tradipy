@@ -4,7 +4,7 @@
 
 .DEFAULT_GOAL := help
 .PHONY: help install sync run test coverage lint format format-check check typecheck \
-        clean docs links precommit release mutants
+        clean docs links precommit release
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \

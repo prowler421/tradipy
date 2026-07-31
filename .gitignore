@@ -210,4 +210,8 @@ pyrightconfig.json
 # scripts/spike2a/synthetic_data_generator.py together with a PROVENANCE.txt saying so. This
 # comment claimed they were "large and vendor-licensed" until review round 7, which is a
 # description of files that do not exist yet attached to the directory holding fabricated ones.
+#
+# Under PLAN D30 that is no longer "until a vendor answers" but the standing rule: every file here
+# is simulated, the PROVENANCE.txt is machine-readable and digest-checked, and the measurement
+# modules refuse to read anything it does not cover.
 data/spike2a/

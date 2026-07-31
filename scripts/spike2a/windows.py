@@ -24,6 +24,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from scripts.spike2a.prereg import VIX_LOOKBACK_MONTHS, WINDOW_SESSIONS
+from scripts.spike2a.provenance import ProvenanceError, banner, require
 
 #: Days per lookback month. §7 says "12 months"; a calendar-month walk-back and a 365-day
 #: walk-back select the same trading sessions to within a day, and the rule's output is
@@ -139,10 +140,18 @@ def main(argv: list[str]) -> int:
         print("usage: python -m scripts.spike2a.windows <vix.csv> [as-of YYYY-MM-DD]")
         return 2
 
-    series = read_vix_csv(Path(argv[0]))
+    path = Path(argv[0])
+    try:
+        prov = require(path)
+    except ProvenanceError as exc:
+        print(f"refusing to read: {exc}", file=sys.stderr)
+        return 3
+
+    series = read_vix_csv(path)
     as_of = datetime.strptime(argv[1], "%Y-%m-%d").date() if len(argv) > 1 else date.today()
     active, quiet = select_windows(series, as_of)
 
+    print("\n".join(banner(prov)))
     print(f"as-of {as_of} — {len(series)} VIX sessions read")
     for w in (active, quiet):
         print(f"  {w.label:>6}: {w.start} .. {w.end}  mean VIX {w.mean_vix:.2f}")

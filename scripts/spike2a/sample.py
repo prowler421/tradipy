@@ -58,6 +58,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from scripts.spike2a.prereg import MAX_MISSING_NBBO_PCT, MAX_SYMBOL_SESSIONS, pct
+from scripts.spike2a.provenance import ProvenanceError, banner, require
 from scripts.spike2a.universe import PreOpenFacts, Sample, from_csv_row, select_sample
 from scripts.spike2a.windows import Window, read_vix_csv, select_windows
 from tradipy.params import Config
@@ -144,17 +145,29 @@ def main(argv: list[str]) -> int:
     ``vix.csv``, restrict ``preopen.csv`` to them, then apply the selection rule.
     ``universe.py``'s own CLI is unchanged and still reports on an unrestricted file — see its
     module docstring — because this module is additive, not a replacement.
+
+    Both inputs must be covered by a declared ``PROVENANCE.txt`` (PLAN **D30**). This module
+    reads two files where the others read one, which is exactly the shape the gate exists
+    for: a composing entry point is the easiest place for undeclared data to enter, because
+    each half looks like somebody else's responsibility.
     """
     if len(argv) < 2:
         print(__doc__)
         print("usage: python -m scripts.spike2a.sample <vix.csv> <preopen.csv> [as-of YYYY-MM-DD]")
         return 2
 
-    series = read_vix_csv(Path(argv[0]))
+    vix_path, preopen_path = Path(argv[0]), Path(argv[1])
+    try:
+        prov = require(vix_path, preopen_path)
+    except ProvenanceError as exc:
+        print(f"refusing to read: {exc}", file=sys.stderr)
+        return 3
+
+    series = read_vix_csv(vix_path)
     as_of = datetime.strptime(argv[2], "%Y-%m-%d").date() if len(argv) > 2 else date.today()
     active, quiet = select_windows(series, as_of)
 
-    with Path(argv[1]).open(newline="", encoding="utf-8") as fh:
+    with preopen_path.open(newline="", encoding="utf-8") as fh:
         parsed = [from_csv_row(r) for r in csv.DictReader(fh)]
     facts = [f for f in parsed if f is not None]
     unparsed = len(parsed) - len(facts)
@@ -163,6 +176,7 @@ def main(argv: list[str]) -> int:
     windowed = select_sample_in_windows(facts, active, quiet, cfg, pct(MAX_MISSING_NBBO_PCT))
     sample = windowed.sample
 
+    print("\n".join(banner(prov)))
     print(f"as-of              {as_of}")
     print(f"  active window    {active.start}..{active.end}  mean VIX {active.mean_vix:.2f}")
     print(f"  quiet window     {quiet.start}..{quiet.end}  mean VIX {quiet.mean_vix:.2f}")

@@ -7,21 +7,31 @@ isolating it is the point: **whether IBKR's paper tier will actually serve
 unverified.** If it will not, the vendor changes and :mod:`scripts.spike2a.q4_spreads` does not,
 because the measurement never sees a broker object.
 
-Two implementations ship:
+One implementation ships:
 
 * :class:`CsvQuoteFeed` — offline replay from a CSV. Runs with no broker, no subscription and no
   network, which is what makes the Q4 pipeline verifiable before any vendor answers.
-* :class:`IbkrHistoricalTicksFeed` — ``ib_insync`` against a paper gateway. ``ib_insync`` is
-  imported **inside** the constructor, not at module scope, so the rest of the spike keeps
-  working when it is not installed. The package's runtime stays stdlib-only (CLAUDE.md); this is
-  throwaway code with a stated external prerequisite, not a new dependency.
+
+**A broker-backed implementation used to ship beside it and no longer does.** PLAN **D30** puts
+the project on simulated data until the phase ladder is advanced, so ``IbkrHistoricalTicksFeed``
+— along with the two collection scripts that pulled real IBKR ticks — was removed. It is
+recoverable at ``3ca9e7b``, the last commit that contains it. The protocol below is what a
+paper-stage implementation would satisfy; writing one is part of advancing the ladder, not a step
+that can be taken in passing. ``scripts/spike2a/provenance.py`` is the gate that makes that
+ordering real rather than advisory; ``tests/test_enforcement.py`` fails on any of the twenty
+import roots it enumerates, across ``src/``, ``scripts/`` and ``tests/``. That is a denylist, so
+it makes a
+re-entry loud rather than impossible — the provenance gate is the backstop, because it
+constrains what may be *read* rather than what may be imported.
 
 **A note on where this interface belongs.** PLAN Workstream 9 is open on interfaces, and its
 diagnosis is that the first genuine one will be the market-data feed, to be resolved at this
 spike against a real vendor API. :class:`QuoteFeed` is that shape appearing for the first time —
 but it is deliberately **here and not in** ``src/tradipy/``. §8 forbids the spike growing into
 the scanner, and a feed protocol promoted into the library on the strength of one vendor trial is
-exactly that growth. Let it prove itself against a chosen vendor first.
+exactly that growth. Let it prove itself against a chosen vendor first — which D30 defers, so
+WS9 stays open, and the protocol below stays a one-implementation shape that has not yet met the
+thing it abstracts.
 """
 
 from __future__ import annotations
@@ -57,9 +67,13 @@ class QuoteSample:
     def as_quote(self) -> Quote:
         """The library's §20.14 quote type.
 
-        ``estimated`` stays ``False``: these are real NBBO observations, and §20.14 reserves the
-        estimated flag for the backtest substitute, whose trades §18.7 excludes. Setting it here
-        would quietly move Q4's sample into the excluded population.
+        ``estimated`` stays ``False`` — including for simulated input, which is worth stating
+        because it looks like the obvious place to record that the data is fabricated. It is not.
+        §20.14 reserves that flag for the backtest's *spread substitute*, whose trades §18.7
+        excludes from the viability gate; setting it here would move Q4's whole sample into that
+        excluded population and answer a question about §18.7 rather than about §3.1.3. Simulated
+        input is declared in ``PROVENANCE.txt`` and enforced by
+        :mod:`scripts.spike2a.provenance` — one flag, one meaning, in the layer that owns it.
         """
         return Quote(
             bid=self.bid,
@@ -132,64 +146,3 @@ class CsvQuoteFeed:
 
     def nbbo_for_session(self, symbol: str, session_date: str) -> list[QuoteSample]:
         return list(self._by_key.get((symbol.upper(), session_date), ()))
-
-
-class IbkrHistoricalTicksFeed:
-    """``ib_insync.IB.reqHistoricalTicks(..., whatToShow="BID_ASK")`` against a paper gateway.
-
-    **Unverified against the paper tier.** Three limits could each sink it, and the failure is
-    the same shape in all three cases — partial coverage that looks like a thin market rather
-    than a missing subscription:
-
-    * ``reqHistoricalTicks`` returns at most 1000 ticks per call, so a session needs paging;
-    * historical tick depth is shorter than the 12-month VIX lookback the §7 window rule ranges
-      over, and is not uniform across symbols;
-    * pacing violations arrive as empty responses, not as errors, which is why
-      :attr:`empty_responses` is counted separately from a genuine no-coverage result.
-
-    If any of those bites, the finding belongs in **Q1** — "IBKR paper cannot serve the sample" is
-    a data-availability answer — and the fix is a different :class:`QuoteFeed`, not a change to
-    :mod:`scripts.spike2a.q4_spreads`.
-    """
-
-    #: IBKR's documented per-request tick ceiling.
-    TICKS_PER_REQUEST = 1000
-
-    def __init__(self, host: str = "127.0.0.1", port: int = 7497, client_id: int = 2) -> None:
-        # Imported here rather than at module scope, deliberately: see the module docstring.
-        # `pyproject.toml` puts `scripts/` in basedpyright's scope, and ib_insync is correctly
-        # absent from the project's dependencies, so the missing import is expected rather than
-        # a mistake — the type-check analogue of the `pragma: no cover` two lines below.
-        try:
-            from ib_insync import IB  # pyright: ignore[reportMissingImports]
-        except ImportError as exc:  # pragma: no cover - environment-dependent
-            raise RuntimeError(
-                "IbkrHistoricalTicksFeed needs ib_insync, which is a spike-only prerequisite "
-                "and deliberately not a package dependency. Install it into a throwaway "
-                "environment (`uv pip install ib_insync`) or use CsvQuoteFeed."
-            ) from exc
-
-        # Port 7497 is the TWS *paper* socket; 7496 is live. The default is paper on purpose —
-        # §3.2 of the spike doc forbids live trading of any size for any reason, and a default
-        # that points at the live socket is one typo from violating it.
-        self.name = f"ibkr-paper:{host}:{port}"
-        self.empty_responses = 0
-        self._ib = IB()
-        self._ib.connect(host, port, clientId=client_id, readonly=True)
-
-    def nbbo_for_session(self, symbol: str, session_date: str) -> list[QuoteSample]:
-        """Page BID_ASK ticks across the session, oldest first.
-
-        Not implemented as a single call: see :attr:`TICKS_PER_REQUEST`. Paging is left as the
-        first thing to write once the tier is confirmed to serve the data at all — writing it
-        before that is building against a capability nobody has checked, which is the §5.5 waste
-        one level down.
-        """
-        raise NotImplementedError(
-            "confirm reqHistoricalTicks BID_ASK coverage and pacing on the paper tier first, "
-            "then implement paging here. Until then run Q4 with CsvQuoteFeed. See the class "
-            "docstring for the three limits to check and where a negative result belongs (Q1)."
-        )
-
-    def disconnect(self) -> None:  # pragma: no cover - environment-dependent
-        self._ib.disconnect()

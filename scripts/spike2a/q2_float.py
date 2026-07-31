@@ -37,6 +37,7 @@ from scripts.spike2a.prereg import (
     Q2_MAX_STALE_SYMBOLS_PCT,
     pct,
 )
+from scripts.spike2a.provenance import Provenance, ProvenanceError, banner, require
 
 
 @dataclass(frozen=True)
@@ -107,8 +108,16 @@ def disagreement(readings: list[FloatReading]) -> tuple[Decimal | None, list[str
     return Decimal(len(disagreeing)) / Decimal(len(comparable)), disagreeing
 
 
-def report(readings: list[FloatReading], measured_on: date) -> str:
-    """D2, with the unanswerable half marked unanswerable."""
+def report(readings: list[FloatReading], measured_on: date, prov: Provenance) -> str:
+    """D2, with the unanswerable half marked unanswerable — and the whole thing withheld on
+    simulated input.
+
+    Q2's output is entirely threshold comparisons against §7 and a named **A10** disposition, so
+    it is the same hazard Q4's verdict was: a line reading "within threshold" beside a PRD
+    assumption is the sentence a reader quotes. The first version of D30 wired the *gate* to all
+    every entry point and the *withholding* to two, leaving this module printing "A10 not tripped
+    by this sample" over fabricated floats.
+    """
     providers = sorted({r.provider for r in readings})
     symbols = sorted({r.symbol for r in readings})
 
@@ -121,6 +130,8 @@ def report(readings: list[FloatReading], measured_on: date) -> str:
     lines = [
         "Q2 — float and short-interest quality",
         "=" * 62,
+        "",
+        *banner(prov),
         "",
         f"measured on      {measured_on.isoformat()}",
         f"providers        {', '.join(providers) or '(none)'}",
@@ -152,6 +163,17 @@ def report(readings: list[FloatReading], measured_on: date) -> str:
             f"threshold {Q2_MAX_DISAGREEING_SYMBOLS_PCT}%"
             f"  -> {'TRIPS A10' if dis_trips else 'within threshold'}"
         )
+
+    if not prov.answers_prereg:
+        lines += [
+            "",
+            "A10 disposition WITHHELD",
+            "  These floats were fabricated. A staleness rate over generated as-of dates is a",
+            "  property of the generator, so it can neither trip A10 nor clear it, and §7's",
+            "  thresholds bind against measured data. Q2 stays unanswered until the ladder",
+            "  reaches PAPER (PLAN D30).",
+        ]
+        return "\n".join(lines)
 
     lines += ["", "A10 disposition"]
     if stale_trips or dis_trips:
@@ -198,12 +220,19 @@ def main(argv: list[str]) -> int:
         print("usage: python -m scripts.spike2a.q2_float <float_readings.csv> [YYYY-MM-DD]")
         return 2
 
-    with Path(argv[0]).open(newline="", encoding="utf-8") as fh:
+    path = Path(argv[0])
+    try:
+        prov = require(path)
+    except ProvenanceError as exc:
+        print(f"refusing to read: {exc}", file=sys.stderr)
+        return 3
+
+    with path.open(newline="", encoding="utf-8") as fh:
         parsed = [from_csv_row(r) for r in csv.DictReader(fh)]
     readings = [r for r in parsed if r is not None]
     measured_on = datetime.strptime(argv[1], "%Y-%m-%d").date() if len(argv) > 1 else date.today()
 
-    print(report(readings, measured_on))
+    print(report(readings, measured_on, prov))
     if len(parsed) != len(readings):
         print(f"\n{len(parsed) - len(readings)} unparsable row(s) skipped")
     return 0

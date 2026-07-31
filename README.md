@@ -1,9 +1,10 @@
 # tradipy
 
 The **invariant layer** of a Ross Cameron momentum day-trading system. tradipy takes the
-rules established over four review rounds of [`docs/PRD.md`](docs/PRD.md) and makes them
-executable and tested, rather than prose. It is deliberately *not* the strategy engine — it
-is the layer that guarantees the strategy engine cannot violate its own specification.
+rules established over six independent review rounds of [`docs/PRD.md`](docs/PRD.md) and
+makes them executable and tested, rather than prose. It is deliberately *not* the strategy
+engine — it is the layer that guarantees the strategy engine cannot violate its own
+specification.
 
 - **Status:** Phase 1 (invariant layer + runnable PoC). Alpha.
 - **Runtime dependencies:** none. Standard library only (`Decimal`, `dataclasses`, `enum`).
@@ -11,13 +12,15 @@ is the layer that guarantees the strategy engine cannot violate its own specific
 
 ## Why it exists
 
-Five review rounds have each found a distinct defect class that the check built for the
+Six review rounds have each found a distinct defect class that the check built for the
 previous round could not see: an arithmetic error; a threshold restated inconsistently; two
 individually-legal parameters that could not both hold; a rounding rule stated more broadly
-than its justification; and — once the document was hardened — a rule the documentation said
-was enforced, with a mechanism built for it, that nothing actually called. This package
-encodes the rules so they are enforced by tests rather than by vigilance, and every guarantee
-it states has a test that performs the violation it forbids.
+than its justification; once the document was hardened, a rule the documentation said was
+enforced with a mechanism built for it that nothing actually called; and once the library was
+wired, measurement code that restated the library's arithmetic while claiming to use it.
+This package encodes the rules so they are enforced by tests rather than by vigilance, and
+every guarantee it states has a test that performs the violation it forbids. See
+[`docs/PLAN.md`](docs/PLAN.md) Workstream 11 for the full defect-class table.
 
 ## Try it
 

@@ -118,7 +118,7 @@ in the normative document — that is a spec question, so raise it — and recor
 ## Further reading
 
 - `CLAUDE.md` conventions 4 and 6
-- `tests/test_enforcement.py` — all 17 existing examples
+- `tests/test_enforcement.py` — all 38 existing examples
 - `docs/reviews/REVIEW-2026-07-28.md` — findings F1–F4, the four unenforced guarantees, each
   with its reproduction
 - `docs/PLAN.md` — the five-defect-classes table, and the second population of the fifth class

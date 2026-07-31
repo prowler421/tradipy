@@ -41,6 +41,7 @@ from enum import Enum
 from pathlib import Path
 
 from scripts.spike2a.prereg import MAX_MISSING_NBBO_PCT, MAX_SYMBOL_SESSIONS, pct
+from scripts.spike2a.provenance import ProvenanceError, banner, require
 from tradipy.params import PARAMS, Config
 
 
@@ -260,7 +261,14 @@ def main(argv: list[str]) -> int:
         print("usage: python -m scripts.spike2a.universe <preopen.csv>")
         return 2
 
-    with Path(argv[0]).open(newline="", encoding="utf-8") as fh:
+    path = Path(argv[0])
+    try:
+        prov = require(path)
+    except ProvenanceError as exc:
+        print(f"refusing to read: {exc}", file=sys.stderr)
+        return 3
+
+    with path.open(newline="", encoding="utf-8") as fh:
         parsed = [from_csv_row(r) for r in csv.DictReader(fh)]
     facts = [f for f in parsed if f is not None]
     unparsed = len(parsed) - len(facts)
@@ -268,6 +276,7 @@ def main(argv: list[str]) -> int:
     cfg = Config.default()
     sample = select_sample(facts, cfg, pct(MAX_MISSING_NBBO_PCT))
 
+    print("\n".join(banner(prov)))
     print(f"rows parsed        {len(facts)}" + (f"  ({unparsed} unparsable)" if unparsed else ""))
     capped = "  (cap bound)" if sample.cap_bound else ""
     print(f"included           {len(sample.included)}{capped}")

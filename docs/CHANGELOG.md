@@ -10,6 +10,77 @@ Corrections and reversals to [PRD.md](PRD.md), extracted so the spec itself can 
 
 ---
 
+## Unreleased — D30, the simulated-data policy
+
+Not from a review round. Asked as a policy question — *"all project data simulated until
+production-ready, then paper, then a real account"* — and answered as a decision, because it
+changes what the project is permitted to do rather than what any rule computes. **No threshold
+moves and no PRD rule changes.** PHASE-2A-SPIKE §7 is untouched: D30 removes its subject, not its
+numbers, and H7 below is why nobody may amend it to fit.
+
+### Decided
+
+| ID | Decision |
+|----|----------|
+| **D30** | **Simulated data only**, on a `SIMULATED` → `PAPER` → `LIVE` ladder whose current rung is the first. No broker SDK, vendor client or network module may be imported in `src/`, `scripts/` or `tests/`; every dataset declares its origin in a `PROVENANCE.txt` naming each file it covers with that file's digest; undeclared data is refused rather than assumed simulated. The two IBKR collectors and `feeds.IbkrHistoricalTicksFeed` are removed. **Cost, larger than D29's:** §7 binds to measured data, so Q1–Q4 are unanswerable, Phase 3 stays gated through D29, and the risk row demanding *"real quotes, not estimates"* moves from mitigated to accepted. Full rationale and three rejected alternatives in [PLAN](PLAN.md) |
+
+### What this does to the open questions above
+
+**H7 is not answered, and D30 makes answering it less urgent rather than more.** The question is
+whether a synthetic run counts as a data pull for §7's amendment clause. D30 does not decide it —
+deliberately, since the round that raised it declined on the grounds that *"§7's amendment rule is
+the one thing in the spike that cannot be amended by the person it constrains,"* and that reasoning
+survives a policy change made by the same party. What D30 does is make the question harmless in
+practice: `q4_spreads` can no longer print a §7 verdict over synthetic input at all, so no
+synthetic run can produce the artifact that would make the clause bite. The question stays open;
+the hazard it described is closed by other means.
+
+**H2 is partly answered and should be re-read.** It asks whether §8's coverage exemption for
+`scripts/spike2a/` should be narrowed, since the first defect found there changed a §7 verdict.
+`provenance.py` is now spike-directory code that **is** tested, by `tests/test_enforcement.py`, and
+the measurement modules cannot run without it. That is a narrowing in fact without a decision to
+narrow §8, which is the shape the reviewer warned about. Whether §8 should now say so is still not
+the implementer's call.
+
+**H5 was resolved on `main` while D30 was in flight, and the two met in a merge conflict over
+the same PLAN cell.** `scripts/spike2a/sample.py` now joins the window rule to the selection
+rule. D30 does not change that disposition — where the join belongs is a spec-boundary question
+and does not depend on where the data comes from — but it does change the module: `sample.py`
+arrived reading `vix.csv` and `preopen.csv` with no provenance check, because it was written
+against a tree where the gate did not exist. It is gated now, and
+`test_every_spike_entry_point_gates_its_input` covers it.
+
+**That is the shape to expect from D30 from here on.** The gate is a repository-wide invariant
+added late, so every branch already in flight predates it, and the failure will always look like
+this: correct code, written against a correct earlier tree, arriving without a call it had no
+reason to make. The parametrized test is deliberately the enumerated kind — a new entry point
+omitted from it is a hole, so adding a module to `scripts/spike2a/` means adding a row.
+
+### The convention, and its weak point
+
+`CLAUDE.md` gains convention 9: **all data is simulated, and nothing may reach a market.** It
+appears across the documentation set and in the code, which is F8's defect class waiting to
+happen. **Neither the copies nor their number is enumerated here** — F8's own disposition went
+stale by being an enumeration, and the first draft of this paragraph repeated that mistake
+inside the sentence warning against it, stating a count two lines after explaining why it would
+not.
+
+What is asserted instead is a property, checkable by grep at any time: **every copy that states
+the lint's scope names `src/`, `scripts/` and `tests/`, and every copy that states its strength
+says denylist.** Some copies state neither, because they describe the policy rather than the
+mechanism, and that is fine — a copy that says less cannot drift. The difference from F8 is that
+the scope is now asserted by a test (`LINTED_TREES`) as well as by prose, so a copy that drifts
+disagrees with something executable.
+
+The weak point is worth naming, as convention 8 names its own. **The import lint is a denylist**,
+and a denylist is a guess about what someone will reach for next. It covers broker SDKs, the
+vendors PRD §5.1 names, and the network stack — but a new vendor's client, or `subprocess` calling
+`curl`, passes it. The provenance gate is the real backstop, because it constrains what may be
+*read* rather than what may be *imported*; the lint is there to make the breach loud rather than
+silent. Do not read a green lint as proof that nothing can reach a market.
+
+---
+
 ## Unreleased — raised by REVIEW-2026-07-30, not yet dispositioned
 
 Driven by [REVIEW-2026-07-30.md](reviews/REVIEW-2026-07-30.md), the third round to review code and the first to review the Phase 2a instrumentation. **No rule in the PRD changes here, and no threshold moves.** Every *code* finding is in `scripts/spike2a/` — four of the fifteen are documentation defects elsewhere — and `src/tradipy/` is behaviourally identical to v0.1.0 (`git diff 114ef86 HEAD -- src/` is two formatting reflows and one docstring). The round's own gate finding — `make check` red at `3545adf` while four documents said the guardrail was enforced — is a code defect and is recorded in the root [CHANGELOG.md](../CHANGELOG.md), not here. What is below is the part that is not the reviewer's to settle.

@@ -1,9 +1,17 @@
 # Phase 2a — Data Feasibility Spike
 
-**Status: instrumented, not run against real data. Scope and pre-registration both committed
-2026-07-29 — §7 is filled and binding. The code that answers Q2, Q3 and Q4 is written and
-exercised against synthetic input (`scripts/spike2a/`, see its README). What is missing is data,
-and the blocking actions are external to this repository.**
+> **Suspended by [PLAN](PLAN.md) D30 — this spike cannot run.** The project reads simulated data
+> only, and §7 binds its thresholds to *measured* data. Q1–Q4 are therefore unanswerable until
+> the data ladder reaches `PAPER`, which is a recorded decision and not a step taken while
+> chasing a measurement. **Nothing in §7 is amended** — it is exactly as pre-registered on
+> 2026-07-29, and D30 removes its subject rather than its thresholds. Everything below is
+> retained because it is what the spike will be when it resumes; read it in the future tense.
+> `scripts/spike2a/TEST_SETUP.md` states what advancing the ladder costs.
+
+**Status: instrumented, not run against real data, and now suspended. Scope and pre-registration
+both committed 2026-07-29 — §7 is filled and binding. The code that answers Q2, Q3 and Q4 is
+written and exercised against synthetic input (`scripts/spike2a/`, see its README). What is
+missing is data, and the blocking action is now internal: D30, not a vendor.**
 
 **"Not yet run" is the wrong phrase and was corrected in review round 7.** The Q4 pipeline *has*
 been run end to end, on fabricated input, and it printed a §7 verdict — twice, with different
@@ -13,12 +21,23 @@ same either way on the terminal. Two consequences, both binding: the generator w
 `PROVENANCE.txt` beside its output, and **a synthetic run is not a data pull** for the purposes of
 §7's amendment clause — see the open question in [CHANGELOG.md](CHANGELOG.md) under Unreleased.
 
+**Both consequences are now enforced rather than asserted (D30).** They were not, and the gap is
+worth recording: the `PROVENANCE.txt` was written and read by nothing, so the sentence above was
+true of the document and false of the terminal — the pipeline printed "§7 verdict: …" over
+fabricated quotes in the identical format it would use for measured ones. `provenance.py` parses
+the marker, refuses input it does not cover, and `q4_spreads` now prints a **pipeline outcome**
+on simulated data and raises no D7 disposition from it.
+
 | Question | Blocked on |
 |---|---|
 | Q1 | Vendor trial accounts. Also a **pre-determined negative for IBKR alone**: §7 requires ≥ 200 concurrent symbols against the ~100 market-data line cap §1 records. §3.3 says to establish that concretely rather than assume it, so it is still worth running |
 | Q2 | A **second** independent float/short-interest provider. Finviz alone answers the staleness condition only; the disagreement condition is unmeasurable with one source, and unmeasured is not a pass |
-| Q3 | An IBKR paper connection, plus the `ib_insync` timestamping that cannot be written until its event ordering has been seen |
-| Q4 | Historical intraday NBBO for the sample the §7 rule selects. **Whether the IBKR paper tier serves `reqHistoricalTicks` BID_ASK at that volume and lookback is unverified** — three specific limits are listed on `feeds.IbkrHistoricalTicksFeed`, and a negative answer there is a Q1 finding |
+| Q3 | An IBKR paper connection, plus the broker-library timestamping that cannot be written until its event ordering has been seen |
+| Q4 | Historical intraday NBBO for the sample the §7 rule selects. **Whether the IBKR paper tier serves `reqHistoricalTicks` BID_ASK at that volume and lookback is unverified** — the three limits to check are listed in `scripts/spike2a/TEST_SETUP.md`, and a negative answer there is a Q1 finding |
+
+**Every row above is now additionally blocked on D30**, which is the binding constraint: even
+where a vendor would answer, the project may not read the answer. The rows are kept as written
+because they are what remains true once the ladder advances.
 
 **Writing more about this spike is still not progress on it.** What the code changes is that when
 the data arrives, the measurement is already pre-registered, already reads its thresholds from the
@@ -101,6 +120,14 @@ known symbol list — no real-time subscription, no scanner, no vendor commitmen
 - Any change to `src/tradipy/` other than registering a parameter the spike shows is needed —
   and that only with a §2.0 row to cite, per convention 1.
 - Live trading, of any size, for any reason.
+- **Reading real market data at all, from any source, however read-only** (D30). This clause
+  exists because the one above it did not cover the case: two committed scripts pulled real IBKR
+  ticks under a rule that forbade *trading*, and were correct to think reading is not trading.
+  A prohibition that a reasonable contributor can satisfy while doing the thing it was written to
+  prevent is not a prohibition, and prose was never going to fix it. `tests/test_enforcement.py`
+  enforces it over `src/`, `scripts/` and `tests/` against twenty enumerated import roots, and
+  `provenance.require` gates what may be read — the second is the load-bearing half, since the
+  first is a denylist.
 - Choosing the production vendor. The spike produces evidence; the choice is a decision to be
   recorded in the PLAN's decision log with its rejected alternatives.
 

@@ -17,6 +17,13 @@ Three subcommands:
     ``SIMULATED`` rung of the data ladder; the universe is constructed in
     :func:`tradipy.poc.simulated_universe`, not read from anywhere.
 
+``setups``
+    Replay the same three §3 worked examples **from their bar series** through the Phase 4
+    setup evaluators — PRD §21.1's worked-example row, which asks for exactly that. This is
+    not a second spelling of ``demo``: ``demo`` is handed the entry, stop, target and
+    resistance from the §3 tables and applies the gates, while this recognises the pattern
+    and derives all four. Where the two disagree, the disagreement is the point — see §3.4.
+
 Stdlib only — ``argparse`` and ``decimal``. The package has no runtime dependencies and this
 does not add one.
 """
@@ -35,6 +42,7 @@ from tradipy.poc import (
     bull_flag_geometry,
     check_against_prd,
     evaluate,
+    setup_examples,
     simulated_universe,
 )
 from tradipy.poc import worked_examples as prd_examples
@@ -42,6 +50,7 @@ from tradipy.quotes import Quote
 from tradipy.rounding import TICK_SIZE
 from tradipy.scanner import ScanReport, scan
 from tradipy.score import Catalyst, ScoreInputs, composite_score, meets_conviction_gate
+from tradipy.setups import SetupOutcome
 
 PASS, FAIL = "PASS", "FAIL"
 RULE = "─" * 78
@@ -251,6 +260,83 @@ def _run_evaluate(args: argparse.Namespace, cfg: Config) -> int:
     return 0 if ev.accepted else 3
 
 
+def _print_setup_outcome(out: SetupOutcome, section: str) -> None:
+    verdict = "ACCEPT" if out.accepted else f"REJECT  {out.reject.value if out.reject else ''}"
+    print(f"\n{section} {out.setup_type.value}  ->  {verdict}")
+    for c in out.criteria:
+        print(f"  {PASS if c.passed else FAIL}  {c.name:<44} {c.detail}")
+    lv = out.levels
+    if lv is None:
+        return
+    print(
+        f"      entry {lv.entry_price}  stop {lv.stop_price}  R {lv.r_per_share}  "
+        f"T1 {lv.ladder.t1}  T2 {lv.ladder.t2}"
+    )
+    print(
+        "      resistance "
+        + ", ".join(f"{name} {level}" for name, level in lv.resistance.candidates)
+        + f"  ->  {lv.resistance.source}"
+    )
+    if out.signal is not None:
+        print(f"      shares {out.signal.shares:,}  direction {out.signal.direction}")
+
+
+def _run_setups(cfg: Config, mode: Mode) -> int:
+    """Replay the §3 examples from bars, and check every derived value against its table."""
+    print(RULE)
+    print("tradipy Phase 4 — the three PRD §3 setups, from bar series")
+    print(RULE)
+    print(f"mode={mode}  equity={cfg['start_of_day_equity']}")
+    print(
+        "\nData origin: SIMULATED (PLAN D30). These bar series are constructed to the §3\n"
+        "worked-example tables, not read — no file, feed or network is touched. D33 opened\n"
+        "Phase 4 on simulated data, so the criteria below are applied as §3 states them and\n"
+        "not one of their thresholds is calibrated. See docs/PHASE-4-DESIGN.md."
+    )
+
+    disagreements: list[str] = []
+    for ex in setup_examples():
+        out = ex.evaluate(cfg)
+        _print_setup_outcome(out, ex.section)
+        if (out.reject or None) != ex.expect_reject:
+            disagreements.append(
+                f"{ex.section}: verdict {out.reject} where the fixture expects {ex.expect_reject}"
+            )
+        lv = out.levels
+        if lv is None:
+            disagreements.append(f"{ex.section}: no levels derived")
+            continue
+        derived: dict[str, object] = {
+            "entry": lv.entry_price,
+            "stop": lv.stop_price,
+            "r": lv.r_per_share,
+            "t1": lv.ladder.t1,
+            "t2": lv.ladder.t2,
+        }
+        if out.signal is not None:
+            derived["shares"] = out.signal.shares
+        disagreements += [
+            f"{ex.section} {key}: derived {derived.get(key)}, PRD table states {want}"
+            for key, want in ex.expect.items()
+            if derived.get(key) != want
+        ]
+
+    print(f"\n{RULE}")
+    print(
+        "§3.4 is rejected on purpose. Its table names the HOD ($4.15) as the nearest overhead\n"
+        "resistance; §3.1.1's set also contains the next whole dollar ($4.00), which is nearer\n"
+        "and inside the required room. Every other line of that table reproduces exactly. The\n"
+        "disagreement is raised in docs/CHANGELOG.md, not resolved here."
+    )
+    if disagreements:
+        print("\nSelf-check FAILED — derived values disagree with the §3 tables:")
+        for line in disagreements:
+            print(f"  - {line}")
+        return 1
+    print("Self-check OK — every derived value matches its §3 table, including the rejection.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m tradipy",
@@ -289,6 +375,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--verbose",
         action="store_true",
         help="show all 14 §4.2 rows per candidate, not only the failing ones",
+    )
+
+    sub.add_parser(
+        "setups",
+        parents=[common],
+        help="replay the three PRD §3 worked examples from bar series (Phase 4)",
     )
 
     ev = sub.add_parser(
@@ -359,15 +451,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     command = args.command or "demo"
-    # `demo` reproduces PRD tables computed at 1% x $30,000, which is the experienced
-    # preset; everything else follows §2.0's declared default.
-    mode: Mode = getattr(args, "mode", None) or ("experienced" if command == "demo" else "beginner")
+    # `demo` and `setups` both reproduce PRD tables computed at 1% x $30,000.
+    reproduces_tables = command in {"demo", "setups"}
+    mode: Mode = getattr(args, "mode", None) or ("experienced" if reproduces_tables else "beginner")
     cfg = Config.default(mode=mode)
 
     if command == "demo":
         return _run_demo(cfg, mode)
     if command == "scan":
         return _run_scan(cfg, mode, verbose=args.verbose)
+    if command == "setups":
+        return _run_setups(cfg, mode)
     return _run_evaluate(args, cfg)
 
 

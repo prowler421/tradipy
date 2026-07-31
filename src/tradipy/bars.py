@@ -12,13 +12,14 @@ Flagpole detection is *"the longest run of consecutive green candles (close > op
 immediately before the flag, subject to §3.2 criterion 2. Ties broken by taking the longest
 qualifying run; if two runs tie in length, take the one with greater volume."*
 
-**What is deliberately not here.** §3.2 criterion 2 states three thresholds — at least 3
-candles, combined move ≥ 2%, total volume ≥ 2× the average 1-minute volume of the prior 30
-bars — and none of them appears in PRD §2 or §2.0. Registering them here would be this module
-inventing spec; writing them as literals would break the project's one-definition rule. So
-:func:`select_flagpole` takes the qualification test as a **predicate supplied by the caller**,
-and the three unregistered §3.2 literals are recorded as an open finding in ``tests/README.md``
-for the PRD to resolve. This is the same treatment ``VWAP × 0.99`` received.
+**What is deliberately not here.** §3.2 criterion 2 states three thresholds and the window they
+are measured over — at least 3 candles, combined move ≥ 2%, total volume ≥ 2× the average
+1-minute volume of the prior 30 bars — and none of the four appears in PRD §2 or §2.0.
+Registering them here would be this module inventing spec; writing them as literals would break
+the project's one-definition rule. So :func:`select_flagpole` takes the qualification test as a
+**predicate supplied by the caller**. Phase 4 (**D33**) registered all four with code-originated
+bounds and :func:`tradipy.setups.evaluate_bull_flag` supplies the predicate — this module was not
+changed to make that possible, which was the point of the arrangement.
 
 §20.1 bar timing (labels, close detection, the 750 ms grace) is a separate subsection and
 needs an ingestion layer, so :class:`Bar` carries no timestamp.

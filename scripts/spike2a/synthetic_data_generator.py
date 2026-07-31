@@ -100,6 +100,14 @@ ACTIVE_REGIME = MarketRegime(label="active", spread_bps_mean=8, spread_bps_std=4
 QUIET_REGIME = MarketRegime(label="quiet", spread_bps_mean=15, spread_bps_std=6)
 
 
+#: The calm-regime VIX level this generator simulates around. Named because its value collides
+#: numerically with the registered ``min_bars_above_vwap`` (15 *bars*, PRD §3.4) while being an
+#: index level in points — a units collision, not a restatement, and the same situation
+#: ``TICK_SIZE`` has with 1%. Naming it also removes the second copy: the regime branch below
+#: restated the literal, so the baseline had two definitions inside one function.
+_VIX_BASELINE = Decimal("15")
+
+
 def generate_vix_series(end_date: date, months: int = 12) -> list[tuple[date, Decimal]]:
     """Generate 12 months of daily VIX data ending one day before spike start.
 
@@ -113,7 +121,7 @@ def generate_vix_series(end_date: date, months: int = 12) -> list[tuple[date, De
     end = end_date - timedelta(days=1)
 
     # Simulate VIX with mean-reversion and regime changes
-    vix = Decimal("15")
+    vix = _VIX_BASELINE
     while current <= end:
         # Skip weekends
         if current.weekday() >= 5:
@@ -124,7 +132,7 @@ def generate_vix_series(end_date: date, months: int = 12) -> list[tuple[date, De
         regime_cycle = (current - (end_date - timedelta(days=365))).days % 120
         if regime_cycle < 60:
             shock = Decimal(random.gauss(0, 1.5))
-            vix = Decimal("15") + shock
+            vix = _VIX_BASELINE + shock
         else:
             shock = Decimal(random.gauss(0, 2.5))
             vix = Decimal("22") + shock

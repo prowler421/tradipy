@@ -137,12 +137,20 @@ def test_every_registered_default_has_a_searchable_form() -> None:
     assert not unsearchable, f"parameters the code lint cannot search for: {unsearchable}"
 
 
-#: `TICK_SIZE` is not a tunable threshold — it is a market fact fixed by SEC Rule 612 and
-#: stated as invariant in PRD §20.13. Its value ($0.01) coincides numerically with
-#: `vwap_stop_band_pct` and `max_risk_per_trade_pct` (1% as a fraction), which is a units
-#: collision rather than a restatement. Exempting the *definition only* keeps the check
-#: strict everywhere else.
-EXEMPT_ASSIGNMENTS = ("TICK_SIZE",)
+#: Names whose **definition line only** is exempt. Both entries are numeric coincidences between
+#: a value that is not a tunable threshold and a registered default:
+#:
+#: * `TICK_SIZE` is a market fact fixed by SEC Rule 612 and stated as invariant in PRD §20.13.
+#:   Its value ($0.01) coincides with `vwap_stop_band_pct` and `max_risk_per_trade_pct` (1% as a
+#:   fraction).
+#: * `_VIX_BASELINE` is the simulated calm-regime index level in
+#:   `scripts/spike2a/synthetic_data_generator.py`, in points. It coincides with
+#:   `min_bars_above_vwap` (15 *bars*, PRD §3.4), which Phase 4 registered — so this line became
+#:   an offender without either value moving, which is what a shared search space does.
+#:
+#: Exempting the definition only keeps the check strict everywhere else: both constants are read
+#: by name at every use, and a second literal at a call site is still caught.
+EXEMPT_ASSIGNMENTS = ("TICK_SIZE", "_VIX_BASELINE")
 
 
 def _decimal_literals_in(text: str) -> list[tuple[int, str]]:

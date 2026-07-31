@@ -20,7 +20,7 @@ Everything else runs through `uv run`, so you never activate the environment by 
 
 ```
 src/tradipy/
-    __init__.py     imports and re-exports the eight library modules
+    __init__.py     imports and re-exports the ten library modules
     rounding.py     tick arithmetic, Polarity, round_threshold        (§20.13)
     rejects.py      the Reject and SoftFlag enums, raised by three layers
     params.py       the parameter registry, Config, coupling validator (§2, §2.0)

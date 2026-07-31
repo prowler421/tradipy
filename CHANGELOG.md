@@ -9,6 +9,90 @@ All notable changes to the tradipy **package** are documented here. This file fo
 
 ## [Unreleased]
 
+### Added — Phase 4, the §3 strategy engine (PLAN D33)
+
+- **`src/tradipy/session.py`** — PRD §20.1, §20.2, §20.3, §20.5 and §20.6 over an ordered series:
+  session VWAP on typical price, HOD on wicks with §20.3's not-the-opening-print rule, the 9 EMA
+  with §20.5's seeding and its `None` before the period has closed, §20.1's missing-bar gap rule,
+  and `tighter()` / `wider()` as §20.6's named definitions rather than a bare `max()` at a call
+  site. A `SessionBar` carries **minutes from the session open as an `int`**, not a timestamp:
+  §21.1 forbids `datetime.now()` in strategy code and every §20.1 rule Phase 4 needs is ordinal.
+  `Session.through(i)` is the truncation primitive §21.1's look-ahead property test needs.
+- **`src/tradipy/setups.py`** — §3.2 Bull Flag, §3.3 HOD Breakout and §3.4 VWAP Reclaim, each a
+  pure function of a session and a trigger index; §20.11's arbitration (rules 1 and 2); and §3's
+  post-entry rules as predicates. Returns a `SetupOutcome` carrying **every** criterion with the
+  arithmetic that decided it, plus `Levels` — the derived entry, stop, R, ladder, resistance set,
+  room requirement and separation floor — which are reported on a **rejected** setup as well.
+  Only the share count is withheld from a rejection, on §4.1's argument for withholding the score.
+  - No threshold literal and no rounding direction appears in it, and
+    `test_the_setup_layer_reads_nothing_and_imports_nothing_that_could` holds both new modules to
+    an import **allowlist**, as `scanner.py` already was.
+  - **Nothing in it is calibrated**, and of its twenty registry rows **all twenty are marked `(bounds: code)`** — eighteen cite §3.2, §3.3 or §3.4, sections with no parameter table and no Bounds column, and the other two cite §20.1 and §20.5, which have none either. See `docs/PHASE-4-DESIGN.md` and PLAN **D33**.
+- **`Reject.SETUP_NOT_PRESENT`** — the one rejection code Phase 4 adds. **`ExitReason`** is a third
+  enum (`BAILED_OUT`, `INVALIDATED`), both names transcribed from §20.12's state machine: a
+  rejection declines a trade never taken and an exit closes one that was.
+- **`gates.t1_level(entry, r, cfg)`** — split out of `exit_ladder`, which now delegates to it,
+  because §3.3's T2 is defined relative to T1 and a second derivation of `entry + t1_r_multiple × R`
+  is the v1.2 defect class. Asserted structurally, like the `scan_spread_cap` delegation.
+- **Twenty registry rows** for §3's inline thresholds, all `(bounds: code)`: nine for §3.2
+  (`flagpole_min_candles`, `flagpole_min_move_pct`, `flagpole_vol_multiple`,
+  `flagpole_vol_lookback_bars`, `flag_min_candles`, `flag_max_candles`, `max_flag_retrace_pct`,
+  `max_flag_volume_ratio`, `breakout_vol_multiple`), three for §3.3 (`consolidation_min_candles`,
+  `hod_breakout_vol_multiple`, `hod_reclaim_invalidation_candles`), five for §3.4
+  (`min_bars_above_vwap`, `max_dip_candles`, `max_dip_depth_pct`, `reclaim_vol_multiple`,
+  `hod_proximity_min_candles`) and three shared (`max_pattern_gap_minutes`, `ema_period`,
+  `bailout_candles`). Registry size 55 → **75**. A count that is a *constraint* carries a polarity;
+  a count that is a *window* does not — the split `max_open_positions` and `rvol_lookback_days`
+  already make. `bars.select_flagpole`'s `qualifies` predicate, built in Phase 3's window with no
+  shipped caller, now has one: it is §3.2 criterion 2, built from the first four rows above.
+- **`python -m tradipy setups`** — replays all three §3 worked examples **from bar series** and
+  self-checks every derived value against its table, which is PRD §21.1's worked-example row read
+  as written. It exits 0 and reports §3.4 as **rejected**: see the note below.
+- **`tests/test_setups.py`** (31 functions, 38 cases) — the three worked examples from bars, §21.1's
+  look-ahead property test at every legal trigger index for all three setups, §20 computation
+  fixtures, boundary cases at each new threshold's own limit, polarity assertions on the two
+  VWAP-derived stop candidates, and the post-entry rules. `tests/test_enforcement.py` gains a
+  Phase 4 block that performs each new guarantee's violation. Two of the 31 (added at review round
+  13, `docs/reviews/REVIEW-2026-07-31-round13.md` M6/M7) close a coverage gap the first draft
+  shipped with: §3.4 criterion 9 (HOD proximity consolidation) had no fixture within
+  `hod_proximity_pct` of HOD at all, and `evaluate_vwap_reclaim`'s "prior HOD, not the trigger
+  bar's own wick" reading had no fixture where the two disagree. Both guarantees were already
+  correctly implemented; neither had a test that would have noticed if they stopped being.
+
+### Changed
+
+- **`tests/registry_baseline.json` regenerated: 68 → 74 entries.** `flagpole_min_move_pct` and
+  `max_dip_depth_pct` are both 2%, which makes `2%` a new search key for the PRD-prose lint; the
+  six new entries are §3.2, §3.4, §3.5, §15, §6.5 and §11.3, all worked examples or restatements
+  already present in the document. Regenerated with `scripts/regen_registry_baseline.py` and the
+  diff read.
+- **`_VIX_BASELINE` named in `scripts/spike2a/synthetic_data_generator.py`.** Registering
+  `min_bars_above_vwap` (15 bars) made the generator's simulated VIX level (15 index points) a
+  registry-lint offender without either value moving — a units collision of the kind `TICK_SIZE`
+  already has with 1%. Naming it removes the second copy the regime branch had restated, and the
+  lint's `EXEMPT_ASSIGNMENTS` covers the **definition line only**. The generated data is unchanged;
+  the VIX series feeds §7's window selection, so changing the number was not an option.
+- **`poc.simulated_universe`: SYNC's `rvol` 9 → 8.** Registering `ema_period` (9) made the fixture's
+  simulated relative volume collide with it. An arbitrary input with no meaning attached, changed
+  rather than exempted; SYNC's §20.10 score moves from 0.5000 to 0.4850 and no document quoted it.
+
+### Fixed
+
+- **`docs/PLAN.md` understated its own test count.** The fixture-suite row read *"193 test
+  functions"* where the command it cites returned **196** — written into the same changeset that
+  added the tests. Review round 12's **L1**, and the fourth occurrence of round 10's K6 shape. The
+  row now states 237 across twelve files, and names the 117 the coverage and mutation figures were
+  measured against at v0.1.0.
+
+### Known — raised, not fixed
+
+- **§3.4's worked example fails §3.1.1's room gate.** §3.1.1's resistance set contains *"next whole
+  dollar"*; at the example's $3.83 entry that is $4.00, nearer than the $4.15 HOD its table names,
+  and $0.17 against a required $0.28. Every other line of the table reproduces exactly. Raised in
+  `docs/CHANGELOG.md` with three candidate resolutions and pinned in both directions by
+  `tests/test_setups.py`; `python -m tradipy setups` prints it. **Not resolved in code** — a
+  PRD-internal contradiction with a behaviour consequence is a spec decision.
+
 ### Added — Phase 3, the §4.2 scanner (PLAN D32)
 
 - **`src/tradipy/scanner.py`** — PRD §4: the seven §4.2 hard filters, the seven §4.2 soft flags,

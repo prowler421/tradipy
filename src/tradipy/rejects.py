@@ -1,6 +1,6 @@
-"""Rejection reason codes, and the §4.2 soft flags that are deliberately not rejections.
+"""Rejection reason codes, the §4.2 soft flags, and the §3 post-entry exit reasons.
 
-Normative sources: PRD §3.1.2, §3.1.3, §4.2, §20.9, §20.13, §20.14.
+Normative sources: PRD §3.1.2, §3.1.3, §4.2, §20.9, §20.12, §20.13, §20.14.
 
 These live in their own module because three layers raise them — :mod:`tradipy.gates` for the
 pre-entry gates, :mod:`tradipy.quotes` for §20.14 quote validity, and :mod:`tradipy.scanner`
@@ -9,8 +9,8 @@ enum in ``gates`` would have made ``quotes`` depend on ``gates``, inverting the 
 no reason. :mod:`tradipy.gates` re-exports ``Reject`` so ``from tradipy.gates import Reject``
 continues to work.
 
-**Why there are two enums.** PRD §4.2's table has one "Rejection Code" column covering all
-fourteen rows, but only seven of those rows are Hard. The other seven are Soft — they
+**Why there is more than one enum.** PRD §4.2's table has one "Rejection Code" column covering
+all fourteen rows, but only seven of those rows are Hard. The other seven are Soft — they
 *score or flag*, they do not reject — and one of them (``INST_OWN_HIGH``) is kept
 deliberately inert by PLAN **D24**. Round 10's finding **K5** is what a single enum invites:
 a reader sizing the scanner from the shared column builds all fourteen as rejection paths,
@@ -21,13 +21,19 @@ code is a :class:`SoftFlag`; nothing in the scanner's rejection path will accept
 :class:`~tradipy.scanner.ScanResult.reject` is typed ``Reject | None`` and the two enums are
 unrelated types. ``tests/test_enforcement.py`` performs the violation anyway and asserts it
 cannot land — convention 6 — because a type annotation is not a runtime guarantee.
+
+:class:`ExitReason` is the third, added with Phase 4 on the same argument one step further out:
+a *rejection* declines a trade that was never taken and an *exit* closes one that was, so a
+pre-entry gate returning ``BAILED_OUT`` and an exit rule returning ``SPREAD_TOO_WIDE`` are both
+nonsense that a shared namespace would permit. Its two members are transcribed from §20.12's
+state names rather than named here.
 """
 
 from __future__ import annotations
 
 from enum import Enum
 
-__all__ = ["Reject", "SoftFlag"]
+__all__ = ["Reject", "SoftFlag", "ExitReason"]
 
 
 class Reject(Enum):
@@ -95,6 +101,20 @@ class Reject(Enum):
     #: action. Not a spread, so it is not gated on.
     DATA_QUALITY_DEGRADED = "DATA_QUALITY_DEGRADED"
 
+    # --- PRD §3.2 / §3.3 / §3.4 setup recognition (Phase 4) ----------------
+    #: PRD §3.2 / §3.3 / §3.4 — the setup's pattern is not present at the bar being evaluated:
+    #: no flag, no consolidation, no dip, or a criterion the pattern itself fails. The **only**
+    #: rejection code Phase 4 adds. Every other way a setup can be declined already had one,
+    #: which is the argument for the code namespace being small: a new code is a new rule, and
+    #: the pre-entry gates are §3.1's rules rather than each setup's.
+    #:
+    #: :class:`~tradipy.setups.SetupOutcome` carries every criterion and its arithmetic, so
+    #: *which* part of the pattern is absent is readable without re-deriving it. §4.2's table
+    #: names a code per row; §3 names none at all, so this name is the implementation's and PRD
+    #: §4.2's rejection-code table should adopt or replace it — the same standing request
+    #: ``STOP_TOO_WIDE`` carries.
+    SETUP_NOT_PRESENT = "SETUP_NOT_PRESENT"
+
 
 class SoftFlag(Enum):
     """PRD §4.2's seven Soft rows. **None of these rejects anything.**
@@ -144,3 +164,33 @@ class SoftFlag(Enum):
     #: PRD §4.2 — short interest at or above ``min_short_interest_pct``. Explicitly
     #: "flag only, not reject": squeeze fuel cuts both ways.
     HIGH_SHORT_INTEREST = "HIGH_SHORT_INTEREST"
+
+
+class ExitReason(Enum):
+    """Why an **open** position is exited, for the §3 post-entry rules.
+
+    A third namespace rather than more :class:`Reject` members, for the reason the second one
+    exists: a rejection declines a trade that was never taken, and an exit closes one that
+    was. Mixing them would let a pre-entry gate return ``BAILED_OUT`` — meaningless — and let
+    an exit rule return ``SPREAD_TOO_WIDE``, which reads as a rejection of something already
+    filled. ``tests/test_enforcement.py`` performs both.
+
+    **Both names are transcribed from PRD §20.12's state machine, not invented here.** That
+    matters because §20.12 itself is Phase 5/6's — the states, their transitions and their
+    persistence need a position — while the *rules* that reach two of those states are §3's and
+    are pure functions of the bars after entry. Taking the names from §20.12 is what keeps the
+    two halves able to meet: a Phase 5 state machine consuming these does not have to reconcile
+    a second vocabulary.
+    """
+
+    #: PRD §20.12 / §3.2 / §3.3 — the breakout-or-bailout timer expired without the move the
+    #: entry was predicated on. §3.2 requires a conjunction (no close above entry **and** no new
+    #: high above the breakout candle's), §3.3 states only the second condition, and §3.4 states
+    #: no bailout rule at all — so this code is reached by three different tests, which is
+    #: raised as a spec question in docs/CHANGELOG.md rather than unified here.
+    BAILED_OUT = "BAILED_OUT"
+
+    #: PRD §20.12 / §3.2 / §3.3 / §3.4 — a post-entry invalidation fired: a close back below
+    #: VWAP (all three setups) or, for §3.3, a close back below the prior HOD within
+    #: ``hod_reclaim_invalidation_candles``.
+    INVALIDATED = "INVALIDATED"

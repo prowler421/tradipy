@@ -36,6 +36,8 @@ from tradipy.rejects import Reject
 from tradipy.rounding import TICK_SIZE
 from tradipy.scanner import ScanCandidate
 from tradipy.score import Catalyst
+from tradipy.session import Session, bar_sequence
+from tradipy.setups import EVALUATORS, SetupOutcome, SetupType
 
 __all__ = [
     "Candidate",
@@ -44,6 +46,8 @@ __all__ = [
     "evaluate",
     "worked_examples",
     "simulated_universe",
+    "SetupExample",
+    "setup_examples",
 ]
 
 D = Decimal
@@ -492,7 +496,7 @@ def simulated_universe(cfg: Config) -> list[ScanCandidate]:
         # --- seven that survive; each raises one soft flag, or none -------
         _sim("SYNA", rvol=D("31"), float_shares=D("2100000"), short_interest_pct=D("0.31")),
         _sim("SYNB", rvol=D("18"), daily_gap_pct=D("0.41"), premarket_volume=D("620000")),
-        _sim("SYNC", rvol=D("9"), catalyst=Catalyst.HEADLINE_ONLY, atr=D("0.21")),
+        _sim("SYNC", rvol=D("8"), catalyst=Catalyst.HEADLINE_ONLY, atr=D("0.21")),
         _sim("SYND", rvol=D("22"), float_shares=D("3800000"), sessions_since_halt=1),
         _sim("SYNE", rvol=D("7"), daily_gap_pct=D("0.13"), catalyst=Catalyst.NONE),
         _sim("SYNF", rvol=D("11"), market_cap=D("4300000000")),
@@ -512,6 +516,147 @@ def simulated_universe(cfg: Config) -> list[ScanCandidate]:
         _sim("SYNADV", adv_shares=cfg["min_adv_shares"] / Decimal(5)),
         _sim("SYNLLD", luld_upper=_SIM_PRICE + TICK_SIZE),
         _sim("SYNSPR", spread=cfg["max_spread_abs"] * Decimal(4)),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — the three §3 setups, driven from bar series
+# ---------------------------------------------------------------------------
+#: §3.2's flagpole/flag bars need a volume history behind them: criterion 2 compares the pole's
+#: volume against the mean of the ``flagpole_vol_lookback_bars`` bars *before* it, and a short
+#: baseline is a refusal rather than a pass. These are that history — quiet, below the flag low,
+#: and ending on a red bar so §20.4's green run cannot extend into them.
+BULL_FLAG_WARMUP: list[Bar] = [Bar(D("4.78"), D("4.80"), D("4.74"), D("4.75"), 400)] * 30
+
+#: PRD §3.3's worked example as bars. Volumes are chosen so that §20.2's VWAP at the trigger is
+#: **exactly** the table's $6.32 — the opening bar's 52,700 shares is the one solved figure, and
+#: ``tests/test_setups.py`` asserts the library agrees rather than trusting the arithmetic here.
+#: Bars 2–3 are the pullback that separates the HOD from the consolidation: their lows sit below
+#: the VWAP *as of those bars*, which is what keeps §3.3's consolidation run at the table's three
+#: candles. That the run's extent turns on the per-bar VWAP rather than the trigger's is the
+#: reading recorded on :func:`tradipy.setups.evaluate_hod_breakout`.
+HOD_BREAKOUT_BARS: list[Bar] = [
+    Bar(D("6.10"), D("6.20"), D("6.08"), D("6.18"), 52700),  # 09:30 open
+    Bar(D("6.18"), D("6.45"), D("6.15"), D("6.38"), 30000),  # sets the prior HOD, $6.45
+    Bar(D("6.38"), D("6.44"), D("6.20"), D("6.24"), 15000),  # pullback below VWAP
+    Bar(D("6.24"), D("6.39"), D("6.22"), D("6.30"), 15000),
+    Bar(D("6.36"), D("6.42"), D("6.36"), D("6.38"), 20000),  # consolidation, $6.34-$6.42
+    Bar(D("6.38"), D("6.41"), D("6.34"), D("6.36"), 20000),
+    Bar(D("6.36"), D("6.40"), D("6.35"), D("6.39"), 20000),
+    Bar(D("6.44"), D("6.49"), D("6.44"), D("6.48"), 38000),  # breakout: closes above the HOD
+]
+
+#: PRD §3.4's worked example as bars. Every bar has ``high + low + close = $11.40``, so its
+#: §20.2 typical price is exactly $3.80 and the VWAP is $3.80 at *every* bar regardless of
+#: volume — which is what lets the dip depth (1.58%) and the stop chain ($3.762 -> $3.76 -> $3.75
+#: -> $3.73) reproduce the table without a solved volume. The opening bar carries the $4.15 HOD.
+VWAP_RECLAIM_BARS: list[Bar] = [
+    Bar(D("3.45"), D("4.15"), D("3.40"), D("3.85"), 40000),  # opening drive, HOD $4.15
+    *([Bar(D("3.79"), D("3.83"), D("3.75"), D("3.82"), 8000)] * 17),  # 17 more above VWAP
+    Bar(D("3.80"), D("3.86"), D("3.77"), D("3.77"), 10000),  # dip, 4 candles
+    Bar(D("3.77"), D("3.88"), D("3.74"), D("3.78"), 10000),  # dip low $3.74
+    Bar(D("3.78"), D("3.85"), D("3.77"), D("3.78"), 10000),
+    Bar(D("3.78"), D("3.84"), D("3.77"), D("3.79"), 10000),
+    Bar(D("3.78"), D("3.83"), D("3.74"), D("3.83"), 24000),  # reclaim: closes above VWAP
+]
+
+
+@dataclass(frozen=True)
+class SetupExample:
+    """One §3 worked example as PRD §21.1 asks for it: a bar series and the table's outputs.
+
+    ``expect`` carries what the §3 table states. It is compared against what the rules derive,
+    never substituted for it — so a table that has drifted from its own rules fails rather than
+    passing quietly, which is the v1.0 defect class and the reason §21.1 asks for this row.
+
+    ``expect_reject`` is not a convenience. §3.4's example is **rejected** by §3.1.1's resistance
+    set as that section enumerates it, because the next whole dollar ($4.00) is nearer than the
+    HOD ($4.15) the table names — so this field is how a divergence between the document and its
+    own rules is recorded rather than smoothed over. See
+    :func:`tradipy.setups.nearest_resistance`.
+    """
+
+    label: str
+    section: str
+    bars: list[Bar]
+    spread: Decimal
+    setup: SetupType
+    expect: dict[str, object]
+    expect_reject: Reject | None = None
+
+    @property
+    def session(self) -> Session:
+        """The bars as a contiguous §20.1 session starting at the 09:30 bar."""
+        return bar_sequence(self.bars)
+
+    @property
+    def trigger(self) -> int:
+        """The trigger bar's index — the last bar, in every §3 example."""
+        return len(self.bars) - 1
+
+    def evaluate(self, cfg: Config) -> SetupOutcome:
+        """Run the setup this example belongs to at its trigger bar."""
+        return EVALUATORS[self.setup](
+            self.label.upper(), self.session, self.trigger, self.spread, cfg
+        )
+
+
+def setup_examples() -> list[SetupExample]:
+    """The three PRD §3 worked examples, each driven from a bar series.
+
+    The §3.2 series is :data:`BULL_FLAG_WARMUP` plus :data:`BULL_FLAG_BARS` — the *same* bars
+    :func:`worked_examples` uses, extended with the volume history §3.2 criterion 2 needs. A
+    second copy of the §3.2 example would be the v1.2 defect class in the fixtures themselves.
+    """
+    return [
+        SetupExample(
+            label="bull_flag",
+            section="§3.2",
+            bars=BULL_FLAG_WARMUP + BULL_FLAG_BARS,
+            spread=TICK_SIZE,
+            setup=SetupType.BULL_FLAG,
+            expect={
+                "entry": D("5.16"),
+                "stop": D("5.04"),
+                "r": D("5.16") - D("5.04"),
+                "t1": D("5.40"),
+                "t2": D("5.51"),
+                "shares": 2500,
+            },
+        ),
+        SetupExample(
+            label="hod_breakout",
+            section="§3.3",
+            bars=HOD_BREAKOUT_BARS,
+            spread=TICK_SIZE,
+            setup=SetupType.HOD_BREAKOUT,
+            expect={
+                "entry": D("6.48"),
+                "stop": D("6.33"),
+                "r": D("6.48") - D("6.33"),
+                "t1": D("6.78"),
+                "t2": D("7.00"),
+                "shares": 2000,
+            },
+        ),
+        SetupExample(
+            label="vwap_reclaim",
+            section="§3.4",
+            bars=VWAP_RECLAIM_BARS,
+            spread=TICK_SIZE,
+            setup=SetupType.VWAP_RECLAIM,
+            # Every line of §3.4's table up to the room gate reproduces; the room gate does not,
+            # and the entry/stop/R/T1/T2 below are asserted anyway because they are derived
+            # before it. `shares` is absent deliberately: a rejected setup is not sized.
+            expect={
+                "entry": D("3.83"),
+                "stop": D("3.73"),
+                "r": D("3.83") - D("3.73"),
+                "t1": D("4.03"),
+                "t2": D("4.15"),
+            },
+            expect_reject=Reject.TARGETS_TOO_CLOSE,
+        ),
     ]
 
 

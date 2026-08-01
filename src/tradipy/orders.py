@@ -166,9 +166,10 @@ class OrderDraft:
     @property
     def exit_quantity(self) -> int:
         """Shares covered by exit legs. Equals the entry quantity minus T3's trailed remainder."""
-        return sum(
-            leg.quantity for leg in self.legs if leg.purpose is not LegPurpose.ENTRY
-        ) - self.protective.quantity
+        return (
+            sum(leg.quantity for leg in self.legs if leg.purpose is not LegPurpose.ENTRY)
+            - self.protective.quantity
+        )
 
 
 class PartialFillAction(Enum):

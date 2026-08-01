@@ -48,7 +48,7 @@ __all__ = [
     "TERMINAL_STATES",
     "OPEN_STATES",
     "TRANSITIONS",
-    "IllegalTransition",
+    "IllegalTransitionError",
     "transition",
     "reachable_exit_reasons",
     "breakeven_stop",
@@ -98,9 +98,7 @@ class PositionState(Enum):
 #: States from which nothing further happens. ``CLOSED`` and ``EXPIRED`` only: §20.12's diagram
 #: routes the three exit states onward to ``CLOSED``, so they are *not* terminal even though a
 #: reader skimming the table — which gives them no row at all — would take them to be.
-TERMINAL_STATES: frozenset[PositionState] = frozenset(
-    {PositionState.CLOSED, PositionState.EXPIRED}
-)
+TERMINAL_STATES: frozenset[PositionState] = frozenset({PositionState.CLOSED, PositionState.EXPIRED})
 
 #: States in which shares are held and therefore at risk. Read by :func:`position_risk` and by
 #: :mod:`tradipy.risk`'s §7.1.1 total-open-risk sum, so that a ``PENDING_ENTRY`` order counts —
@@ -147,9 +145,7 @@ def _transitions() -> Mapping[PositionState, frozenset[PositionState]]:
         PositionState.IDLE: frozenset({PositionState.ARMED}),
         # Table rows, transcribed.
         PositionState.ARMED: frozenset({PositionState.PENDING_ENTRY, PositionState.EXPIRED}),
-        PositionState.PENDING_ENTRY: frozenset(
-            {PositionState.OPEN_FULL, PositionState.EXPIRED}
-        ),
+        PositionState.PENDING_ENTRY: frozenset({PositionState.OPEN_FULL, PositionState.EXPIRED}),
         PositionState.OPEN_FULL: frozenset(
             {
                 PositionState.T1_FILLED,
@@ -158,9 +154,7 @@ def _transitions() -> Mapping[PositionState, frozenset[PositionState]]:
                 PositionState.BAILED_OUT,
             }
         ),
-        PositionState.T1_FILLED: frozenset(
-            {PositionState.T2_FILLED, PositionState.STOPPED_OUT}
-        ),
+        PositionState.T1_FILLED: frozenset({PositionState.T2_FILLED, PositionState.STOPPED_OUT}),
         PositionState.T2_FILLED: frozenset({PositionState.TRAILING}),
         PositionState.TRAILING: frozenset({PositionState.CLOSED, PositionState.STOPPED_OUT}),
         # Diagram only — the table has no rows for these, and without them nothing can finish.
@@ -180,7 +174,7 @@ def _transitions() -> Mapping[PositionState, frozenset[PositionState]]:
 TRANSITIONS: Mapping[PositionState, frozenset[PositionState]] = _transitions()
 
 
-class IllegalTransition(ValueError):
+class IllegalTransitionError(ValueError):
     """Raised when a transition §20.12 does not permit is attempted.
 
     A distinct type rather than a bare ``ValueError`` because §20.12's whole purpose is that a
@@ -191,7 +185,7 @@ class IllegalTransition(ValueError):
 
 
 def transition(state: PositionState, to: PositionState) -> PositionState:
-    """Move ``state`` to ``to`` if §20.12 permits it, else raise :class:`IllegalTransition`.
+    """Move ``state`` to ``to`` if §20.12 permits it, else raise :class:`IllegalTransitionError`.
 
     Returns the new state rather than mutating anything: §9.2's ``Position`` is the only
     non-frozen contract in that section, and the transition itself is a function.
@@ -204,7 +198,7 @@ def transition(state: PositionState, to: PositionState) -> PositionState:
     permitted = TRANSITIONS[state]
     if to not in permitted:
         allowed = ", ".join(sorted(s.value for s in permitted)) or "(terminal)"
-        raise IllegalTransition(
+        raise IllegalTransitionError(
             f"PRD §20.12 does not permit {state.value} -> {to.value}; "
             f"from {state.value} the permitted transitions are: {allowed}"
         )
@@ -236,8 +230,7 @@ def reachable_exit_reasons(state: PositionState) -> frozenset[ExitReason]:
     reasons = {
         ExitReason(s.value)
         for s in successors
-        if s
-        in {PositionState.STOPPED_OUT, PositionState.INVALIDATED, PositionState.BAILED_OUT}
+        if s in {PositionState.STOPPED_OUT, PositionState.INVALIDATED, PositionState.BAILED_OUT}
     }
     if PositionState.CLOSED in successors:
         # §20.12's one non-failure path to CLOSED, and therefore the only state from which the

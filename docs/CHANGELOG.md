@@ -10,6 +10,122 @@ Corrections and reversals to [PRD.md](PRD.md), extracted so the spec itself can 
 
 ---
 
+## Unreleased — D35, and the §7/§10/§20.8 questions implementing it exposed
+
+### Decided
+
+| Decision | Rule | Where |
+|---|---|---|
+| **D35** | **The construction/calibration split extends to Phase 6, whose §12.1 dependency is the first one actually met.** `daily.py` and `monitor.py` implement §7's *Continuous*, *post-fill*, *Post-trade close*, *End of day* and *Any* enforcement points, §7's Violation Action column, §10's `daily_state` as a value with a pure round trip, §20.8's snapshot gate and §9.2's `ClosedTrade`. The 1-second timer, the kill-switch file sentinel, the store and the flatten itself are all **refused**. The ladder does not move and §12.1's Phase 3, 4, 5 and 6 rows all stay unticked | [PLAN.md](PLAN.md) D35 |
+| **§7's rule table is read by its Enforcement Point column** | The table has thirteen rows and six enforcement points; Phase 5 implemented one of the six. `RULES_AT` transcribes the column and `ACTION_FOR` transcribes the Violation Action beside it, so a row's *where* and *what* are data rather than control flow. §7 row 11's *"Any"* is unioned into every point by derivation, so a rule marked widest cannot be present at four points and missing from the fifth | PRD §7; `src/tradipy/monitor.py` |
+| **There is no fifth enum** | A lock's reason is the §7 row that locked the account, and `RiskBlock` is already one member per §7 row. Inventing `HaltReason` would give one fact two spellings, which is K5's argument for the fourth namespace run in reverse | PRD §7, §9.2; `src/tradipy/daily.py` |
+| **`UNREACHABLE_BLOCKS` is emptied, not deleted** | Through Phase 5 it held §7 rows 7 and 8, whose predicates nothing called. `monitor.evaluate` is the caller, so every `RiskBlock` member is now reachable and `test_every_risk_block_can_actually_fire` drives each of the twelve. The name stays so the *distinction* between a deliberate gap and an accidental one is still written down | PRD §7; `src/tradipy/risk.py` |
+
+### The two findings that change a verdict — §7.1.2 and §7's *"Flatten all"* against their own schema
+
+Both were reproduced **by execution**, both are **raised, not resolved**, and both are about a
+rule's *enforcement point* rather than its arithmetic — which is why every mechanical check this
+repository owns was silent on them. Registry, boundary, polarity and enforcement fixtures all
+range over arithmetic.
+
+**1. §7.1.2's restart guarantee is incomplete in §10's own schema.** §7.1.2 says the
+non-bypassable limits *"are meaningless if they reset on restart"* and names five facts
+`daily_state` persists. Three of §7's inputs are not among them and §10 has **no column** for
+any: `unrealized_pnl` (§7 row 2's numerator is *"Realized + unrealized P&L"*),
+`session_equity_peak` (row 7 is *"peak-to-trough"*) and `multi_day_peak_equity` (row 8 is
+*"Rolling 5-day"*). A fourth has no column either — row 8's Violation Action, *"Lock account
+next day"*, which is a fact about tomorrow that today's row cannot hold.
+
+So on the schema as written a restart mid-session restores the daily-loss lockout and **silently
+resets both drawdown rules**, and a restart overnight loses row 8's lock outright. The reset is
+not an error: `RiskState.__post_init__` defaults a missing session peak to start-of-day equity,
+which is right for a session that just opened and wrong for one being resumed, so §7 row 7 comes
+back measuring from the wrong basis and reports no breach.
+`tests/test_phase6.py::test_a_reloaded_session_silently_rebases_the_session_peak` pins exactly
+that, and `tradipy.daily.UNPERSISTED_FIELDS` enumerates the four so the gap is a value rather
+than a paragraph.
+
+**Candidate resolutions, none taken:** add four columns to §10's `daily_state`, which makes
+§7.1.2's sentence true as written and is the smallest edit; or rebuild the peaks at startup from
+`closed_trades` and broker positions, which §21.3 already prescribes for `daily_state` itself
+(*"rebuilt from broker executions, not trusted blindly"*) and which needs a broker; or state in
+§7 that rows 7 and 8 are session-local and reset by design, which contradicts row 8's own
+*"rolling 5-day"*.
+
+**2. §7's *"Flatten all"* is unrepresentable for four of §20.12's five open states.** This is
+review round 14's **H3**, arriving as a blocker rather than a footnote, and the disposition is
+unchanged: no code change, because widening a normative table on an implementation's authority
+is what the §20.12 reading exists to avoid.
+
+§7 has two rows whose Violation Action begins *"Flatten all"* and a third — the kill switch,
+enforcement point *"Any"* — whose action is *"Cancel all open orders → market-close all
+positions."* §20.12 has four edges into `CLOSED`, and only one of them starts at an **open**
+state: `TRAILING`. The other three are the exit states, which a flatten has not reached. So
+`PENDING_ENTRY`, `OPEN_FULL`, `T1_FILLED` and `T2_FILLED` cannot record a `KILL_SWITCH` or
+`EOD_FLAT` exit at all. `monitor.flatten_all` therefore emits a directive for **every** open
+position — a flatten that skips one is §21.6's *"zero unprotected open positions"* Sev-1 arriving
+as an omission — and marks four of five with no target state. What Phase 6 makes concrete that
+H3 did not: an account flattened by the kill switch leaves four positions still recorded in the
+open state they were in — `OPEN_FULL` among them — which is precisely the *"discovering an
+untracked broker position"* outcome §20.12's own persistence sentence exists to prevent.
+
+**Candidate resolutions, none taken:** add `→ CLOSED` from every open state to §20.12, the
+smallest edit; or add a distinct `FLATTENED` state with edges from every open state, keeping
+`CLOSED` to mean *ladder finished*; or read `PENDING_ENTRY → EXPIRED` as §7.2's *"cancel all open
+orders"* — which takes four to three and is **not** taken here, for two reasons. §20.12's table
+gives `EXPIRED` **no row and no definition at all**: it appears only as a diagram arrow and as a
+successor of `ARMED` and `PENDING_ENTRY`, so reading a *cause* into it is this layer inventing
+one. And §6.4 lets a partially filled `PENDING_ENTRY` hold shares, which a state meaning *the
+order never filled* would strand.
+
+### Spec questions — open, raised by implementing §7's enforcement column, §10 and §20.8
+
+**Ten, plus the two findings above. No threshold moves here and no §7 rule changes.** Each
+reading is localised to one function and pinned by a test;
+[PHASE-6-DESIGN.md](PHASE-6-DESIGN.md) §5 carries the readings against the code. The fifteen
+Phase 5 raised and the nineteen from Phase 4 remain open and untouched.
+
+| Where | Question | Reading taken |
+|---|---|---|
+| §7 row 4 | Is a *"loss"* gross or net? §7 never says, and §9.2's `ClosedTrade` carries both | **Net.** §9.2 already computes `r_multiple` on net and §18.7 is judged net; a trade that clears gross and pays it back in commission cost the account money |
+| §7 row 4 | Does a **scratch** (`net_pnl == 0`) break a streak? | **Yes, it resets to zero.** *Consecutive* means unbroken, and a non-loss breaks a run of losses |
+| §7 row 7 | Action is *"Flatten all; lock account"* with **no duration**, where row 2's otherwise-identical action says *"for day"* | **For the day.** The rule is a session drawdown and §10 keys `daily_state` by session date; §7 states durations where it means them, row 8 being *"next day"* in terms |
+| §7 row 8 | *"Lock account next day"* — a state §10 has no column for, applied to a session a pure layer does not have | Carried on the outgoing state as `locks_next_session`, and applied by the next `open_session(carried_lock=...)`. §10's missing column is finding 1 |
+| §7 / §21.4 | §7 row 9 states the entry window as an **MVP default** of *"09:30–15:55 ET"* and defers the bounds themselves — *"Yes (window bounds; DST-aware per §21.4)"* — while §21.4 defines the flat-all cutoff as *"`session_close − 5 min`, not a hard-coded time"*. On a 13:00 half-day the default and the derived cutoff are three hours apart, and §20.1's ordinal-minute scheme can express only one at a time | **Two registry rows** — `session_last_entry_minute` and `session_flat_all_minute` — coupled so the flatten may not precede the last entry. Resolving the half-day case needs a trading calendar, which is §21.4's and ingestion's |
+| §7 row 11 | Enforcement point *"Any"* — every point, or none? | **Every point**, derived rather than repeated. *Any* is the widest word in the column and the row is the kill switch, so the reading that costs something if wrong is the narrow one |
+| §7 / §7.2 | When two rows breach at the same point, which Violation Action applies? §7 says nothing about precedence | **The strictest**, ranked by what the action removes, while the *reason* stays §7's table order — two questions, two answers. One value for both under-enforces |
+| §7.2 | *"Requires manual reset with confirmation phrase"* — a phrase, in a layer with no UI, no configuration file and no secret store | `clear_lock(state, confirmation, expected)` raises unless the two match, with **both supplied**. The rule that a lock cannot be cleared implicitly is arithmetic; sourcing the phrase is §21.5's OS keyring, which forbids credentials in configuration. An empty `expected` is refused rather than matched — a guard whose expected value is missing would accept the empty string |
+| §20.8 | `NO_TRADE` is named as a state and defined nowhere | `SessionPhase.NO_TRADE`, with `start_of_day_equity = None` and every §7 path refusing it. A placeholder equity satisfies the type and defeats §20.8's sentence |
+| §10 vs §9.2 | `closed_trades` has one `pnl` column; §9.2's `ClosedTrade` has `gross_pnl`, `commission`, `fees` and `net_pnl`, of which §9.2 marks `net_pnl` *"the figure §18.7 is judged on"* — and §9.2's `Fill` calls the fees *"required for net metrics (§8.3)"*, so both halves of the split are stated in §9.2 and neither is in §10 | `ClosedTrade` carries §9.2's four and **nothing writes `closed_trades`**. Writing a single `pnl` would choose which figure §18.7 later reads, which is the one decision the viability gate must not inherit from a persistence layer |
+
+### Convention 8 fixes, listed and not dispositioned
+
+* `CLAUDE.md` convention 2 read *"`gates.py`, `quotes.py`, `scanner.py` and `setups.py` are the
+  four"* for the whole of Phase 5, which added two more rounding consumers. Corrected in place.
+  The count is derived by `test_every_module_that_rounds_is_in_the_polarity_check`, which is why
+  the drift was harmless — restating it in prose is what was not.
+* `tests/test_enforcement.py`'s Phase 5 absence fixture searched the source **text** for
+  `"open("` and `"Path("`. Phase 6's equivalent uses the AST, because this layer's docstrings
+  describe the guarantee they are asserting and a substring check reports the description as a
+  violation.
+* `docs/PLAN.md`'s **D35 row was not in the decision-log table** — a stray blank line above it
+  ended the table, so a row cited by three documents rendered as literal pipe-delimited text.
+  Found by the fact-check, not by `make links`, which validates links rather than tables.
+
+### Recorded against this change itself
+
+Two adversarial passes were run over the Phase 6 documents against the source, and both counts
+are reported for [PHASE-5-DESIGN](PHASE-5-DESIGN.md) §9's reason. The **first found 30**
+discrepancies, five of them gaps in the code or the tests rather than in the prose — including a
+`ACTION_FOR` that was not total over `RiskBlock` while this document claimed a derivation from
+it, and a `_BRIDGE_EXCEPTIONS` constant that was dead while the test meant to read it carried a
+divergent copy. The **second pass, over the corrections, found 10 more**, the largest of which
+was one correction applied in three files and missed in fourteen. That is the v1.2 defect class
+produced *by* a fix, and it is the whole argument for the second pass. See
+[PHASE-6-DESIGN.md](PHASE-6-DESIGN.md) §9.
+
+---
+
 ## Unreleased — D34, and the §6/§7 questions implementing it exposed
 
 ### Decided

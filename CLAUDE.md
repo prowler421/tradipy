@@ -16,7 +16,7 @@ between prose, comments, and code. Read it before changing behavior.
 
 ## Architecture
 
-Fourteen small, pure modules under `src/tradipy/`, plus a CLI:
+Sixteen small, pure modules under `src/tradipy/`, plus a CLI:
 
 - `rounding.py` — tick arithmetic and polarity-aware threshold rounding. The governing
   principle is *"rounding must never weaken a constraint."* `Polarity.MINIMUM` rounds up;
@@ -59,26 +59,42 @@ Fourteen small, pure modules under `src/tradipy/`, plus a CLI:
   share count, and §7.1.1's scale-in legality. §20.12's diagram and its table disagree on the
   permitted transitions and neither is complete; the reading taken is *the table where it has a
   row, the diagram where it has none*, recorded on `TRANSITIONS` and raised in `docs/CHANGELOG.md`.
-- `risk.py` — PRD §6.3's eight pre-trade checks and nine of §7's eleven non-signal-time rows,
-  returning §9.2's `RiskDecision` with **every** rule evaluated, asserted against
-  `EVALUATED_RULES` so a rule dropped from the loop raises rather than shortening a list.
-  Rows 7 and 8 — the drawdowns — have predicates and **no block path**, because §7 marks them
-  *Continuous* and *End of day*; `UNREACHABLE_BLOCKS` enumerates that and a test asserts it. State is handed in as a frozen `RiskState`
-  (§10's `daily_state` row plus the open positions §7.1.1 needs) — no broker, clock, file or
-  database. §7's two signal-time rows stay in `gates` and are re-applied here, because §7 marks
-  their enforcement point pre-order as well. Does **not** round. Approval never trims: §7 says
-  *"Reject order"* and §9.2's `approved_shares` says *"may be <"*; §7 governs and the conflict is
-  raised.
+- `risk.py` — PRD §6.3's eight pre-trade checks and nine of §7's eleven non-signal-time rows at
+  the **Pre-order** enforcement point, returning §9.2's `RiskDecision` with **every** rule
+  evaluated, asserted against `EVALUATED_RULES` so a rule dropped from the loop raises rather than
+  shortening a list. Rows 7 and 8 — the drawdowns — have predicates and no block path *here*,
+  because §7 marks them *Continuous* and *End of day*; `monitor.py` is their caller, and
+  `UNREACHABLE_BLOCKS` is now **empty** with a test asserting the emptiness. State is handed in as
+  a frozen `RiskState` (§10's `daily_state` row plus the open positions §7.1.1 needs) — no broker,
+  clock, file or database. §7's two signal-time rows stay in `gates` and are re-applied here,
+  because §7 marks their enforcement point pre-order as well. Does **not** round. Approval never
+  trims: §7 says *"Reject order"* and §9.2's `approved_shares` says *"may be <"*; §7 governs and
+  the conflict is raised.
 - `orders.py` — PRD §6.1's bracket as an `OrderDraft`, §6.7's `sha256` idempotency key, §6.4's
-  partial-fill decision. **The boundary of the whole package:** §6.2's lifecycle is
+  partial-fill decision. **One of the two boundaries of the whole package:** §6.2's lifecycle is
   `Signal → PreTradeRiskCheck → OrderDraft → Submit`, and the fourth arrow is *refused*, not
   deferred (D30). Every price on a draft is validated to be a whole tick, because a draft is the
   last representation before submission (§20.13).
+- `daily.py` — PRD §10's `daily_state` as a value plus pure transitions, §20.8's snapshot gate,
+  §9.2's `ClosedTrade`, and §7 row 4's *Post-trade close* accrual. The first thing in the package
+  to **compute** `realized_pnl`, `consecutive_losses`, `day_trades_in_window` and the session
+  peak rather than accept them. `SessionPhase.NO_TRADE` carries `start_of_day_equity = None` and
+  `risk_state()` refuses it, because §20.8's *"does not fall back to a stale or computed value"* is
+  only enforceable if the fallback does not exist. `to_row()` / `from_row()` map §10's columns as a
+  plain `dict` — no store, so §7.1.2's *arithmetic* is testable and its *durability* is not.
+  `UNPERSISTED_FIELDS` names the four §7 inputs §10 has no column for. Does **not** round.
+- `monitor.py` — PRD §7's **other five** enforcement points (*Continuous*, *post-fill*,
+  *Post-trade close*, *End of day* and *Any*) and its **Violation Action** column, which nothing
+  had read. `RULES_AT` and `ACTION_FOR` are transcriptions of those two columns; the reason is
+  §7's table order and the action is the *strictest* breach, which are two different questions.
+  `flatten_all` computes §7's *"Flatten all"* per position and marks the four §20.12 cannot express
+  — round 14's H3 as a blocker. Reuses `risk`'s three predicates and `RuleOutcome` rather than
+  restating either. **The second boundary:** it decides, and sends nothing. Does **not** round.
 - `poc.py` / `__main__.py` — the proof of concept. `poc` composes the gates into one
   evaluation and holds the simulated scanner universe; `__main__` is
-  `python -m tradipy demo` / `evaluate` / `scan` / `setups` / `risk`, argparse and nothing else. Explicitly not
-  the strategy engine: it gates a candidate and filters a universe it was handed, it does not
-  find one.
+  `python -m tradipy demo` / `evaluate` / `scan` / `setups` / `risk` / `monitor`, argparse and
+  nothing else. Explicitly not the strategy engine: it gates a candidate and filters a universe it
+  was handed, it does not find one.
 
 Data flows one way. `rounding`, `rejects` and `bars` import only the standard library;
 `params` imports `rounding`; `quotes` and `gates` import `params`, `rejects` and `rounding`;
@@ -86,26 +102,31 @@ Data flows one way. `rounding`, `rejects` and `bars` import only the standard li
 `rejects`, `score` and `gates`; `setups` imports `bars`, `session`, `params`, `rejects`,
 `rounding` and `gates`; `positions` imports `params`, `rejects` and `rounding`; `risk` imports
 `gates`, `params`, `positions`, `rejects`, `rounding` and `setups`; `orders` imports `params`,
-`positions`, `rounding` and `setups`. `poc` imports everything up to and including `setups` and
-**none of the three Phase 5 modules** — Phase 5 composes at the CLI, so `__main__` imports `poc`
-plus `setups`, `positions`, `risk` and `orders`. Everything is `Decimal`.
+`positions`, `rounding` and `setups`; `daily` imports `params`, `rejects`, `risk` and `setups`;
+`monitor` imports `daily`, `params`, `positions`, `rejects`, `rounding` and `risk`. `poc` imports
+everything up to and including `setups` and **none of the five modules Phases 5 and 6 added** —
+both phases compose at the CLI, so `__main__` imports `poc` plus `setups`, `positions`, `risk`,
+`orders`, `daily` and `monitor`. Everything is `Decimal`.
 
 ## Repository layout
 
 ```
 src/tradipy/        # the library (rounding, rejects, params, bars, quotes, score, gates,
-                    # scanner, session, setups, positions, risk, orders) plus poc.py and
-                    # __main__.py — the runnable proof of concept
+                    # scanner, session, setups, positions, risk, orders, daily, monitor)
+                    # plus poc.py and __main__.py — the runnable proof of concept
 tests/              # pytest suite — worked examples, registry, boundary/polarity marks,
                     # enforcement fixtures, and doc-count consistency
 docs/               # start at docs/README.md (index)
   PRD.md            #   normative; §20 governs on any conflict
-  PLAN.md           #   workstreams, sequencing, decision log D1–D34 (no D31), risks
+  PLAN.md           #   workstreams, sequencing, decision log D1–D35 (no D31), risks
   CHANGELOG.md      #   PRD corrections — NOT the root CHANGELOG.md, which tracks the package
   PHASE-2A-SPIKE.md #   data spike scope with binding pre-registration
   PHASE-4-DESIGN.md #   design record for the §3 strategy engine (D33)
   PHASE-5-DESIGN.md #   design record for §7 pre-order risk / §6 orders (D34) — and for
                     #   what it refused to build, which is the half §12.1 names first
+  PHASE-6-DESIGN.md #   design record for §7's other five enforcement points, §10's
+                    #   daily_state and §20.8 (D35) — the first phase whose §12.1
+                    #   dependency was actually met
   api.md architecture.md development.md
   reviews/          #   every independent review round, kept unedited as the record
 scripts/            # maintenance helpers — registry baseline, link checker
@@ -132,10 +153,16 @@ data/spike2a/       # spike inputs — gitignored, empty on a clean clone. Every
 2. **Polarity, not the call site, decides rounding.** Every module that rounds routes through
    `Config.round_for(value, *governed_by)`, which reads the direction from the registry. Do
    not import `Polarity` into any of them and do not name a member at a call site: that gives
-   direction two definitions. `gates.py`, `quotes.py`, `scanner.py` and `setups.py` are the
-   four, and a test proves the import is absent from each **and** derives that list from the
-   source, so a fifth cannot be added outside it. It lived in `gates.py` as `_rounded` until Phase 3 added
-   a second consumer; direction is registry data, so it moved onto the registry object.
+   direction two definitions. `gates.py`, `orders.py`, `positions.py`, `quotes.py`,
+   `scanner.py` and `setups.py` are the consumers, and a test proves the import is absent from
+   each **and** derives that list from the source, so a seventh cannot be added outside it.
+   *(This sentence said "are the four" and named four for the whole of Phase 5, which added two
+   — fixed inline per convention 8. The count is derived by
+   `test_every_module_that_rounds_is_in_the_polarity_check`, which is why the drift was
+   harmless; restating it here is what was not.)* It lived in `gates.py` as `_rounded` until
+   Phase 3 added a second consumer; direction is registry data, so it moved onto the registry
+   object. `risk.py`, `daily.py` and `monitor.py` do **not** round and are deliberately outside
+   the list: a P&L is not a price level compared against a tick.
 3. **`Decimal` everywhere money is compared to a tick or summed into P&L** (PRD §9.2). No
    `float`.
 4. **Assertions test the derivation, not the value.** `assert cap == floor_to_tick(x) and

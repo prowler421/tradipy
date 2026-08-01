@@ -9,7 +9,7 @@ against a tick boundary or summed into P&L (PRD §9.2).
 
 ## Package layout
 
-Fourteen library modules and a `__main__` CLI entry point, with a strict one-way dependency
+Sixteen library modules and a `__main__` CLI entry point, with a strict one-way dependency
 graph:
 
 - `rounding`, `rejects`, `bars` — standard library only.
@@ -25,13 +25,19 @@ graph:
   pre-trade checks and §7's rule table).
 - `orders` — depends on `params`, `positions`, `rounding`, `setups` (PRD §6.1/§6.2/§6.4/§6.7
   order construction; **nothing that submits**).
-- `poc` — composes all of the above into one evaluable candidate, one simulated universe and
-  the three §3 worked examples as bar series.
-- `__main__` — the `python -m tradipy` front end over `poc`.
+- `daily` — depends on `params`, `rejects`, `risk`, `setups` (PRD §10's `daily_state`, §20.8's
+  snapshot, §9.2's `ClosedTrade`, §7 row 4's accrual; **no store**).
+- `monitor` — depends on `daily`, `params`, `positions`, `rejects`, `rounding`, `risk` (PRD §7's
+  non-pre-order enforcement points and Violation Action column; **nothing that flattens**).
+- `poc` — composes everything up to and including `setups` into one evaluable candidate, one
+  simulated universe and the three §3 worked examples as bar series. It imports **none** of the
+  five modules Phases 5 and 6 added; both phases compose at the CLI.
+- `__main__` — the `python -m tradipy` front end over `poc`, `risk`/`orders` and
+  `daily`/`monitor`.
 
-`import tradipy` binds the thirteen library modules named in the package `__all__`
+`import tradipy` binds the fifteen library modules named in the package `__all__`
 (`rounding`, `rejects`, `params`, `bars`, `quotes`, `score`, `gates`, `scanner`, `session`,
-`setups`, `positions`, `risk`, `orders`) as attributes. `tradipy.poc` is not among them and must be imported explicitly — it is the
+`setups`, `positions`, `risk`, `orders`, `daily`, `monitor`) as attributes. `tradipy.poc` is not among them and must be imported explicitly — it is the
 proof-of-concept composition layer, not part of the invariant surface.
 
 ## `tradipy.rounding`
@@ -172,7 +178,7 @@ The parameter registry — the single source of truth for every tunable threshol
 Mode = Literal["beginner", "experienced"]
 MODES: tuple[str, ...]                             # ("beginner", "experienced")
 
-PARAMS: Mapping[str, Param]                        # read-only; 84 entries
+PARAMS: Mapping[str, Param]                        # read-only; 86 entries
 MODE_PRESETS: Mapping[str, Mapping[str, Decimal]]  # read-only, inner maps too
 HARD_CAPS: Mapping[str, Decimal]                   # read-only
 DISCRIMINATING_CAP_TICKS = 2
@@ -212,7 +218,7 @@ def min_tradeable_price_from_stop_bounds(cfg: Config) -> Decimal
 
 ### The registry
 
-`PARAMS` holds **84** entries keyed by name, each carrying its default, legal range, unit,
+`PARAMS` holds **86** entries keyed by name, each carrying its default, legal range, unit,
 PRD source citation, and — where it is used as a gate threshold — its polarity. A
 threshold is defined there exactly once and every consumer reads it by name; no numeric
 literal for a registered threshold may appear anywhere else in the package. The lint that
@@ -774,7 +780,7 @@ TERMINAL_STATES: frozenset[PositionState]   # CLOSED, EXPIRED only
 OPEN_STATES: frozenset[PositionState]       # shares held — includes PENDING_ENTRY (§7 row 1)
 TRANSITIONS: Mapping[PositionState, frozenset[PositionState]]   # read-only, and *total*
 
-class IllegalTransition(ValueError)
+class IllegalTransitionError(ValueError)
 
 def transition(state: PositionState, to: PositionState) -> PositionState
 def reachable_exit_reasons(state: PositionState) -> frozenset[ExitReason]
@@ -962,6 +968,146 @@ def partial_fill_action(intended: int, filled: int, entry_spread: Decimal,
 - **§6.5's slippage model is not here.** It is §6, so §12.1 puts it in this phase, while its only
   consumer is §8.2's fill model, which is Phase 4b's — a boundary disagreement rather than a
   choice. `impact_coefficient` therefore stays unregistered.
+
+## `tradipy.daily`
+
+PRD §10's `daily_state` as a value, §20.8's snapshot, §9.2's `ClosedTrade`, §7 row 4's accrual.
+
+```python
+class SessionPhase(Enum):  NO_TRADE; TRADING; LOCKED        # §20.8, §7
+
+@dataclass(frozen=True)
+class ClosedTrade:                                          # §9.2, minus four caller/clock fields
+    symbol: str; setup_type: SetupType
+    entry_price: Decimal; exit_price: Decimal               # volume-weighted, supplied
+    shares: int; r_per_share: Decimal
+    commission: Decimal; fees: Decimal
+    exit_reason: ExitReason; spread_estimated: bool = False
+
+    gross_pnl / net_pnl / r_multiple / is_loss              # properties — derived, never stored
+
+@dataclass(frozen=True)
+class DailyState:                                           # §10's row, plus what §10 cannot hold
+    session_date: str; phase: SessionPhase
+    start_of_day_equity: Decimal | None                     # None iff NO_TRADE (§20.8)
+    realized_pnl / unrealized_pnl: Decimal
+    consecutive_losses / day_trades_in_window: int
+    halt_reason: RiskBlock | None
+    session_equity_peak / multi_day_peak_equity: Decimal | None
+    locks_next_session: bool
+
+    trading_halted / live_equity                            # properties
+
+DAILY_STATE_COLUMNS: Mapping[str, str]     # §10 column -> the field it is written from
+CLOCK_COLUMNS: tuple[str, ...]             # ("updated_at",) — a store's, not this layer's
+UNPERSISTED_FIELDS: frozenset[str]         # the four §7 inputs §10 has no column for
+
+class SessionNotOpenError(ValueError)
+class ConfirmationRequiredError(ValueError)
+
+def open_session(session_date: str, *, carried_lock: RiskBlock | None = None) -> DailyState
+def record_snapshot(state: DailyState, equity: Decimal) -> DailyState
+def mark_to_market(state: DailyState, unrealized_pnl: Decimal) -> DailyState
+def record_close(state, trade, *, unrealized_after: Decimal, day_trade: bool = True) -> DailyState
+def roll_multi_day_peak(session_closes: Sequence[Decimal], cfg: Config) -> Decimal | None
+def record_multi_day_peak(state, session_closes, cfg) -> DailyState
+def lock(state: DailyState, reason: RiskBlock) -> DailyState
+def clear_lock(state: DailyState, confirmation: str, expected: str) -> DailyState
+def to_row(state: DailyState) -> dict[str, str | int | bool | None]
+def from_row(row: Mapping[str, str | int | bool | None]) -> DailyState
+def risk_state(state, positions=(), submitted_keys=frozenset()) -> RiskState
+```
+
+- **`risk_state` is the only bridge to §7's evaluator, and that is enforced.** `DailyState` and
+  `RiskState` share eight fields, which is exactly the configuration the v1.2 defect class arises
+  in. A test derives both field sets from the dataclasses and asserts the bridge carries every
+  shared one, so a field added to either and forgotten here fails rather than silently defaulting.
+- **`NO_TRADE` has no equity, and `risk_state` refuses it.** §20.8: *"it does not fall back to a
+  stale or computed value, because every non-bypassable risk limit is denominated in it."* The
+  only way to make that enforceable is for the fallback not to exist, so `start_of_day_equity` is
+  `Decimal | None` and every mutation that needs the figure — `mark_to_market`, `record_close`,
+  `record_multi_day_peak`, `lock`, `risk_state` — raises `SessionNotOpenError` before the snapshot.
+  (`clear_lock` raises a plain `ValueError`: it fails on there being no lock, not on there being
+  no equity.)
+- **The snapshot is taken once.** §20.8 makes it *"immutable for the remainder of the session"*,
+  and a second `record_snapshot` raises whatever value it carries.
+- **`ClosedTrade`'s three money figures are properties.** §9.2 marks `net_pnl` *"the figure §18.7
+  is judged on"* and requires `r_multiple` to be *"computed on NET P&L, not gross"* — and a
+  stored field can be
+  computed once, wrongly, and then agree with itself forever. Zero shares or zero R raise rather
+  than producing a multiple nobody can trace.
+- **`is_loss` is net and strictly negative, and a scratch resets the streak.** §7 states neither;
+  both readings are in [PHASE-6-DESIGN.md](PHASE-6-DESIGN.md) §5 and raised in
+  [CHANGELOG.md](CHANGELOG.md).
+- **`to_row` / `from_row` are a serialisation, not a store.** §7.1.2's *arithmetic* is testable
+  here — a reloaded row reproduces the same lockout — and its *durability* is not, because that
+  needs a database and D30 admits none. `UNPERSISTED_FIELDS` is the enumeration of the four §7
+  inputs §10 has no column for, which is finding 1 rather than an implementation note.
+- Nothing here rounds: a P&L is money accumulated and an exit price is an *observed* fill, so
+  §20.13's *"every price submitted to the broker"* does not reach either.
+
+## `tradipy.monitor`
+
+PRD §7's non-pre-order enforcement points and its Violation Action column. Decides; sends nothing.
+
+```python
+class EnforcementPoint(Enum):    # §7's third column, verbatim
+    PRE_ORDER; CONTINUOUS; POST_FILL; POST_TRADE_CLOSE; END_OF_DAY; ANY
+
+class HaltAction(Enum):          # §7's fourth column, verbatim
+    REJECT_ORDER; FLATTEN_AND_LOCK_DAY; LOCK_NEW_ENTRIES
+    LOCK_ACCOUNT_NEXT_DAY; FLATTEN_AND_HALT
+
+RULES_AT: Mapping[EnforcementPoint, tuple[RiskBlock, ...]]   # PRE_ORDER absent — that is `risk`
+ACTION_FOR: Mapping[RiskBlock, HaltAction]
+
+@dataclass(frozen=True)
+class MonitorDecision:
+    point: EnforcementPoint
+    rules_evaluated: tuple[RuleOutcome, ...]     # reuses risk.RuleOutcome, not a second audit row
+    reason: RiskBlock | None                     # the FIRST breach, in §7's table order
+    action: HaltAction | None                    # the STRICTEST breach — a different question
+    breaches / flatten / locks                   # properties
+
+def evaluate(state: RiskState, point, cfg, *, kill_switch: bool = False) -> MonitorDecision
+def apply(state: DailyState, decision: MonitorDecision) -> DailyState
+def eod_flat_due(minute: int, cfg: Config) -> bool
+
+@dataclass(frozen=True)
+class FlattenDirective:
+    symbol: str; shares: int; from_state: PositionState
+    exit_reason: ExitReason; to_state: PositionState | None   # None => §20.12 has no edge
+
+    representable                                # property
+    def commit(self) -> PositionState            # raises IllegalTransitionError when it cannot
+
+def flatten_all(positions: Sequence[OpenPosition], reason: ExitReason) -> tuple[FlattenDirective, ...]
+def unrepresentable(directives) -> tuple[FlattenDirective, ...]
+def unrepresentable_flatten_states(reason: ExitReason) -> frozenset[PositionState]
+```
+
+- **The reason and the action answer two different questions.** If §7 row 4 (*"Lock new entries;
+  allow exits"*) and row 2 (*"Flatten all; lock account for day"*) breach together, the reason is
+  the earlier row in §7's table and the action is the flatten. Reporting one answer for both
+  under-enforces, in the direction that leaves a position open.
+- **§7 row 11's *"Any"* is unioned into every point**, derived rather than repeated, so a rule
+  marked widest cannot be present at four points and missing from the fifth.
+- **`evaluate` asserts its own output** against `RULES_AT`, the way `risk.approve` asserts against
+  `EVALUATED_RULES` — §9.2 asks for *"every rule checked, for audit"*, and a length check passes
+  with a rule missing.
+- **Passing `EnforcementPoint.PRE_ORDER` raises.** Those rows are `risk.approve`'s, and a second
+  implementation of §7's table is the v1.2 defect class.
+- **`eod_flat_due` is not a §7 row.** §7's trading-hours row is *Pre-order* and rejects entries;
+  §21.4's cutoff closes what is open. `session_flat_all_minute` is a separate registry row from
+  `session_last_entry_minute` even at an equal default, coupled so the flatten cannot precede the
+  last entry — see [CHANGELOG.md](CHANGELOG.md) for the half-day case where they come apart.
+- **`flatten_all` never skips a position**, and marks four of §20.12's five open states
+  unrecordable. That is round 14's **H3** as a blocker: of §20.12's four edges into `CLOSED` only
+  one starts at an *open* state, so an account flattened by the kill switch leaves positions still
+  recorded in the open state they were in. The set is derived from `positions.reachable_exit_reasons`, never re-walked here,
+  and a test asserts it is **non-empty** so a §20.12 correction fails deliberately.
+- **Nothing is flattened, cancelled or sent**, and there is no 1-second loop: §7's cadence is a
+  clock, §21.1 forbids one here, and §6.2's `OrderDraft → Submit` arrow is refused (D30).
 
 ## `tradipy.poc`
 

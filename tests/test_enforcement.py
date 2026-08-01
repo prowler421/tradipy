@@ -42,6 +42,7 @@ from __future__ import annotations
 import ast
 import importlib
 import itertools
+from dataclasses import fields, replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -50,7 +51,31 @@ import pytest
 
 from scripts.spike2a import provenance, q1_vendors, q2_float, q3_latency, q4_spreads
 from scripts.spike2a.feeds import QuoteSample
+from tradipy import monitor as monitor_module
+from tradipy import risk as risk_module
 from tradipy.bars import Bar
+from tradipy.daily import (
+    BRIDGE_EXCEPTIONS,
+    CLOCK_COLUMNS,
+    DAILY_STATE_COLUMNS,
+    UNPERSISTED_FIELDS,
+    ClosedTrade,
+    ConfirmationRequiredError,
+    DailyState,
+    SessionNotOpenError,
+    SessionPhase,
+    bridge_fields,
+    clear_lock,
+    from_row,
+    mark_to_market,
+    open_session,
+    record_close,
+    record_multi_day_peak,
+    record_snapshot,
+    risk_state,
+    to_row,
+)
+from tradipy.daily import lock as daily_lock
 from tradipy.gates import (
     Ladder,
     apply_stop_floor_and_ceiling,
@@ -59,6 +84,18 @@ from tradipy.gates import (
     scan_spread_cap,
     spread_caps,
 )
+from tradipy.monitor import (
+    _ROW_LABELS,
+    ACTION_FOR,
+    RULES_AT,
+    EnforcementPoint,
+    HaltAction,
+    flatten_all,
+    unrepresentable,
+    unrepresentable_flatten_states,
+)
+from tradipy.monitor import apply as monitor_apply
+from tradipy.monitor import evaluate as monitor_evaluate
 from tradipy.orders import (
     LegPurpose,
     OrderLeg,
@@ -70,8 +107,9 @@ from tradipy.orders import (
 from tradipy.params import HARD_CAPS, MODE_PRESETS, PARAMS, Config, CouplingError
 from tradipy.poc import setup_examples
 from tradipy.positions import (
+    OPEN_STATES,
     TRANSITIONS,
-    IllegalTransition,
+    IllegalTransitionError,
     LegQuantities,
     PositionState,
     leg_quantities,
@@ -85,6 +123,7 @@ from tradipy.risk import (
     OpenPosition,
     OrderIntent,
     RiskState,
+    RuleOutcome,
     approve,
     max_dollar_risk,
     multi_day_drawdown_breached,
@@ -1804,13 +1843,13 @@ def test_the_state_machine_refuses_every_transition_section_twenty_twelve_omits(
         if dst in TRANSITIONS[src]:
             continue
         attempted += 1
-        with pytest.raises(IllegalTransition):
+        with pytest.raises(IllegalTransitionError):
             transition(src, dst)
         refused += 1
     assert attempted == refused
     # Including the self-transition, which §20.12 lists for no state.
     for state in PositionState:
-        with pytest.raises(IllegalTransition):
+        with pytest.raises(IllegalTransitionError):
             transition(state, state)
     # And the two edges §20.12's table omits and its diagram supplies must be present, or the
     # machine can neither start nor finish — the reading is load-bearing, not cosmetic.
@@ -1882,11 +1921,7 @@ def test_scale_in_cannot_happen_before_t1_by_any_state() -> None:
     Attempted from every §20.12 state with a zero projected risk, which is the most permissive
     arithmetic there is — so anything that returns True here is the state filter failing.
     """
-    permitted = {
-        state
-        for state in PositionState
-        if scale_in_permitted(state, Decimal(0), CFG)
-    }
+    permitted = {state for state in PositionState if scale_in_permitted(state, Decimal(0), CFG)}
     assert permitted == {PositionState.T1_FILLED, PositionState.T2_FILLED}
 
 
@@ -2007,13 +2042,19 @@ def test_the_two_guarantees_phase_5_cannot_make_are_still_absent() -> None:
 
 
 @pytest.mark.spec
-def test_approve_evaluates_every_rule_and_cannot_silently_drop_one() -> None:
+def test_approve_evaluates_every_rule_and_cannot_silently_drop_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """§9.2's ``rules_evaluated`` is *"every rule checked, for audit"* — so *every* must bind.
 
     The first version of this guarantee was `assert len(rules_evaluated) >= 10` against an actual
     12, which passes with a rule missing. That is the fifth defect class exactly: a test adjacent
     to the hole, confirming the happy path. `approve` now compares its own output against
     :data:`~tradipy.risk.EVALUATED_RULES` and raises, and this performs the drop.
+
+    The patch goes through ``monkeypatch`` rather than ``importlib`` plus ``try/finally``: the
+    latter assigns to an attribute of an untyped ``ModuleType``, which a type checker cannot see
+    and correctly refuses, and it restores by hand what the fixture restores for free.
     """
     signal = _phase5_signal()
     state = RiskState(start_of_day_equity=CFG["start_of_day_equity"])
@@ -2021,41 +2062,35 @@ def test_approve_evaluates_every_rule_and_cannot_silently_drop_one() -> None:
     assert tuple(r.rule for r in decision.rules_evaluated) == EVALUATED_RULES
 
     # Perform the violation: a loop one rule short must not produce a decision.
+    monkeypatch.setattr(
+        risk_module, "EVALUATED_RULES", (*EVALUATED_RULES, "A rule nothing appends")
+    )
     with pytest.raises(AssertionError, match="did not evaluate"):
-        risk_module = importlib.import_module("tradipy.risk")
-        original = risk_module.EVALUATED_RULES
-        try:
-            risk_module.EVALUATED_RULES = (*original, "A rule nothing appends")
-            approve(signal, state, CFG)
-        finally:
-            risk_module.EVALUATED_RULES = original
+        approve(signal, state, CFG)
 
 
 @pytest.mark.spec
-def test_the_two_drawdown_blocks_are_unreachable_until_phase_6() -> None:
-    """§7 rows 7 and 8 have a predicate and **no block path**, and that is asserted, not narrated.
+def test_no_risk_block_is_unreachable_and_approve_still_cannot_reach_the_drawdowns() -> None:
+    """Two facts that must both hold, and which Phase 6 changed in opposite directions.
 
-    §7 marks them *Continuous* and *End of day*; the loop is Phase 6's. An unreachable reason code
-    is normally a defect — ``test_every_hard_filter_can_actually_reject`` and
-    ``test_every_setup_can_reject_with_setup_not_present`` exist to catch it — so the two that are
-    unreachable **on purpose** need the opposite assertion, or the next reader cannot tell a
-    deliberate gap from an accidental one. When Phase 6 wires the loop, this fails.
+    Through Phase 5 this fixture was ``test_the_two_drawdown_blocks_are_unreachable_until_phase_6``
+    and its docstring said *"when Phase 6 wires the loop, this fails."* It did, and this is what
+    it becomes.
+
+    1. :data:`~tradipy.risk.UNREACHABLE_BLOCKS` is now **empty**, because
+       :func:`tradipy.monitor.evaluate` supplies the block path §7 marks *Continuous* and *End of
+       day*. Asserted on the set rather than by deleting the name, so a member added back is a
+       claim that needs the fixture the Phase 5 version had.
+    2. :func:`tradipy.risk.approve` still cannot produce either drawdown block. §7 does not mark
+       rows 7 and 8 *Pre-order*, so a pre-order engine reporting one would be applying a rule at
+       a point §7 does not name — and the deep state below is the one that makes the difference
+       visible: both predicates fire, ``approve`` reports neither, ``monitor`` reports both.
     """
-    assert UNREACHABLE_BLOCKS == {RiskBlock.SESSION_DRAWDOWN, RiskBlock.MULTI_DAY_DRAWDOWN}
+    assert not UNREACHABLE_BLOCKS, (
+        "Phase 6 wired §7's Continuous and End-of-day points, so no RiskBlock member is "
+        "produced by nothing; a member added back here needs the fixture Phase 5's had"
+    )
 
-    # Neither is named anywhere in `src/` outside the enum that declares them and the set above.
-    for block in UNREACHABLE_BLOCKS:
-        naming = [
-            path.name
-            for path in SRC.glob("*.py")
-            if block.name in path.read_text(encoding="utf-8")
-        ]
-        assert sorted(naming) == ["rejects.py", "risk.py"], (
-            f"{block.name} is now named by {naming}; if a block path was added, PRD §7's "
-            "Continuous loop has arrived and docs/PHASE-5-DESIGN.md §1.1 needs editing"
-        )
-
-    # And no decision can carry one, at any state the predicates fire on.
     signal = _phase5_signal()
     equity = CFG["start_of_day_equity"]
     deep = RiskState(
@@ -2066,7 +2101,180 @@ def test_the_two_drawdown_blocks_are_unreachable_until_phase_6() -> None:
     )
     assert session_drawdown_breached(deep, CFG)
     assert multi_day_drawdown_breached(deep, CFG)
-    assert approve(signal, deep, CFG).reason not in UNREACHABLE_BLOCKS
+
+    drawdowns = {RiskBlock.SESSION_DRAWDOWN, RiskBlock.MULTI_DAY_DRAWDOWN}
+    assert approve(signal, deep, CFG).reason not in drawdowns
+    assert {r.block for r in approve(signal, deep, CFG).blocks} & drawdowns == set()
+
+    # And Phase 6 does reach them, at the points §7 does name.
+    assert (
+        monitor_evaluate(deep, EnforcementPoint.CONTINUOUS, CFG).reason
+        is RiskBlock.DAILY_LOSS_LIMIT
+    ), "row 2 is earlier in §7's table, so it is the reason; row 7 is on .breaches"
+    assert RiskBlock.SESSION_DRAWDOWN in {
+        r.block for r in monitor_evaluate(deep, EnforcementPoint.CONTINUOUS, CFG).breaches
+    }
+    assert (
+        monitor_evaluate(deep, EnforcementPoint.END_OF_DAY, CFG).reason
+        is RiskBlock.MULTI_DAY_DRAWDOWN
+    )
+
+
+@pytest.mark.spec
+def test_every_risk_block_can_actually_fire() -> None:
+    """No :class:`~tradipy.rejects.RiskBlock` member may be produced by nothing.
+
+    The positive counterpart of the fixture above, and the same guarantee
+    ``test_every_hard_filter_can_actually_reject`` makes about §4.2's codes: a reason code the
+    system can never emit is a rule believed to be enforced and is not, which is the fifth
+    defect class in its purest form. §7's table has thirteen rows and this asserts that every
+    one of them that is not already a :class:`~tradipy.rejects.Reject` has a path.
+
+    Derived over the **enum**, not over a list here, so a member added to ``RiskBlock`` without a
+    producer fails immediately.
+    """
+    equity = CFG["start_of_day_equity"]
+    signal = _phase5_signal()
+    base = RiskState(start_of_day_equity=equity)
+
+    def approve_reason(**kw) -> RiskBlock | Reject | None:
+        state = kw.pop("state", base)
+        return approve(signal, state, CFG, **kw).reason
+
+    full = OpenPosition(
+        signal.symbol,
+        signal.shares,
+        signal.levels.entry_price,
+        signal.levels.stop_price,
+        PositionState.OPEN_FULL,
+        "g",
+    )
+    breakeven = OpenPosition(
+        "OTHER",
+        signal.shares,
+        signal.levels.entry_price,
+        signal.levels.entry_price,
+        PositionState.T1_FILLED,
+        "g",
+    )
+    at_limit = Decimal(-1) * equity * CFG["daily_loss_pct"]
+
+    produced: dict[RiskBlock, RiskBlock | Reject | None] = {
+        RiskBlock.MAX_RISK_EXCEEDED: approve_reason(
+            state=RiskState(start_of_day_equity=equity, positions=(full,))
+        ),
+        RiskBlock.DAILY_LOSS_LIMIT: approve_reason(
+            state=RiskState(start_of_day_equity=equity, realized_pnl=at_limit)
+        ),
+        # Needs a position already at breakeven, or §7 row 1 fires first — which is H1 — *and*
+        # `max_open_positions` at 1, because the `experienced` preset's 3 leaves room. That the
+        # row is only reachable at one of the two shipped presets is itself H1.
+        RiskBlock.MAX_POSITIONS: approve(
+            signal,
+            RiskState(start_of_day_equity=equity, positions=(breakeven,)),
+            CFG.with_overrides(max_open_positions=1),
+            correlation="elsewhere",
+        ).reason,
+        RiskBlock.LOSS_STREAK_LOCKOUT: approve_reason(
+            state=RiskState(
+                start_of_day_equity=equity,
+                consecutive_losses=int(CFG["max_consecutive_losses"]),
+            )
+        ),
+        RiskBlock.BUYING_POWER: approve_reason(buying_power=Decimal(1)),
+        # Needs an account started near FINRA's floor, or §7's daily-loss row locks first — H2.
+        RiskBlock.PDT_VIOLATION: approve(
+            signal,
+            RiskState(
+                start_of_day_equity=PARAMS["start_of_day_equity"].lo,
+                realized_pnl=Decimal(-1),
+                day_trades_in_window=3,
+            ),
+            CFG,
+        ).reason,
+        RiskBlock.OUTSIDE_SESSION_WINDOW: approve(
+            replace(
+                signal,
+                levels=replace(
+                    signal.levels,
+                    trigger_minute=int(CFG["session_last_entry_minute"]) + 1,
+                ),
+            ),
+            base,
+            CFG,
+        ).reason,
+        RiskBlock.CORRELATED_EXPOSURE: approve_reason(
+            state=RiskState(start_of_day_equity=equity, positions=(breakeven,)),
+            correlation="g",
+        ),
+        RiskBlock.TRADING_HALTED: approve_reason(
+            state=RiskState(start_of_day_equity=equity, trading_halted=True)
+        ),
+        RiskBlock.DUPLICATE_ORDER: approve_reason(
+            state=RiskState(start_of_day_equity=equity, submitted_keys=frozenset({"k"})),
+            idempotency_key="k",
+        ),
+        # The two Phase 6 added, at the enforcement points §7 names for them.
+        RiskBlock.SESSION_DRAWDOWN: monitor_evaluate(
+            RiskState(
+                start_of_day_equity=equity,
+                unrealized_pnl=-equity * CFG["session_dd_pct"] - TICK_SIZE,
+                session_equity_peak=equity,
+            ),
+            EnforcementPoint.CONTINUOUS,
+            CFG,
+        )
+        .breaches[-1]
+        .block,
+        RiskBlock.MULTI_DAY_DRAWDOWN: monitor_evaluate(
+            RiskState(
+                start_of_day_equity=equity,
+                multi_day_peak_equity=equity * (Decimal(1) + CFG["multi_day_dd_pct"] * 2),
+            ),
+            EnforcementPoint.END_OF_DAY,
+            CFG,
+        ).reason,
+    }
+
+    assert set(produced) == set(RiskBlock), (
+        "a RiskBlock member has no producer here: "
+        f"{sorted(m.name for m in set(RiskBlock) - set(produced))}"
+    )
+    wrong = {m.name: got for m, got in produced.items() if got is not m}
+    assert not wrong, f"these RiskBlock members were not produced by the path claimed: {wrong}"
+
+
+@pytest.mark.spec
+def test_correlated_exposure_and_max_positions_are_not_the_same_fixture() -> None:
+    """Guard on the guard for the fixture above: two rows driven by one state must differ.
+
+    ``MAX_POSITIONS`` and ``CORRELATED_EXPOSURE`` are driven from the *same* single-position
+    state and separated only by the ``correlation`` argument, which is exactly the configuration
+    in which one of them silently becomes the other's alias. Asserted here rather than trusted.
+    """
+    equity = CFG["start_of_day_equity"]
+    signal = _phase5_signal()
+    breakeven = OpenPosition(
+        "OTHER",
+        signal.shares,
+        signal.levels.entry_price,
+        signal.levels.entry_price,
+        PositionState.T1_FILLED,
+        "g",
+    )
+    state = RiskState(start_of_day_equity=equity, positions=(breakeven,))
+    one = CFG.with_overrides(max_open_positions=1)
+    # Same state, same config: only the correlation argument differs, and the answers must too.
+    assert approve(signal, state, one, correlation="g").reason is RiskBlock.MAX_POSITIONS, (
+        "§7 row 3 is earlier in the table than row 10, so it is the reason when both fire"
+    )
+    assert approve(signal, state, CFG, correlation="g").reason is RiskBlock.CORRELATED_EXPOSURE, (
+        "at max_open_positions=3 only the correlation row can fire"
+    )
+    assert (
+        approve(signal, state, CFG, correlation="elsewhere").reason
+        is not RiskBlock.CORRELATED_EXPOSURE
+    ), "and with a different group neither fires, or the pair proves nothing"
 
 
 @pytest.mark.boundary
@@ -2108,3 +2316,405 @@ def test_every_phase_5_threshold_has_a_boundary_fixture() -> None:
     assert blocks, "no boundary-marked fixtures found — check the split, not the result"
     covered = {row for row in phase5_rows for block in blocks if row in block}
     assert covered == phase5_rows, f"no boundary fixture names: {sorted(phase5_rows - covered)}"
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 (D35) — §7's other five enforcement points, §10's daily_state, §20.8
+# ---------------------------------------------------------------------------
+_PHASE_6_ROWS = frozenset({"session_flat_all_minute", "multi_day_dd_window_sessions"})
+
+
+def _open_session(cfg: Config = CFG) -> DailyState:
+    return record_snapshot(open_session("2026-08-03"), cfg["start_of_day_equity"])
+
+
+def _a_closed_trade(cfg: Config = CFG) -> ClosedTrade:
+    signal = _phase5_signal()
+    return ClosedTrade(
+        symbol=signal.symbol,
+        setup_type=signal.setup_type,
+        entry_price=signal.levels.entry_price,
+        exit_price=signal.levels.stop_price,
+        shares=signal.shares,
+        r_per_share=signal.levels.r_per_share,
+        commission=cfg["est_round_trip_cost_per_share"] * signal.shares,
+        fees=D(0),
+        exit_reason=ExitReason.STOPPED_OUT,
+    )
+
+
+@pytest.mark.spec
+def test_section_seven_cannot_be_evaluated_without_the_section_twenty_eight_snapshot() -> None:
+    """§20.8: *"it does not fall back to a stale or computed value."* Perform the fallback.
+
+    The guarantee is that there is **no** value to fall back to, so the violation is trying to
+    reach §7's rules from a session that has not synced. Every mutation is attempted, not only
+    the bridge: a caller that can accrue a trade into a NO_TRADE session has produced a realized
+    P&L denominated in nothing.
+    """
+    opened = open_session("2026-08-03")
+    assert opened.start_of_day_equity is None
+
+    with pytest.raises(SessionNotOpenError):
+        risk_state(opened)
+    with pytest.raises(SessionNotOpenError):
+        mark_to_market(opened, D(0))
+    with pytest.raises(SessionNotOpenError):
+        record_close(opened, _a_closed_trade(), unrealized_after=D(0))
+    with pytest.raises(SessionNotOpenError):
+        daily_lock(opened, RiskBlock.DAILY_LOSS_LIMIT)
+
+    # And the state itself cannot be hand-built into the contradiction the phase encodes.
+    with pytest.raises(ValueError, match=r"§20\.8"):
+        DailyState(session_date="2026-08-03", phase=SessionPhase.TRADING)
+
+
+@pytest.mark.spec
+def test_the_start_of_day_snapshot_cannot_be_taken_twice() -> None:
+    """§20.8: *"immutable for the remainder of the session."* Perform the second snapshot."""
+    state = _open_session()
+    equity = state.start_of_day_equity
+    assert equity is not None, "_open_session() has taken §20.8's snapshot"
+    for attempt in (equity, equity * 2, D(25_000)):
+        with pytest.raises(ValueError, match="immutable"):
+            record_snapshot(state, attempt)
+
+
+@pytest.mark.spec
+def test_a_section_seven_lock_cannot_be_cleared_by_reloading_the_row() -> None:
+    """§11.1: *"lock persists across restart and cannot be cleared by relaunching."*
+
+    The violation is the relaunch: serialise a locked session, read it back, and check that the
+    lock is still there and still needs §7.2's phrase. §7.1.2's *durability* is not built — there
+    is no store — but the arithmetic that makes durability meaningful is, and this is it.
+    """
+    locked = daily_lock(_open_session(), RiskBlock.DAILY_LOSS_LIMIT)
+    reloaded = from_row(to_row(locked))
+    assert reloaded.phase is SessionPhase.LOCKED
+    assert reloaded.trading_halted
+    assert reloaded.halt_reason is RiskBlock.DAILY_LOSS_LIMIT
+
+    # And §7's pre-order engine still refuses, through the same bridge.
+    assert approve(_phase5_signal(), risk_state(reloaded), CFG).reason is RiskBlock.TRADING_HALTED
+
+    with pytest.raises(ConfirmationRequiredError):
+        clear_lock(reloaded, "", "")
+    with pytest.raises(ConfirmationRequiredError):
+        clear_lock(reloaded, "wrong", "right")
+    assert clear_lock(reloaded, "right", "right").phase is SessionPhase.TRADING
+
+
+@pytest.mark.spec
+def test_a_closed_trade_that_cannot_have_an_r_multiple_refuses_to_exist() -> None:
+    """§9.2's ``r_multiple`` divides by ``shares x R``; neither may be zero.
+
+    Returning a number here is the failure mode that matters: §18.7 is judged on the aggregate
+    of these, and one fabricated multiple is a gate result nobody can trace.
+    """
+    trade = _a_closed_trade()
+    for bad in ({"shares": 0}, {"shares": -1}, {"r_per_share": D(0)}, {"r_per_share": D(-1)}):
+        with pytest.raises(ValueError):
+            replace(trade, **bad)
+    for bad in ({"entry_price": D(0)}, {"exit_price": D(0)}, {"commission": D(-1)}):
+        with pytest.raises(ValueError):
+            replace(trade, **bad)
+
+    # And the multiple is on NET, which is the half a stored field could get wrong once.
+    assert trade.r_multiple == trade.net_pnl / (trade.r_per_share * trade.shares)
+    assert trade.r_multiple != trade.gross_pnl / (trade.r_per_share * trade.shares)
+
+
+@pytest.mark.spec
+def test_the_daily_state_bridge_cannot_silently_drop_a_field() -> None:
+    """Every :class:`~tradipy.risk.RiskState` field must be supplied by the bridge or declared.
+
+    :class:`~tradipy.daily.DailyState` and ``RiskState`` share eight fields, which is the exact
+    configuration the v1.2 defect class arises in. The guarantee is that
+    :func:`tradipy.daily.risk_state` is the **only** thing that maps one to the other; the
+    violation is a field on either side that the bridge does not carry.
+
+    Derived from the two dataclasses **and from
+    :data:`tradipy.daily.BRIDGE_EXCEPTIONS`**, so a field added to ``RiskState`` in a later phase
+    fails here rather than defaulting quietly into every §7 rule. The exception list is read from
+    the module rather than restated here: an earlier draft of this fixture carried its own copy,
+    which disagreed with the constant it was shadowing — the v1.2 defect class in the test written
+    to prevent it.
+    """
+    daily_names, risk_names = bridge_fields()
+    carried = risk_names - BRIDGE_EXCEPTIONS
+
+    state = record_close(_open_session(), _a_closed_trade(), unrealized_after=D("-12.34"))
+    equity = state.start_of_day_equity
+    assert equity is not None, "the session is open, so §20.8's snapshot is set"
+    state = record_multi_day_peak(state, [equity * 2], CFG)
+    built = risk_state(state)
+    for name in sorted(carried):
+        # `trading_halted` is a *property* of DailyState rather than a field, which is why the
+        # membership check below is against `hasattr` and not against `daily_names`.
+        assert hasattr(state, name), f"the bridge cannot supply RiskState.{name}"
+        assert getattr(built, name) == getattr(state, name), name
+
+    # And the exception list is exactly the fields that are *not* same-named copies: two are
+    # arguments, and `halt_reason` changes type because §10's column is a VARCHAR.
+    assert BRIDGE_EXCEPTIONS - risk_names == frozenset(), "an exception names no RiskState field"
+    assert "halt_reason" in daily_names
+    locked = daily_lock(state, RiskBlock.SESSION_DRAWDOWN)
+    assert risk_state(locked).halt_reason == RiskBlock.SESSION_DRAWDOWN.value
+    assert locked.halt_reason is RiskBlock.SESSION_DRAWDOWN
+
+
+@pytest.mark.spec
+def test_the_unpersisted_fields_set_is_derived_and_not_a_list_somebody_typed() -> None:
+    """Finding 1, pinned in both directions: §10 has no column for exactly four §7 inputs.
+
+    A field quietly *gaining* a column is as much a drift as one quietly losing it — the first
+    would mean §10's schema changed and this document did not, and the second is the finding.
+    """
+    declared = {f.name for f in fields(DailyState)}
+    written = set(DAILY_STATE_COLUMNS.values())
+    assert declared - written == UNPERSISTED_FIELDS
+    assert written <= declared, "a column maps to a field DailyState does not have"
+    assert "updated_at" in CLOCK_COLUMNS and "updated_at" not in DAILY_STATE_COLUMNS
+
+
+@pytest.mark.spec
+def test_the_flatten_directive_cannot_invent_a_state_section_twenty_twelve_omits() -> None:
+    """§7's *"Flatten all"* against §20.12 — review round 14's H3, as an enforcement fixture.
+
+    Three violations performed:
+
+    1. A directive whose ``to_state`` is anything but ``CLOSED`` or ``None``.
+    2. Committing an unrepresentable directive — it must raise §20.12's own refusal, not a
+       different error and certainly not succeed.
+    3. A flatten that skips a position, which §21.6 makes a Sev-1 arriving as an omission.
+    """
+    signal = _phase5_signal()
+    positions = tuple(
+        OpenPosition(
+            f"X-{state.value}",
+            signal.shares,
+            signal.levels.entry_price,
+            signal.levels.stop_price,
+            state,
+            "g",
+        )
+        for state in sorted(OPEN_STATES, key=list(PositionState).index)
+    )
+    directives = flatten_all(positions, ExitReason.KILL_SWITCH)
+
+    assert len(directives) == len(positions), "a flatten may not silently skip a position"
+    for directive in directives:
+        assert directive.to_state in (None, PositionState.CLOSED)
+        if directive.representable:
+            assert directive.commit() is PositionState.CLOSED
+        else:
+            with pytest.raises(IllegalTransitionError):
+                directive.commit()
+
+    blocked = unrepresentable(directives)
+    assert blocked, "if §20.12 gained the missing edges, PHASE-6-DESIGN §6 finding 2 is stale"
+    assert {d.from_state for d in blocked} == unrepresentable_flatten_states(ExitReason.KILL_SWITCH)
+    # And the set is derived from `reachable_exit_reasons`, not re-walked here: flipping the
+    # question for a reason §20.12 *can* express from more states must change the answer.
+    assert unrepresentable_flatten_states(ExitReason.STOPPED_OUT) < unrepresentable_flatten_states(
+        ExitReason.KILL_SWITCH
+    )
+
+
+@pytest.mark.spec
+def test_monitor_evaluates_every_rule_for_its_point_and_cannot_silently_drop_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§9.2's *"every rule checked, for audit"*, at §7's non-pre-order points.
+
+    Performs the violation, the same way the ``approve`` fixture does. The version of this
+    guarantee that asserts a *length* passes with a rule swapped for another, which is a shape
+    the length check cannot see at all — so the mutation below **mislabels** one row rather than
+    removing it: §7 asks that every row be checked, and a trace with row 11's name against row
+    2's arithmetic is two rules missing, not one.
+    """
+    state = risk_state(_open_session())
+    for point, rows in RULES_AT.items():
+        expected = (
+            rows if point is EnforcementPoint.ANY else (*rows, *RULES_AT[EnforcementPoint.ANY])
+        )
+        decision = monitor_evaluate(state, point, CFG)
+        assert tuple(r.rule for r in decision.rules_evaluated) == tuple(
+            _ROW_LABELS[row] for row in expected
+        ), point
+
+    original = monitor_module._evaluate_row
+
+    def mislabelling(
+        row: RiskBlock, state_: RiskState, cfg: Config, *, kill_switch: bool
+    ) -> RuleOutcome:
+        swapped = RiskBlock.DAILY_LOSS_LIMIT if row is RiskBlock.TRADING_HALTED else row
+        return original(swapped, state_, cfg, kill_switch=kill_switch)
+
+    monkeypatch.setattr(monitor_module, "_evaluate_row", mislabelling)
+    with pytest.raises(AssertionError, match="did not apply"):
+        monitor_evaluate(state, EnforcementPoint.CONTINUOUS, CFG)
+    monkeypatch.undo()
+
+    # And §7's Pre-order rows stay `approve`'s: asking for them here must refuse, not restate.
+    with pytest.raises(ValueError, match="Pre-order"):
+        monitor_evaluate(state, EnforcementPoint.PRE_ORDER, CFG)
+
+
+@pytest.mark.spec
+def test_a_weaker_action_cannot_win_when_a_stronger_rule_breaches_at_the_same_point() -> None:
+    """§7's Violation Action must be the strictest breach, never the first one.
+
+    The violation is the under-enforcement: a decision that reports *"lock new entries"* while a
+    row demanding *"flatten all"* is also breaching leaves the position open. Both the reason and
+    the action are asserted, and the fixture checks they actually differ so it cannot pass by
+    coincidence.
+    """
+    equity = CFG["start_of_day_equity"]
+    state = RiskState(
+        start_of_day_equity=equity,
+        consecutive_losses=int(CFG["max_consecutive_losses"]),
+    )
+    decision = monitor_evaluate(state, EnforcementPoint.POST_TRADE_CLOSE, CFG, kill_switch=True)
+    assert decision.reason is RiskBlock.LOSS_STREAK_LOCKOUT
+    assert decision.action is HaltAction.FLATTEN_AND_HALT
+    assert ACTION_FOR[decision.reason] is HaltAction.LOCK_NEW_ENTRIES, (
+        "this fixture is vacuous unless the first-breach action and the strictest one differ"
+    )
+    assert decision.flatten and decision.locks
+
+
+@pytest.mark.spec
+def test_row_eight_locks_tomorrow_and_must_not_lock_today() -> None:
+    """§7 row 8's action is *"Lock account **next** day"*, and locking today would be wrong.
+
+    The violation is the over-enforcement, which is the direction the other four actions make
+    tempting: every other locking action binds the session it fires in.
+    """
+    equity = CFG["start_of_day_equity"]
+    over = D(1) + D(2) * CFG["multi_day_dd_pct"]
+    state = record_multi_day_peak(_open_session(), [equity * over], CFG)
+    decision = monitor_evaluate(risk_state(state), EnforcementPoint.END_OF_DAY, CFG)
+    assert decision.action is HaltAction.LOCK_ACCOUNT_NEXT_DAY
+
+    carried = monitor_apply(state, decision)
+    assert carried.phase is SessionPhase.TRADING, "§7 row 8 must not lock the session it fires in"
+    assert carried.locks_next_session
+    assert approve(_phase5_signal(), risk_state(carried), CFG).reason is not (
+        RiskBlock.TRADING_HALTED
+    )
+
+    tomorrow = record_snapshot(open_session("2026-08-04", carried_lock=decision.reason), equity)
+    assert tomorrow.phase is SessionPhase.LOCKED
+
+
+@pytest.mark.spec
+@pytest.mark.parametrize("module", ["daily.py", "monitor.py"])
+def test_the_phase_6_layer_reads_nothing_and_imports_nothing_that_could(module: str) -> None:
+    """D30, extended to Phase 6's two modules — an allowlist, not a denylist.
+
+    The layer that persists §10's row is the one most likely to want a database, so ``sqlite3``
+    being absent from the list below is the load-bearing part. Note what else is absent and
+    would be the first reach for a *"Continuous (1 sec)"* loop: ``time``, ``datetime``,
+    ``asyncio``, ``threading``, ``sched``.
+    """
+    tree = ast.parse((SRC / module).read_text(encoding="utf-8"))
+    permitted = {
+        "__future__",
+        "collections.abc",
+        "dataclasses",
+        "decimal",
+        "enum",
+        "types",
+        "typing",
+    }
+    roots: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            roots.add(node.module)
+        elif isinstance(node, ast.Import):
+            roots.update(a.name for a in node.names)
+    outside = {r for r in roots if not r.startswith("tradipy")} - permitted
+    assert not outside, f"{module} imports outside its allowlist: {sorted(outside)}"
+
+    reads = [
+        n.func.id
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "open"
+    ]
+    assert not reads, f"{module} opens a file; §7's state is supplied, not sensed (D30)"
+
+
+@pytest.mark.spec
+def test_the_guarantee_phase_6_cannot_make_is_still_absent() -> None:
+    """docs/PHASE-6-DESIGN.md §1.1 states §7.1.2's **durability** as unclosed. Pin the absence.
+
+    The arithmetic half is built — :func:`tradipy.daily.to_row` and
+    :func:`tradipy.daily.from_row` — and the store half is refused. A guarantee documented as
+    unclosed and then quietly closed is as much a drift as the reverse, which is the sixth defect
+    class from the other side. If this starts failing, the design document is what needs editing.
+
+    **Detected by AST, not by substring.** The Phase 5 version of this fixture searched the
+    source text for ``"open("`` and ``"Path("``, which reports a docstring *describing* a
+    guarantee as a violation of it — and this module's docstrings describe exactly that. A
+    ``datetime`` named in prose is not a clock; a ``datetime`` imported is. The import half is
+    :func:`test_the_phase_6_layer_reads_nothing_and_imports_nothing_that_could` above; this is
+    the call half.
+    """
+    forbidden_calls = {"open", "connect", "dump", "dumps", "load", "loads", "write_text"}
+    for name in ("daily.py", "monitor.py"):
+        tree = ast.parse((SRC / name).read_text(encoding="utf-8"))
+        called = {
+            node.func.id if isinstance(node.func, ast.Name) else node.func.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name | ast.Attribute)
+        }
+        offending = called & forbidden_calls
+        assert not offending, f"{name} calls {sorted(offending)}; §7.1.2 has no store here (D30)"
+
+    # `to_row` produces a value; nothing writes it, and there is no loader that finds a row.
+    assert isinstance(to_row(_open_session()), dict)
+    assert not [n for n in dir(DailyState) if "load" in n or "save" in n]
+
+
+@pytest.mark.boundary
+def test_every_phase_6_threshold_has_a_boundary_fixture() -> None:
+    """Guard on the guard: PHASE-6-DESIGN §8's boundary claim must be *derived*.
+
+    Same argument as the Phase 5 version — the coverage set is computed from the source rather
+    than counted by a reader, because PHASE-4-DESIGN's *"six of nine"* was counted by a reader.
+
+    Scope, stated because an unqualified claim about a checker is what F8 was about: this asserts
+    each name appears inside a ``@pytest.mark.boundary`` block. It cannot verify the fixture
+    exercises the *limit* rather than mentioning the parameter; that is a review judgement, and
+    PHASE-6-DESIGN §8 is where the enumeration is recorded.
+    """
+    assert set(PARAMS) >= _PHASE_6_ROWS, "a name here is not registered — the list is stale"
+    suite = Path(__file__).resolve().parent / "test_phase6.py"
+    blocks = [
+        block
+        for block in suite.read_text(encoding="utf-8").split("\n@pytest.mark.")
+        if block.startswith("boundary")
+    ]
+    assert blocks, "no boundary-marked fixtures found — check the split, not the result"
+    covered = {row for row in _PHASE_6_ROWS for block in blocks if row in block}
+    assert covered == _PHASE_6_ROWS, f"no boundary fixture names: {sorted(_PHASE_6_ROWS - covered)}"
+
+
+@pytest.mark.spec
+def test_the_phase_6_rows_are_the_ones_the_registry_gained() -> None:
+    """Guard on the guard for the list above: it must be the actual Phase 6 additions.
+
+    Derived from the registry's own ``source`` citations rather than trusted, so a row added to
+    Phase 6's block in ``params.py`` without a boundary fixture fails rather than being invisible
+    to the check written to catch exactly that.
+    """
+    cited = {
+        name
+        for name, p in PARAMS.items()
+        if "§21.4" in p.source or "multi-day drawdown row" in p.source
+    }
+    assert cited == _PHASE_6_ROWS, (
+        f"registry rows citing Phase 6's sections: {sorted(cited)}, list says "
+        f"{sorted(_PHASE_6_ROWS)}"
+    )

@@ -7,7 +7,7 @@ together. `PRD.md §20` (Computation Semantics) is normative and governs on any 
 
 ## Module structure
 
-Fourteen library modules plus a CLI entry point, with a strict one-way dependency graph:
+Sixteen library modules plus a CLI entry point, with a strict one-way dependency graph:
 
 | Module | Imports (first-party) |
 |---|---|
@@ -22,8 +22,10 @@ Fourteen library modules plus a CLI entry point, with a strict one-way dependenc
 | `positions` | `params`, `rejects`, `rounding` |
 | `risk` | `gates`, `params`, `positions`, `rejects`, `rounding`, `setups` |
 | `orders` | `params`, `positions`, `rounding`, `setups` |
-| `poc` | all of the above |
-| `__main__` | `poc`, `orders`, `params`, `positions`, `quotes`, `risk`, `rounding`, `scanner`, `score`, `setups` |
+| `daily` | `params`, `rejects`, `risk`, `setups` |
+| `monitor` | `daily`, `params`, `positions`, `rejects`, `rounding`, `risk` |
+| `poc` | everything up to and including `setups` — **not** the five modules Phases 5 and 6 added |
+| `__main__` | `daily`, `monitor`, `orders`, `params`, `poc`, `positions`, `quotes`, `rejects`, `risk`, `rounding`, `scanner`, `score`, `setups` |
 
 A table rather than a drawing, deliberately: an ASCII bus diagram was tried here for Phase 4's
 two new rows and, on inspection, implied that `quotes` does not depend on `rejects` — its branch
@@ -47,8 +49,18 @@ criterion 2 arrives as a caller-supplied predicate.
 The ordering is deliberate: rounding is the most primitive concept, thresholds are defined in
 terms of it, and the gates are defined in terms of thresholds. `scanner` sits on top of the
 library layer because §4.3 ranks with §20.10 and §4.2's spread row is §3.1.3's scan-time cap
-— it reuses both rather than restating either. `poc` sits above all of them and only
+— it reuses both rather than restating either. `poc` sits above the first ten and only
 `__main__` depends on `poc` — nothing in the library does.
+
+`daily` and `monitor` are **D35**'s, and their two edges are worth naming because the obvious
+alternative is wrong in each case. `daily` imports `risk` and not the reverse: §7's rules are
+evaluated against a `RiskState` and `daily` builds one, so inverting it would make the module
+that must not sense anything depend on the module that models a session's history. And `monitor`
+imports `risk` in order to **call** `daily_loss_breached`, `session_drawdown_breached` and
+`multi_day_drawdown_breached` rather than restate them — those predicates were written in Phase 5
+with a note saying a Phase 6 loop would need them, and a second implementation of any of the
+three would be the v1.2 defect class inside the module written to close the gap they were left
+for. `monitor` also reuses `risk.RuleOutcome`: an audit row is an audit row.
 
 `Reject` lives in its own module rather than in `gates` because three layers raise it —
 `gates` for the pre-entry gates, `quotes` for §20.14 validity, and `scanner` for §4.2's hard
@@ -63,7 +75,7 @@ invites: a reader sizing the scanner from it builds all fourteen as rejection pa
 candidates away. Two unrelated types make that a compile-time error instead. `ScanResult.reject`
 is `Reject | None` and will not accept a flag.
 
-`tradipy/__init__.py` imports the thirteen library modules so the names it advertises resolve as
+`tradipy/__init__.py` imports the fifteen library modules so the names it advertises resolve as
 attributes. It deliberately does **not** import `poc`: the composition layer is not part of
 what `import tradipy` means, and `import tradipy.poc` is the honest way to reach it.
 
@@ -198,6 +210,16 @@ tradipy is intentionally *not*:
 
 - a strategy or execution engine (Phase 2+) — `poc.evaluate` gates a candidate, it does not
   find one;
+- **an actor.** The package has two boundaries and neither is crossed: `orders.OrderDraft` is
+  the last representation before §6.2's `Submit` arrow, and `monitor.FlattenDirective` is the
+  last one before §7's *"Flatten all"* reaches a broker. Both are computed and neither is sent
+  (D30). There is likewise no loop — §7's *"Continuous (1 sec)"* names a cadence, and a cadence
+  is a clock, which §21.1 forbids in this layer;
+- **a store.** §7.1.2 requires the non-bypassable limits to survive a restart and
+  `daily.to_row` / `daily.from_row` supply only the *arithmetic* of that: they map §10's
+  `daily_state` columns to and from a plain `dict`, and nothing writes one. The gap is stated
+  rather than implied, and `daily.UNPERSISTED_FIELDS` names the four §7 inputs §10 has no column
+  for;
 - a service. `python -m tradipy` exists so the rules can be exercised by hand; the package is
   an importable library and the CLI is a thin presentation layer over it;
 - configuration-driven at runtime (no config files, no environment variables in the runtime

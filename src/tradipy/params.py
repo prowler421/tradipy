@@ -378,6 +378,27 @@ _REGISTRY: list[Param] = [
        polarity=Polarity.MAXIMUM),
     _p("partial_fill_spread_widening_multiple", "2.0", "1.0", "10.0", "x entry spread",
        "PRD §6.4 (bounds: code)", polarity=Polarity.MAXIMUM),
+
+    # --- §7 continuous / end-of-day enforcement and §10's daily_state (D35) ---
+    # Two rows, both `(bounds: code)`: §7's multi-day row states "Rolling 5-day DD" with no
+    # Bounds column and §21.4 states the flat-all cutoff in prose.
+    #
+    # `session_flat_all_minute` is deliberately a **second** row rather than a reuse of
+    # `session_last_entry_minute`, which carries the same default. They are two rules about two
+    # different actions — §7's row rejects an *entry* outside the window, §21.4's cutoff closes
+    # what is already *open* — and they are equal only on a regular session. §21.4 defines the
+    # cutoff as "session_close - 5 min, not a hard-coded time", so on a 13:00 half-day it is
+    # minute 205 while §7's prose still says 15:55. Reading them as one threshold would bake that
+    # coincidence into the registry; `validate_couplings` enforces the part that *is* invariant.
+    _p("session_flat_all_minute", "385", "1", "389", "minutes from open",
+       "PRD §7 / §21.4 flat-all cutoff / §20.1 (bounds: code)", polarity=Polarity.MAXIMUM),
+    # No polarity: a count that is a *window* has no direction to weaken by rounding, and a count
+    # that is a *constraint* does. Same split as `rvol_lookback_days` (none) against
+    # `max_open_positions` (MAXIMUM). Distinct from `risk.PDT_WINDOW_BUSINESS_DAYS`, which shares
+    # the value 5 and is FINRA's rather than §2's — a regulation has no legal range, so it is a
+    # module constant and this is a row.
+    _p("multi_day_dd_window_sessions", "5", "2", "60", "sessions",
+       "PRD §7 multi-day drawdown row (bounds: code)"),
 ]
 # fmt: on
 
@@ -731,4 +752,20 @@ def validate_couplings(cfg: Config) -> None:
             f"t1_scale_out_pct + t2_scale_out_pct = {scale_out} >= 1, which leaves PRD §3.1.1's "
             "T3 tranche empty and removes the 9 EMA trail (§21.2) it is protected by. "
             "The ladder is 50/25/25: the third leg is the remainder, not a third parameter."
+        )
+
+    # PRD §7 / §21.4 / D35: the flat-all cutoff may not precede the last entry minute. §7's
+    # trading-hours row admits an entry at any minute up to `session_last_entry_minute`, and
+    # §21.4 requires everything flat by `session_flat_all_minute`; if the second is the smaller,
+    # the configuration admits a position opened after the session is required to be flat, while
+    # both parameters stay inside their own bounds and per-parameter validation passes. Same
+    # shape as the ladder sum above, and like it — and unlike A25 — the shipped defaults satisfy
+    # it, at equality (385 == 385), which is the boundary the fixture drives.
+    last_entry = cfg["session_last_entry_minute"]
+    flat_all = cfg["session_flat_all_minute"]
+    if flat_all < last_entry:
+        raise CouplingError(
+            f"session_flat_all_minute={flat_all} is before session_last_entry_minute="
+            f"{last_entry}: PRD §7 would admit an entry after §21.4 requires the session flat. "
+            "These are two rules about two different actions, not one threshold."
         )

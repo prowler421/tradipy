@@ -27,9 +27,10 @@ at the first block.
 * **Persistence.** §7.1.2 requires the non-bypassable limits to survive a restart. They do not,
   and docs/PHASE-5-DESIGN.md §1.1 states that rather than implying otherwise.
 * **§7's continuous loop.** The daily-loss, session-drawdown and multi-day-drawdown *predicates*
-  are here; the 1-second loop that calls them and sets ``trading_halted`` is Phase 6. Same
-  treatment §3's post-entry rules got in Phase 4 — rules as predicates, without the state they
-  would be evaluated in.
+  are here; **Phase 6's** :func:`tradipy.monitor.evaluate` calls them and produces §7's Violation
+  Action, and :func:`tradipy.daily.record_close` produces the state they read. What is still
+  absent is the *cadence*: §7 says *"Continuous (1 sec)"* and a timer is a clock, so the
+  scheduler stays outside the package. G2 narrows a second time and does not close.
 * **Trimming.** §9.2's ``approved_shares`` says it *"may be < TradeSignal.shares after caps"*;
   §7's Violation Action column says *"Reject order"* for every size-related breach. §7 governs.
   Raised in docs/CHANGELOG.md.
@@ -236,14 +237,20 @@ EVALUATED_RULES: tuple[str, ...] = (
     "Min R:R (§7 / §3.1.2, decided at signal)",
 )
 
-#: §7 rows this module has a *predicate* for and **no block path**. Rows 7 and 8 are marked
-#: *Continuous* and *End of day*, so the loop that would reach them is Phase 6's — and until it
-#: exists these two members are produced by nothing. Enumerated here so the unreachability is a
-#: fact the tests can assert rather than a sentence in a docstring; see
-#: ``test_the_two_drawdown_blocks_are_unreachable_until_phase_6``.
-UNREACHABLE_BLOCKS: frozenset[RiskBlock] = frozenset(
-    {RiskBlock.SESSION_DRAWDOWN, RiskBlock.MULTI_DAY_DRAWDOWN}
-)
+#: :class:`~tradipy.rejects.RiskBlock` members no code path in the package can produce.
+#:
+#: **Empty, as of Phase 6 (D35), and the emptiness is asserted rather than assumed.** Through
+#: Phase 5 this held ``SESSION_DRAWDOWN`` and ``MULTI_DAY_DRAWDOWN``: §7 marks rows 7 and 8
+#: *Continuous* and *End of day*, this module has their predicates, and nothing called them.
+#: :func:`tradipy.monitor.evaluate` is that caller, so both now have a block path and every
+#: member of the enum is reachable from somewhere —
+#: ``test_every_risk_block_can_actually_fire`` drives each one.
+#:
+#: The name is kept and the set emptied rather than deleted. An unreachable reason code is
+#: normally a defect, so the set has to stay assertable in both directions: a member added here
+#: is a claim that needs the fixture Phase 5's version had, and a member reachable while listed
+#: here fails. Deleting it would remove the only place that distinction is written down.
+UNREACHABLE_BLOCKS: frozenset[RiskBlock] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -366,9 +373,11 @@ def session_drawdown_breached(state: RiskState, cfg: Config) -> bool:
     drawdown accrues.
 
     §7's enforcement point is *Continuous* and its action is *"Flatten all; lock account"* —
-    neither of which is Phase 5's. **Nothing in this module calls this function**; a Phase 6 loop
-    would, and would set :attr:`RiskState.trading_halted`, which :func:`approve` does read. Stated
-    plainly because a predicate with no caller is the fifth defect class if it goes unrecorded.
+    neither of which is Phase 5's. **Nothing in this module calls this function**;
+    :func:`tradipy.monitor.evaluate` does, at :attr:`~tradipy.monitor.EnforcementPoint.CONTINUOUS`,
+    and :func:`tradipy.monitor.apply` sets the lock that :func:`approve` then reads as
+    :attr:`RiskState.trading_halted`. Stated plainly because a predicate with no caller is the
+    fifth defect class if it goes unrecorded, and because this one had none for a whole phase.
     """
     peak = state.session_equity_peak
     assert peak is not None  # set in __post_init__ when not supplied
@@ -386,7 +395,10 @@ def multi_day_drawdown_breached(state: RiskState, cfg: Config) -> bool:
     does not exist; recorded in docs/CHANGELOG.md alongside §7 row 2's three enforcement points.
 
     Enforcement point *End of day*, action *"Lock account next day"*. Same caveat as
-    :func:`session_drawdown_breached`: no caller here, and the loop is Phase 6's.
+    :func:`session_drawdown_breached`: no caller here, and the caller is
+    :func:`tradipy.monitor.evaluate` at :attr:`~tradipy.monitor.EnforcementPoint.END_OF_DAY`.
+    The *"next day"* half has no §10 column, which
+    :data:`tradipy.daily.UNPERSISTED_FIELDS` records.
     """
     peak = state.multi_day_peak_equity
     if peak is None:
@@ -451,9 +463,7 @@ def approve(
     """
     rules: list[RuleOutcome] = []
     risk_before = total_open_risk(state)
-    incoming = position_risk(
-        signal.shares, signal.levels.stop_price, signal.levels.entry_price
-    )
+    incoming = position_risk(signal.shares, signal.levels.stop_price, signal.levels.entry_price)
     risk_after = risk_before + incoming
 
     if intent == OrderIntent.REDUCE:
@@ -561,9 +571,7 @@ def approve(
     # figure would let a morning loss below $25,000 pass a check whose purpose is to prevent an
     # illegal trade. §7 states neither basis; raised in docs/CHANGELOG.md.
     equity_now = live_equity(state)
-    pdt_ok = not (
-        state.day_trades_in_window >= PDT_MAX_DAY_TRADES and equity_now < PDT_MIN_EQUITY
-    )
+    pdt_ok = not (state.day_trades_in_window >= PDT_MAX_DAY_TRADES and equity_now < PDT_MIN_EQUITY)
     rules.append(
         RuleOutcome(
             "PDT check (§7 row 6)",
@@ -621,8 +629,7 @@ def approve(
             RuleOutcome(
                 "Duplicate order (§6.3 check 8 / §6.7)",
                 fresh,
-                f"key {idempotency_key[:12]}... "
-                + ("not seen" if fresh else "already submitted"),
+                f"key {idempotency_key[:12]}... " + ("not seen" if fresh else "already submitted"),
                 None if fresh else RiskBlock.DUPLICATE_ORDER,
             )
         )
@@ -756,9 +763,7 @@ def approve_all(
                 session_equity_peak=current.session_equity_peak,
                 multi_day_peak_equity=current.multi_day_peak_equity,
                 submitted_keys=(
-                    current.submitted_keys | {key}
-                    if key is not None
-                    else current.submitted_keys
+                    current.submitted_keys | {key} if key is not None else current.submitted_keys
                 ),
             )
     return tuple(decisions)

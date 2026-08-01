@@ -9,6 +9,147 @@ All notable changes to the tradipy **package** are documented here. This file fo
 
 ## [Unreleased]
 
+### Added — Phase 6, the full risk engine (PLAN D35)
+
+**§7's table has thirteen rows and its Enforcement Point column names six distinct points;
+Phase 5 implemented one of the six.** `risk.approve` is the *Pre-order* column; *Continuous*,
+*post-fill*, *Post-trade close*, *End of day* and *Any* had no code at all, which is why `risk.py`
+shipped two predicates that nothing called — `session_drawdown_breached` and
+`multi_day_drawdown_breached`. Phase 6 is the caller, and it is also the first thing in the
+package to read §7's **Violation Action** column. `docs/PHASE-6-DESIGN.md` is the record.
+
+**What is refused, not deferred:** §7's 1-second timer (a cadence is a clock, §21.1), §7.2's
+`$XDG_STATE_HOME/tradipy/kill` sentinel (a file, D30), §10's store, and the flatten itself
+(§6.2's fourth arrow, refused again).
+
+- **`src/tradipy/daily.py`** — PRD §10's `daily_state` as a frozen value with pure transitions,
+  §20.8's snapshot gate, §9.2's `ClosedTrade`, and §7 row 4's *Post-trade close* accrual. The
+  first code in the package to **compute** `realized_pnl`, `consecutive_losses`,
+  `day_trades_in_window` and the session peak rather than accept them as arguments.
+  - `SessionPhase.NO_TRADE` carries `start_of_day_equity = None` and `risk_state()` raises
+    `SessionNotOpenError`. §20.8's *"it does not fall back to a stale or computed value"* is only
+    enforceable if the fallback does not exist; a placeholder of zero satisfies the type and
+    gives every §7 threshold a denominator of zero.
+  - `ClosedTrade.gross_pnl` / `net_pnl` / `r_multiple` are **properties**. §9.2 computes the
+    multiple on net — the figure §18.7 turns on — and a stored field can be computed once,
+    wrongly, and agree with itself forever. Zero shares or zero R raise.
+  - `to_row()` / `from_row()` map §10's columns to a plain `dict`. That is §7.1.2's *arithmetic*,
+    not its durability: nothing writes the row, and `tests/test_enforcement.py` pins the absence.
+    `DAILY_STATE_COLUMNS` is a hand transcription of §10's table and nothing compares it back to
+    the PRD, which `docs/PHASE-6-DESIGN.md` §6 states rather than leaves to be discovered.
+  - **No fifth enum.** A lock's reason is the `RiskBlock` for the §7 row that locked the account.
+- **`src/tradipy/monitor.py`** — §7's five non-pre-order enforcement points and its Violation
+  Action column, as `RULES_AT` and `ACTION_FOR`. Row 11's *"Any"* is unioned into every point by
+  derivation. `evaluate()` asserts its own output against `RULES_AT`, the way `approve` asserts
+  against `EVALUATED_RULES`, and passing `EnforcementPoint.PRE_ORDER` **raises** — those rows are
+  `risk`'s, and a second implementation of §7's table is the v1.2 defect class.
+  - The **reason** is §7's table order and the **action** is the strictest breach. Those are two
+    questions and one answer under-enforces: row 4 locks entries and row 2 flattens, and
+    reporting the first alone leaves the position open.
+  - `flatten_all()` emits one directive per open position and marks the four §20.12 cannot
+    express — every open state but `TRAILING`, which is the only one with an edge into `CLOSED` —
+    deriving the set from `positions.reachable_exit_reasons` rather than re-walking the table.
+  - Reuses `risk`'s three drawdown predicates and `risk.RuleOutcome` rather than restating
+    either.
+- **`python -m tradipy monitor`** — one session end to end through all five points, every figure
+  derived from §3.2's own bar series and the registry.
+- **Two registry rows**, taking it from 84 to 86, both `(bounds: code)`:
+  `session_flat_all_minute` (§21.4's flat-all cutoff, MAXIMUM) and
+  `multi_day_dd_window_sessions` (§7 row 8's window, no polarity — it is a window, not a
+  constraint). One new coupling: the flatten may not precede the last entry minute. The frozen
+  baseline is **unchanged** — neither default produces a new search key for either lint.
+- **`risk.UNREACHABLE_BLOCKS` is now empty**, and `test_every_risk_block_can_actually_fire`
+  drives each of the twelve members from some path. The Phase 5 fixture whose docstring said
+  *"when Phase 6 wires the loop, this fails"* did, and has been replaced by the pair that asserts
+  both halves: the set is empty, **and** `approve` still cannot reach the two drawdown rows,
+  because §7 does not mark them *Pre-order*.
+- **`tests/test_phase6.py`** (29 functions) and a §7/§10/§20.8/§20.12-flatten guarantee block in
+  `tests/test_enforcement.py`. `docs/PHASE-6-DESIGN.md` is added to `test_documentation.py`'s
+  checked set.
+
+### Changed — Phase 6
+
+- `tradipy.__all__` gains `daily` and `monitor` (13 → 15); the package has sixteen library
+  modules.
+- `monitor.ACTION_FOR` is **total over `RiskBlock`**, including the seven rows whose action is
+  `REJECT_ORDER` and therefore `risk.approve`'s. Total on purpose: it is what lets the coverage
+  guard derive its claim from the enum, so a §7 row added to `RiskBlock` and given no action
+  fails. An earlier draft held only the five rows this module owns and the design document
+  claimed a derivation the test could not make.
+- `daily.BRIDGE_EXCEPTIONS` and `daily.bridge_fields()` are public and **read by the enforcement
+  suite**. An earlier draft had them private with the test carrying its own copy of the exception
+  list, and the two copies disagreed — the v1.2 defect class inside the constant written to
+  prevent it.
+- `risk.py`, `rejects.py` and `CLAUDE.md` updated where they described the drawdown rows as
+  having no caller. **Fixed inline** per convention 8: `CLAUDE.md`'s convention 2 read *"`gates`,
+  `quotes`, `scanner` and `setups` are the four"* rounding consumers for the whole of Phase 5,
+  which added two more.
+- The Phase 5 absence fixture searched the source **text** for `"open("` and `"Path("`; Phase 6's
+  equivalent uses the AST, because this layer's docstrings describe the guarantee they assert and
+  a substring check reports the description as a violation.
+
+### Fixed — review round 15's lint findings (N1), and nothing else
+
+[REVIEW-2026-08-01-round15.md](docs/reviews/REVIEW-2026-08-01-round15.md) is the first round in
+three phases with a working toolchain. It ran `make check` on both sides of this changeset and
+found the gate **red on both** — 5 ruff errors, 7 unformatted files and 2 basedpyright errors
+predate Phase 6, and Phase 6 added **10 / 2 / 8** on that first run. All of them are convention
+8's category and all are fixed here.
+
+**Reaching green took three full `make check` runs, and each found things the last could not.**
+`make` stops at the first failing target, so `ruff check` masked `ruff format`, which masked
+`basedpyright`: the first run's eighteen became twenty-two. A single run establishes a lower
+bound on what is wrong, never the total — which applies to the *before* column as well.
+
+- **BREAKING (unreleased):** `daily.SessionNotOpen` → **`SessionNotOpenError`** and
+  `daily.ConfirmationRequired` → **`ConfirmationRequiredError`** (ruff `N818`). Both were
+  introduced in this same unreleased section, so nothing outside it can depend on the old names;
+  `README.md` is updated too, because the `monitor` CLI prints `type(exc).__name__`.
+- `RUF043`: `pytest.raises(match="§20.8")` → `match=r"§20\.8"` in three fixtures. Cosmetic — `.`
+  matches itself — but not what was meant.
+- `F401`: an unused `MappingProxyType` import in `tests/test_enforcement.py`, left behind when
+  the mutation it served was replaced during the second fact-check pass.
+- `I001` import sorting in `__main__.py` and `monitor.py`, and `ruff format` on `monitor.py` and
+  `tests/test_phase6.py` — neither had ever been run through the formatter.
+- Eight `basedpyright` errors, all one shape: arithmetic on `DailyState`'s `Decimal | None`
+  fields in fixtures. Fixed with narrowing `assert x is not None`, which is not appeasement —
+  the field is optional precisely because §20.8 forbids a fallback, so the assert restates the
+  invariant the fixture depends on.
+- Four further `basedpyright` errors, visible only once the eight above were cleared: two
+  mutation fixtures patched a module global through `importlib.import_module` plus `try/finally`,
+  which assigns to an attribute of an untyped `ModuleType`. Both now use pytest's `monkeypatch`
+  against a normally-imported module handle — typed, and it restores automatically. One of the
+  two is Phase 5's and is therefore pre-existing.
+- `test_live_equity_has_exactly_one_implementation` asserted `"live_equity(risk_state(self))" in
+  source` against `daily.py` — a **formatting-sensitive** assertion about a correctness property,
+  which `ruff format` would have broken for a reason with nothing to do with §7.1. Now parses the
+  AST, scoped to the `DailyState` class, and asserts both delegation and the absence of
+  arithmetic; mutation-tested in both directions.
+
+**Pre-existing ruff debt cleared too, on a second `make check` run (N3).** `positions.
+IllegalTransition` → **`IllegalTransitionError`** — the last exception in the tree without the
+suffix, and a Phase 5 **public type**, so the rename touches `positions.py`, `monitor.py`,
+`daily.py`, `tests/test_enforcement.py`, `docs/api.md`, both design records and this file. Plus
+two `SIM300` operand flips and one `RUF043` raw string in `tests/test_phase5.py`. **Cost:** the
+tree no longer reproduces the *before* column of N1's table, which was the stated reason for
+leaving this debt in the first place; the measurement now rests on the round's record of it.
+
+**Two of this changeset's own lint fixes were themselves lint findings** — `SIM300` on
+`assert UNREACHABLE_BLOCKS == frozenset()` and on `assert _PHASE_6_ROWS <= set(PARAMS)`, both
+written blind and both invisible until `ruff` ran. A fix written without the tool that judges it
+is a guess.
+
+**Raised, not fixed (N2):** CI runs all five targets on every pull request and work does go
+through pull requests, yet the Phase 5 PR merged red. The remaining explanation is branch
+protection not marking the check *required*, which is a repository setting and not a file in this
+tree. `.git/hooks/pre-commit` is also absent, so the local half was never armed.
+
+No behaviour changed in any pre-existing module. Two findings were **raised and not resolved** —
+see `docs/CHANGELOG.md`: §7.1.2's restart guarantee is incomplete in §10's own schema (three §7
+inputs and row 8's next-day lock have no column, so a restart silently resets both drawdown
+rules), and §20.12 cannot record the flatten §7 demands from four of its five open states, which
+is review round 14's **H3** arriving as a blocker.
+
 ### Added — Phase 5, §7 pre-order risk and §6 order construction (PLAN D34)
 
 **The transport half of §12.1's Phase 5 is refused, not deferred.** §6.2's lifecycle is
@@ -18,7 +159,7 @@ column names *"IBKR paper"* and its risk column names *"order routing"*, so what
 half the roadmap names first. `docs/PHASE-5-DESIGN.md` §1.1 and §2 are the record.
 
 - **`src/tradipy/positions.py`** — PRD §20.12's state machine as a read-only transition table plus
-  a pure `transition()` that raises `IllegalTransition` on anything the table omits; §3.1.1's
+  a pure `transition()` that raises `IllegalTransitionError` on anything the table omits; §3.1.1's
   `breakeven_stop`; `leg_quantities`, which splits the 50/25/25 ladder over an integer share count
   with the three legs summing **exactly** to it (§21.6 makes an uncovered share a Sev-1); and
   §7.1.1's `scale_in_permitted`, which checks the state *and* the arithmetic because §7.1.1's

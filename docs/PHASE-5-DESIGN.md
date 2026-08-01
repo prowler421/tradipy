@@ -166,7 +166,7 @@ because §20.12's diagram and its table disagree.
 ```python
 PositionState          # 12 members, §20.12
 TRANSITIONS            # Mapping[PositionState, frozenset[PositionState]]
-transition(state, to)  # -> PositionState, raises IllegalTransition
+transition(state, to)  # -> PositionState, raises IllegalTransitionError
 ```
 
 Also here, because each is a property of a position rather than of an order:

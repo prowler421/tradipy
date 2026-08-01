@@ -258,9 +258,7 @@ def test_the_finding_holds_at_the_beginner_preset_too() -> None:
 def test_a_halted_account_blocks_before_anything_else_is_asked() -> None:
     """PRD §7.2 / §7.1.2: ``trading_halted`` is the first rule, and it names its reason."""
     signal = signals()[SetupType.BULL_FLAG]
-    decision = approve(
-        signal, flat_state(trading_halted=True, halt_reason="daily_loss"), CFG
-    )
+    decision = approve(signal, flat_state(trading_halted=True, halt_reason="daily_loss"), CFG)
     assert decision.reason is RiskBlock.TRADING_HALTED
     assert "daily_loss" in decision.rules_evaluated[0].detail
 
@@ -431,11 +429,11 @@ def test_the_pdt_row_is_unreachable_at_the_default_equity() -> None:
     assert approve(signal, state, cfg).reason is RiskBlock.DAILY_LOSS_LIMIT
 
     # The reachable window exists, and it is inside §2.0's bounds.
-    assert PDT_REACHABLE_EQUITY >= PARAMS["start_of_day_equity"].lo
+    assert PARAMS["start_of_day_equity"].lo <= PDT_REACHABLE_EQUITY
     reachable = cfg.with_overrides(start_of_day_equity=PDT_REACHABLE_EQUITY)
-    assert PDT_REACHABLE_EQUITY - PDT_MIN_EQUITY < (
+    assert (
         PDT_REACHABLE_EQUITY * reachable["daily_loss_pct"]
-    )
+    ) > PDT_REACHABLE_EQUITY - PDT_MIN_EQUITY
 
 
 @pytest.mark.spec
@@ -595,9 +593,7 @@ def test_scale_in_is_refused_before_t1_even_when_the_budget_allows_it() -> None:
     assert not scale_in_permitted(PositionState.OPEN_FULL, Decimal(0), CFG)
     assert scale_in_permitted(PositionState.T1_FILLED, Decimal(0), CFG)
     assert scale_in_permitted(PositionState.T2_FILLED, max_dollar_risk(CFG), CFG)
-    assert not scale_in_permitted(
-        PositionState.T1_FILLED, max_dollar_risk(CFG) + TICK_SIZE, CFG
-    )
+    assert not scale_in_permitted(PositionState.T1_FILLED, max_dollar_risk(CFG) + TICK_SIZE, CFG)
     for state in set(PositionState) - {PositionState.T1_FILLED, PositionState.T2_FILLED}:
         assert not scale_in_permitted(state, Decimal(0), CFG)
 
@@ -657,9 +653,10 @@ def test_partial_fill_follows_sixty_four_in_all_four_branches() -> None:
         PartialFillAction.COMPLETE
     )
     # Below the fraction: wait until the timeout, then cancel.
-    assert partial_fill_action(
-        intended, half - 1, entry_spread, entry_spread, timeout - 1, CFG
-    ) is PartialFillAction.WAIT
+    assert (
+        partial_fill_action(intended, half - 1, entry_spread, entry_spread, timeout - 1, CFG)
+        is PartialFillAction.WAIT
+    )
     assert partial_fill_action(intended, half - 1, entry_spread, entry_spread, timeout, CFG) is (
         PartialFillAction.CANCEL_REMAINDER
     )
@@ -668,9 +665,12 @@ def test_partial_fill_follows_sixty_four_in_all_four_branches() -> None:
     assert partial_fill_action(intended, half, entry_spread, multiple * entry_spread, 0, CFG) is (
         PartialFillAction.KEEP_WORKING
     )
-    assert partial_fill_action(
-        intended, half, entry_spread, multiple * entry_spread + TICK_SIZE, 0, CFG
-    ) is PartialFillAction.CANCEL_REMAINDER
+    assert (
+        partial_fill_action(
+            intended, half, entry_spread, multiple * entry_spread + TICK_SIZE, 0, CFG
+        )
+        is PartialFillAction.CANCEL_REMAINDER
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -756,15 +756,13 @@ def test_the_session_window_is_declared_a_maximum_and_compared_as_one() -> None:
     Asserted through the registry declaration and the comparison together, so flipping the
     declaration and the comparison independently cannot both pass.
     """
-    assert PARAMS["session_last_entry_minute"].polarity is CFG.polarity(
-        "session_last_entry_minute"
-    )
+    assert PARAMS["session_last_entry_minute"].polarity is CFG.polarity("session_last_entry_minute")
     assert CFG.polarity("session_last_entry_minute").name == "MAXIMUM"
     signal = signals()[SetupType.BULL_FLAG]
     narrowed = CFG.with_overrides(session_last_entry_minute=signal.levels.trigger_minute - 1)
-    assert approve(signal, flat_state(), narrowed).reason is (
-        RiskBlock.OUTSIDE_SESSION_WINDOW
-    ), "lowering a MAXIMUM must make the gate harder to clear, never easier"
+    assert approve(signal, flat_state(), narrowed).reason is (RiskBlock.OUTSIDE_SESSION_WINDOW), (
+        "lowering a MAXIMUM must make the gate harder to clear, never easier"
+    )
 
 
 @pytest.mark.polarity
@@ -805,7 +803,7 @@ def test_the_breakeven_stop_rounds_the_direction_twenty_thirteen_gives_stops() -
 )
 def test_partial_fill_refuses_impossible_quantities(intended: int, filled: int) -> None:
     """An over-fill is a §21.3 reconciliation fault, not a §6.4 partial fill."""
-    with pytest.raises(ValueError, match="intended|filled"):
+    with pytest.raises(ValueError, match=r"intended|filled"):
         partial_fill_action(intended, filled, TICK_SIZE, TICK_SIZE, 0, CFG)
 
 
@@ -840,6 +838,7 @@ def test_correlated_exposure_admits_its_maximum_and_refuses_one_more() -> None:
     """
     signal = signals()[SetupType.BULL_FLAG]
     group = "catalyst:SHARED"
+
     # Held at breakeven so §7 row 1 does not fire first and mask this row.
     def at_breakeven(source: SetupSignal, symbol: str) -> OpenPosition:
         held_position = held(source, state=PositionState.T1_FILLED, group=group)
@@ -857,12 +856,8 @@ def test_correlated_exposure_admits_its_maximum_and_refuses_one_more() -> None:
     # Raise the cap by one and the same state admits it.
     assert approve(signal, one, roomy, correlation=group).approved
     # Two open against a cap of two — refused again, one step out.
-    two = flat_state(
-        positions=(at_breakeven(other, "HELD1"), at_breakeven(other, "HELD2"))
-    )
-    assert approve(signal, two, roomy, correlation=group).reason is (
-        RiskBlock.CORRELATED_EXPOSURE
-    )
+    two = flat_state(positions=(at_breakeven(other, "HELD1"), at_breakeven(other, "HELD2")))
+    assert approve(signal, two, roomy, correlation=group).reason is (RiskBlock.CORRELATED_EXPOSURE)
 
 
 @pytest.mark.boundary
@@ -900,20 +895,26 @@ def test_the_partial_fill_timeout_and_widening_multiple_bind_at_their_own_values
     below = int(CFG["min_partial_fill_pct"] * intended) - 1
     at_or_above = int(CFG["min_partial_fill_pct"] * intended)
 
-    assert partial_fill_action(
-        intended, below, entry_spread, entry_spread, timeout - 1, CFG
-    ) is PartialFillAction.WAIT
-    assert partial_fill_action(
-        intended, below, entry_spread, entry_spread, timeout, CFG
-    ) is PartialFillAction.CANCEL_REMAINDER
+    assert (
+        partial_fill_action(intended, below, entry_spread, entry_spread, timeout - 1, CFG)
+        is PartialFillAction.WAIT
+    )
+    assert (
+        partial_fill_action(intended, below, entry_spread, entry_spread, timeout, CFG)
+        is PartialFillAction.CANCEL_REMAINDER
+    )
 
     multiple = CFG["partial_fill_spread_widening_multiple"]
-    assert partial_fill_action(
-        intended, at_or_above, entry_spread, multiple * entry_spread, 0, CFG
-    ) is PartialFillAction.KEEP_WORKING, "§6.4 says '> 2x', so exactly 2x keeps working"
-    assert partial_fill_action(
-        intended, at_or_above, entry_spread, multiple * entry_spread + TICK_SIZE, 0, CFG
-    ) is PartialFillAction.CANCEL_REMAINDER
+    assert (
+        partial_fill_action(intended, at_or_above, entry_spread, multiple * entry_spread, 0, CFG)
+        is PartialFillAction.KEEP_WORKING
+    ), "§6.4 says '> 2x', so exactly 2x keeps working"
+    assert (
+        partial_fill_action(
+            intended, at_or_above, entry_spread, multiple * entry_spread + TICK_SIZE, 0, CFG
+        )
+        is PartialFillAction.CANCEL_REMAINDER
+    )
 
 
 @pytest.mark.spec
@@ -985,9 +986,7 @@ def test_approve_all_folds_an_approved_key_into_the_submitted_set() -> None:
         first.symbol, first.setup_type, SESSION_DATE, first.levels.trigger_minute, ACCOUNT
     )
     twin = replace(first, shares=1)
-    decisions = approve_all(
-        [first, twin], flat_state(), CFG, keys=[(first.symbol, shared)]
-    )
+    decisions = approve_all([first, twin], flat_state(), CFG, keys=[(first.symbol, shared)])
     assert decisions[0].approved
     assert not decisions[1].approved
     duplicate = next(
@@ -1003,7 +1002,5 @@ def test_approve_all_folds_an_approved_key_into_the_submitted_set() -> None:
 
     # And with no key supplied the rule reports itself unevaluated rather than passing as a check.
     unkeyed = approve_all([first], flat_state(), CFG)
-    row = next(
-        r for r in unkeyed[0].rules_evaluated if r.rule.startswith("Duplicate order")
-    )
+    row = next(r for r in unkeyed[0].rules_evaluated if r.rule.startswith("Duplicate order"))
     assert row.passed and "not evaluated" in row.detail

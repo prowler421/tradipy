@@ -54,6 +54,7 @@ like logic bugs (PRD §9.2).
 | `test_setups.py` | **The §3 setups against their own worked examples, from bars** — PRD §21.1's worked-example row read as written (*"input **bar series** → asserted entry, stop, R, targets, share count"*), plus §21.1's look-ahead property test at every legal trigger index for all three setups. It is what found that §3.4's example fails §3.1.1's room gate: the older scalar-driven fixtures could not, because they are handed the resistance the table names |
 | `test_documentation.py` | **Consistency, applied to the documentation's own counts** — a number stated in prose that no longer matches the code, now including a count spelled as a **word** above its own table (`Fifteen`), which the digit-matching patterns were blind to | The registry solved this for thresholds; nothing solved it for the counts the docs quote about themselves. It recurred at v0.1.0 inside this very file: the heading below read "Four open spec discrepancies" above a list of six, while a fixture comment said eleven surviving mutations where three other documents said twelve |
 | `test_phase5.py` | **§7's rules against §2's own defaults** — §6.3's checks, the nine §7 rows that have a block path (rows 7 and 8 have predicates and no path, and a fixture asserts *that*), §20.12's transitions, and §6.1's bracket. It is what found that **two of §7's rules are unreachable at the shipped configuration**: the total-risk cap makes `max_open_positions` > 1 unreachable while a position is at full risk, and §7's daily-loss row makes §7's PDT row unreachable at $30,000 of start-of-day equity. Both are the third defect class and both needed *two* parameters read together, which is why the boundary fixtures — which vary one parameter and hold inputs fixed — missed them |
+| `test_phase6.py` | **§7's rule table read by its *enforcement point* column, not its rows** — the five points Phase 5 left empty, §10's `daily_state` round trip, §20.8's snapshot refusal, §9.2's `ClosedTrade`, and §7's *"Flatten all"* against §20.12. Two findings came out of building it, and both are about *where* a rule is enforced rather than what it computes — which is why every check in this table was silent on them: §7.1.2's restart guarantee is incomplete in §10's own schema (three §7 inputs and row 8's next-day lock have no column, so a restart silently resets both drawdown rules), and §20.12 cannot record a kill-switch or EOD flatten from four of its five open states. The second is review round 14's **H3**, arriving as a blocker |
 | `test_spike2a_instrumentation.py` | **Unvalidated instrument** — spike code that produces spec-deciding numbers while restating the library | Review round 7 in `scripts/spike2a/synthetic_data_generator.py`: hand-derived R under a docstring claiming library stop functions. AST and runtime checks that `generate_signal_bars` calls `apply_stop_floor_and_ceiling`, that `R = entry − stop`, and that `q4_spreads` imports the shipped cap/spread functions |
 
 Assertions are written against the **derivation**, not the value. `assert cap == Decimal("0.01")`
@@ -273,6 +274,37 @@ trade passes against the level §3.4 names. Either resolution breaks one half of
 ### `session.ema_at` has no caller
 
 §20.5's EMA is implemented and unused in `src/`: its consumer is §3.1.1's T3 leg, which D18 puts
-behind a broker-side stop and therefore in Phase 5/6. Recorded here for the same reason
+behind a broker-side stop and therefore in Phase 5/6. **Phase 6 did not close this**, and the
+reason is worth stating rather than leaving to be inferred: D18's requirement is that the
+ratcheted level *rests at the broker*, amended each bar close, and amending a resting order is
+transport. So the trail is still the one §3.1.1 rule with an implementation, a state
+(`PositionState.TRAILING`) and no caller. Recorded here for the same reason
 `select_flagpole`'s predicate was — a mechanism with no caller is the fifth defect class's shape,
 and the defence is that §21.1's unit row names *"EMA seeding"* explicitly as needing a fixture.
+
+### §7.1.2's restart guarantee is incomplete in §10's own schema
+
+Pinned in both directions by `test_phase6.py` and `test_enforcement.py`. §7.1.2 names five facts
+`daily_state` persists; §7's rules read four more, and §10 has **no column** for any of them —
+`unrealized_pnl` (row 2's numerator), `session_equity_peak` (row 7), `multi_day_peak_equity`
+(row 8) and row 8's *"Lock account next day"*. `daily.UNPERSISTED_FIELDS` enumerates them and a
+test derives the set from the dataclass and the column map, so a field quietly *gaining* a column
+fails as loudly as one quietly losing it.
+
+The sharp edge is that the loss is a **default**, not an error:
+`RiskState.__post_init__` fills a missing session peak with start-of-day equity, which is right
+for a session that just opened and wrong for one being resumed, so §7 row 7 comes back measuring
+from the wrong basis and reports no breach.
+`test_a_reloaded_session_silently_rebases_the_session_peak` is that, as a fixture. Raised in
+`docs/CHANGELOG.md` with three candidate resolutions and **not resolved in code**.
+
+### §20.12 cannot record the flatten §7 demands
+
+Pinned by `test_phase6.py` and `test_enforcement.py`, and it is review round 14's **H3** with a
+consequence attached. §7 has two rows whose Violation Action begins *"Flatten all"* and a kill
+switch whose enforcement point is *"Any"*; §20.12 gives an edge to `CLOSED` only from `TRAILING`.
+So `monitor.flatten_all` emits a directive for every open position — skipping one would be
+§21.6's Sev-1 arriving as an omission — and four of five carry no target state.
+`unrepresentable_flatten_states` derives the set from `positions.reachable_exit_reasons` rather
+than re-walking §20.12, and the test asserts the set is **non-empty**, so adding the missing edges
+to the PRD fails it deliberately.

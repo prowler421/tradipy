@@ -20,7 +20,7 @@ Everything else runs through `uv run`, so you never activate the environment by 
 
 ```
 src/tradipy/
-    __init__.py     imports and re-exports the thirteen library modules
+    __init__.py     imports and re-exports the fifteen library modules
     rounding.py     tick arithmetic, Polarity, round_threshold        (§20.13)
     rejects.py      Reject, SoftFlag, ExitReason, RiskBlock — four namespaces
     params.py       the parameter registry, Config, coupling validator (§2, §2.0)
@@ -34,10 +34,12 @@ src/tradipy/
     positions.py    the §20.12 state machine and the §3.1.1 ladder split
     risk.py         §6.3's pre-order checks and §7's rule table
     orders.py       §6.1 bracket construction and §6.7's key — submits nothing
+    daily.py        §10's daily_state, §20.8's snapshot, §9.2's ClosedTrade — no store
+    monitor.py      §7's other five enforcement points — flattens nothing
     poc.py          composition: one candidate through every gate, plus the
                     simulated universe behind `scan`
     __main__.py     the `python -m tradipy` CLI entry point
-tests/              thirteen pytest files (see below) + registry_baseline.json
+tests/              fourteen pytest files (see below) + registry_baseline.json
 docs/               PRD.md (normative), PLAN, CHANGELOG, PHASE-2A-SPIKE,
                     reviews/, these guides
 scripts/            regen_registry_baseline.py, check_links.py
@@ -239,12 +241,30 @@ universe is constructed rather than read, so it touches no file and needs no `PR
 applied correctly and no threshold is *calibrated*: Phase 2a Q1 is unanswered. See
 [PHASE-3-READINESS.md](PHASE-3-READINESS.md).
 
+### `monitor`
+
+Runs one session through PRD §7's **other five** enforcement points — the ones
+[`risk`](#exit-codes) does not cover, because `risk.approve` is the *Pre-order* column and §7
+names six. §20.8 opens the session with no equity and refuses to be evaluated; a §9.2
+`ClosedTrade` derived from §3.2's own signal is accrued at *Post-trade close*; the daily-loss row
+is driven to its limit and produces §7's *"Flatten all; lock account for day"*; §7 row 8 fires at
+*End of day* and locks **tomorrow** rather than today; and `flatten_all` prints one directive per
+open state, four of which §20.12 cannot record.
+
+Every figure is derived from the §3.2 bar series and the registry — nothing in the output is a
+number a reader typed. It exits 1 if §20.8 lets an unopened session reach §7's rules, if a
+breached daily-loss row fails to require a flatten, or if §20.12 turns out to record every
+flatten (which would mean the finding it prints has gone stale). **Nothing is flattened,
+cancelled, sent or written**: this layer computes §7's Violation Action and stops, and there is
+no 1-second loop because a cadence is a clock. See
+[PHASE-6-DESIGN.md](PHASE-6-DESIGN.md).
+
 ### Exit codes
 
 | Code | Meaning |
 | --- | --- |
 | 0 | Success — the demo self-check passed, the scan ran, or the candidate was ACCEPTed |
-| 1 | The demo self-check disagreed with the PRD tables |
+| 1 | A self-check disagreed with the PRD (`demo`, `setups`, `risk` or `monitor`) |
 | 2 | Usage error (argparse) |
 | 3 | The candidate was REJECTed |
 

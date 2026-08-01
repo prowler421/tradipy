@@ -271,13 +271,16 @@ class RiskBlock(Enum):
     #: window while equity is below FINRA's $25,000 threshold. Not bypassable per §7.
     PDT_VIOLATION = "PDT_VIOLATION"
 
-    #: PRD §7 row 7 — session peak-to-trough drawdown beyond ``session_dd_pct``. §7's
-    #: enforcement point is *Continuous*, so in Phase 5 this is produced by a predicate that no
-    #: loop calls; the loop is Phase 6's.
+    #: PRD §7 row 7 — session peak-to-trough drawdown beyond ``session_dd_pct``. Enforcement
+    #: point *Continuous*, so through Phase 5 this was produced by a predicate no loop called;
+    #: :func:`tradipy.monitor.evaluate` is that caller as of Phase 6, and the action it produces
+    #: is §7's *"Flatten all; lock account"*.
     SESSION_DRAWDOWN = "SESSION_DRAWDOWN"
 
     #: PRD §7 row 8 — rolling 5-day drawdown beyond ``multi_day_dd_pct``. Enforcement point
-    #: *End of day*, so the same caveat as :attr:`SESSION_DRAWDOWN` applies.
+    #: *End of day*, action *"Lock account next day"* — which §10's ``daily_state`` has no column
+    #: for, so the lock is carried by :attr:`tradipy.daily.DailyState.locks_next_session` and the
+    #: gap is recorded in :data:`tradipy.daily.UNPERSISTED_FIELDS`.
     MULTI_DAY_DRAWDOWN = "MULTI_DAY_DRAWDOWN"
 
     #: PRD §7 row 9 — outside the enabled session window. Evaluated against §20.1's ordinal

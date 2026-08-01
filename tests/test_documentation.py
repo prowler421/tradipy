@@ -57,6 +57,7 @@ CHECKED_DOCS: tuple[Path, ...] = (
     # likely to drift is a guard whose scope nobody stated.
     DOCS / "PHASE-4-DESIGN.md",
     DOCS / "PHASE-5-DESIGN.md",
+    DOCS / "PHASE-6-DESIGN.md",
     REPO / "CLAUDE.md",
     REPO / "README.md",
     REPO / "CONTRIBUTING.md",
@@ -340,9 +341,7 @@ _WORD_TO_INT = {word: value for value, word in WORDS.items()}
 #: function"* as a claim that the table had one row — a pattern too greedy produces false failures,
 #: which get suppressed, which is how a lint stops being trusted. That warning is already written
 #: above ``_REGISTRY_COUNT``; this is what ignoring it looks like.
-_STATED_WORD_COUNT = re.compile(
-    r"^\*\*(" + "|".join(_WORD_TO_INT) + r")\b", re.I | re.MULTILINE
-)
+_STATED_WORD_COUNT = re.compile(r"^\*\*(" + "|".join(_WORD_TO_INT) + r")\b", re.I | re.MULTILINE)
 
 
 def _changelog_question_tables() -> list[tuple[str, int, int | None]]:

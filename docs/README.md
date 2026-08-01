@@ -1,6 +1,6 @@
 # Documentation index
 
-Eight documents plus this index and a review archive. They are not interchangeable, and two of
+Nine documents plus this index and a review archive. They are not interchangeable, and two of
 them are authoritative in ways the others are not — so read this page before citing any of them.
 
 ## Start here
@@ -17,6 +17,7 @@ them are authoritative in ways the others are not — so read this page before c
 | Assess Phase 3 readiness | [PHASE-3-READINESS.md](PHASE-3-READINESS.md) |
 | Understand what Phase 4 built, and what it refused to claim | [PHASE-4-DESIGN.md](PHASE-4-DESIGN.md) |
 | Understand what Phase 5 built, and what it *refused to build* | [PHASE-5-DESIGN.md](PHASE-5-DESIGN.md) |
+| Understand what Phase 6 built, and the two findings it turned up | [PHASE-6-DESIGN.md](PHASE-6-DESIGN.md) |
 
 ## The two authoritative documents
 
@@ -34,19 +35,20 @@ and a change usually belongs in exactly one.
 
 | Document | Role |
 |---|---|
-| [PLAN.md](PLAN.md) | Workstreams 0–11, the sequencing table, the decision log D1–D34 (no D31), and the risk register. The defect-classes section is the most cited part of the repository, and PLAN is where its count is maintained — deliberately not restated here, so that this page cannot go stale against it |
+| [PLAN.md](PLAN.md) | Workstreams 0–11, the sequencing table, the decision log D1–D35 (no D31), and the risk register. The defect-classes section is the most cited part of the repository, and PLAN is where its count is maintained — deliberately not restated here, so that this page cannot go stale against it |
 | [PHASE-2A-SPIKE.md](PHASE-2A-SPIKE.md) | Scope and **binding pre-registration** for the data feasibility spike (PRD §5.5 / V7). Its §7 thresholds were committed before any data was pulled and are not to be retrofitted to a result |
 | [PHASE-2A-REPORT.md](PHASE-2A-REPORT.md) | Completion report per §6 — Q1–Q4 status, measured vs pipeline-only |
 | [PHASE-3-READINESS.md](PHASE-3-READINESS.md) | Gate checklist for whether Phase 3 (scanner) may start (D29). Also the only record of **review round 11**, which wrote no review file |
 | [PHASE-4-DESIGN.md](PHASE-4-DESIGN.md) | Design record for the §3 strategy engine (D33): module shape, the nineteen readings and questions §3 forced, the scope boundary, and what simulated-only construction cannot establish |
 | [PHASE-5-DESIGN.md](PHASE-5-DESIGN.md) | Design record for §7 pre-order risk and §6 order construction (D34). The one phase whose §12.1 scope is partly **forbidden** rather than deferred, so its §1.1 and §2 are load-bearing: it states what it refused to build, the two gates it did not pass, and the two guarantees it computes and cannot enforce |
+| [PHASE-6-DESIGN.md](PHASE-6-DESIGN.md) | Design record for §7's *other five* enforcement points, §10's `daily_state` and §20.8 (D35). The first phase whose §12.1 dependency was actually met, so its §2 argues only the §18.7 half. Its §6 carries the two findings building it turned up: §7.1.2's restart guarantee is incomplete in §10's own schema, and §20.12 cannot record the flatten §7 demands from four of five open states |
 
 ## Engineering guides
 
 | Document | Role |
 |---|---|
 | [architecture.md](architecture.md) | Module structure, the one-way dependency graph, and the five design invariants the test suite defends |
-| [api.md](api.md) | Public surface of all fourteen library modules, with signatures and worked snippets |
+| [api.md](api.md) | Public surface of all sixteen library modules, with signatures and worked snippets |
 | [development.md](development.md) | Environment, `make` targets, the testing markers, the release process, and the mutation protocol |
 
 See also [../tests/README.md](../tests/README.md), which is where the **documented open
@@ -72,6 +74,7 @@ of what was found; corrections go to the changelogs, not into the review that fo
 | *(round 11 — no file)* | `make check` at the Phase 3 merge. Its record is the first-row note in [PHASE-3-READINESS.md](PHASE-3-READINESS.md) | **Red**: eleven `ruff` errors, two unformatted files, three `basedpyright` errors, all introduced by Phase 3 and all fixed there. Used no finding prefix, which is why round 12 uses `L` |
 | [REVIEW-2026-07-31-round13.md](reviews/REVIEW-2026-07-31-round13.md) | `session.py` and `setups.py` with fresh eyes, and round 12 verified — the first round to read Phase 4 without having written it | 7, prefixed `M*`; one **HIGH** — §3.4 criterion 9 (HOD proximity consolidation) was implemented, documented and reachable with **no fixture that activated its branch**, so nothing would have noticed it breaking. **M7** is the same shape on the *prior HOD* reading. M3–M5 are three dead conditions in `setups.py`, fixed inline per convention 8. All eight of round 12's `L` findings hold |
 | [REVIEW-2026-08-01-round14.md](reviews/REVIEW-2026-08-01-round14.md) | The **Phase 5 build** (D34) — `positions.py`, `risk.py`, `orders.py`, their fixtures and PHASE-5-DESIGN. The first cold read of Phase 5, by a party that did not write it | 7, prefixed `H*`; two **MEDIUM-HIGH** — **H1**, §7's total-open-risk cap makes `max_open_positions` > 1 unreachable while a position is at full risk, and **H3**, §20.12 cannot express a post-T1 invalidation or a kill-switch flatten, so Phase 4's post-entry predicates and Phase 5's state machine do not compose mid-ladder. H1, H2 and H3 were already raised by the build; **H6 fixed inline** per convention 8. **No new defect class** — H1 and H2 are further populations of the third. `make check` **not run** for the second round running, and the round says so |
+| [REVIEW-2026-08-01-round15.md](reviews/REVIEW-2026-08-01-round15.md) | The **Phase 6 build** (D35) — `daily.py`, `monitor.py`, their fixtures and PHASE-6-DESIGN. **The first round in three phases with a working toolchain**, and the first ever to report `make check` *before and after* a changeset rather than a single verdict | 3, prefixed `N*`; one **MEDIUM-HIGH** — **N1**, the gate is red and this change made it redder (+10 ruff, +2 unformatted files, +8 basedpyright), on top of a 5/7/2 that predates it, which means **Phase 5 shipped red too**. The eighteen Phase 6 added are convention 8's category and are **fixed in the same changeset**, listed one line each. **N2** is the root cause and is raised, not fixed: CI *is* correctly configured and *does* run all five targets on every PR, and the PR merged red anyway — so the remaining explanation is branch protection not requiring the check, which is a repository setting this round cannot read and does not claim. Exactly where [PLAN](PLAN.md)'s sixth-defect-class extrapolation said to look next, and the round's first draft asserted the wrong answer before checking `ci.yml`. Not a new defect class: no document claimed the gate was green, so this is the class's *precondition* rather than an instance |
 | [REVIEW-2026-07-31-round12.md](reviews/REVIEW-2026-07-31-round12.md) | Rounds 9 and 10 verified, and **Phase 4** — which this round also built, so it is explicitly not an independent review of it | 8, prefixed `L*`; one **HIGH** — §3.4's worked example is rejected by §3.1.1's own room gate, the next whole dollar being nearer than the HOD its table names. Reproduced by execution; raised, not resolved. Also K3 partially closed, and a test count that went wrong again one commit after K6 fixed it. No new defect class: L2 is a new *population* of the third |
 
 **On the naming.** `REVIEW-v1.2` and `REVIEW-v1.3` are named for the PRD version they reviewed;

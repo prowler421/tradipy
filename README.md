@@ -69,7 +69,25 @@ at the same budget §2.2 sizes a *single* position to, which makes `max_open_pos
 unreachable at full size. Raised, not resolved — see
 [`docs/PHASE-5-DESIGN.md`](docs/PHASE-5-DESIGN.md) §6.
 
-Exit codes: `0` accept, `1` demo self-check failed, `2` usage error, `3` candidate rejected.
+Or run one session through §7's **other five** enforcement points — the ones a pre-order engine
+does not cover, because §7's table names six:
+
+```bash
+uv run python -m tradipy monitor
+#   §20.8  open_session -> NO_TRADE, equity None
+#          §7 refused, correctly: SessionNotOpenError
+#   §7 at Continuous        RiskBlock.DAILY_LOSS_LIMIT -> HaltAction.FLATTEN_AND_LOCK_DAY
+#   §7.2   flatten_all -> 5 directive(s), 4 unrecordable
+#           2,500  OPEN_FULL     -> — §20.12 has no edge —
+```
+
+**Nothing is flattened, and there is no loop.** §7 says *"Continuous (1 sec)"*, and a cadence is
+a clock — §21.1 forbids one here, so this layer is called rather than calling. Those four
+unrecordable rows are the phase's headline finding: §7 demands a flatten and §20.12 supplies an
+edge to `CLOSED` only from `TRAILING`. Raised, not patched — see
+[`docs/PHASE-6-DESIGN.md`](docs/PHASE-6-DESIGN.md) §6.
+
+Exit codes: `0` accept, `1` a self-check failed, `2` usage error, `3` candidate rejected.
 
 ## Architecture
 
@@ -90,7 +108,9 @@ depend on nothing but the standard library, and only `__main__` depends on `poc`
 | `tradipy.setups` | PRD §3.2–§3.4 — Bull Flag, HOD Breakout and VWAP Reclaim as pure functions of a bar series and a trigger index, plus §20.11 arbitration and §3's post-entry rules as predicates. Same two rules as `gates`. |
 | `tradipy.positions` | PRD §20.12's position state machine as a transition table, §3.1.1's stop-to-breakeven and its 50/25/25 ladder split, and §7.1.1's scale-in legality. |
 | `tradipy.risk` | PRD §6.3's pre-trade checks and §7's rule table, returning §9.2's `RiskDecision` with every rule evaluated. State is handed in; nothing is sensed. |
-| `tradipy.orders` | PRD §6.1's bracket, §6.7's idempotency key, §6.4's partial-fill decision. **The boundary of the package:** it builds a draft and stops — D30 permits no submission. |
+| `tradipy.orders` | PRD §6.1's bracket, §6.7's idempotency key, §6.4's partial-fill decision. **One of the package's two boundaries:** it builds a draft and stops — D30 permits no submission. |
+| `tradipy.daily` | PRD §10's `daily_state` as a value, §20.8's snapshot gate, §9.2's `ClosedTrade` and §7 row 4's post-trade-close accrual. The first thing here to *compute* realized P&L and the loss streak rather than accept them. **No store:** the §10 row round-trips through a plain `dict`, which is §7.1.2's arithmetic and not its durability. |
+| `tradipy.monitor` | PRD §7's *other five* enforcement points and its Violation Action column, plus the flatten those actions require. **The second boundary:** it decides, and sends nothing. |
 | `tradipy.poc` | Composes the gates into one evaluation, and holds the simulated universe behind `scan`. Explicitly *not* the strategy engine: it takes a candidate that has already been found. |
 
 Everything that touches money uses `Decimal`. See [`docs/architecture.md`](docs/architecture.md)

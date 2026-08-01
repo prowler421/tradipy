@@ -1,6 +1,6 @@
 """``python -m tradipy`` — the runnable proof of concept.
 
-Five subcommands:
+Six subcommands:
 
 ``demo``
     Replay the three PRD §3 worked examples through every gate and self-check the derived
@@ -32,6 +32,13 @@ Five subcommands:
     caps **total** open risk, and that is what makes the second signal's rejection the
     interesting output rather than a bug.
 
+``monitor``
+    Run one session through PRD §7's **other five** enforcement points (Phase 6): §20.8's
+    snapshot, a §9.2 ``ClosedTrade`` accrued at *Post-trade close*, the daily-loss row at
+    *post-fill* and *Continuous*, the kill switch at *Any*, and the flatten those actions
+    require. **Nothing is flattened** — this prints the directive and the positions §20.12
+    cannot express one for, which is the phase's headline finding.
+
 Stdlib only — ``argparse`` and ``decimal``. The package has no runtime dependencies and this
 does not add one.
 """
@@ -42,6 +49,27 @@ import argparse
 import sys
 from decimal import Decimal, InvalidOperation
 
+from tradipy.daily import (
+    UNPERSISTED_FIELDS,
+    ClosedTrade,
+    from_row,
+    mark_to_market,
+    open_session,
+    record_close,
+    record_multi_day_peak,
+    record_snapshot,
+    risk_state,
+    to_row,
+)
+from tradipy.monitor import (
+    EnforcementPoint,
+    MonitorDecision,
+    apply,
+    eod_flat_due,
+    flatten_all,
+    unrepresentable,
+)
+from tradipy.monitor import evaluate as monitor_evaluate
 from tradipy.orders import OrderDraft, bracket, idempotency_key
 from tradipy.params import MODES, PARAMS, Config, Mode
 from tradipy.poc import (
@@ -55,9 +83,10 @@ from tradipy.poc import (
     simulated_universe,
 )
 from tradipy.poc import worked_examples as prd_examples
-from tradipy.positions import PositionState, leg_quantities
+from tradipy.positions import OPEN_STATES, PositionState, leg_quantities
 from tradipy.quotes import Quote
-from tradipy.risk import RiskDecision, RiskState, approve_all
+from tradipy.rejects import ExitReason
+from tradipy.risk import OpenPosition, RiskDecision, RiskState, approve_all
 from tradipy.rounding import TICK_SIZE
 from tradipy.scanner import ScanReport, scan
 from tradipy.score import Catalyst, ScoreInputs, composite_score, meets_conviction_gate
@@ -434,9 +463,7 @@ def _run_risk(cfg: Config, mode: Mode) -> int:
             continue
         approved += 1
         _print_draft(
-            bracket(
-                signal, signal.levels.entry_price, _DEMO_SESSION_DATE, _DEMO_ACCOUNT_ID, cfg
-            )
+            bracket(signal, signal.levels.entry_price, _DEMO_SESSION_DATE, _DEMO_ACCOUNT_ID, cfg)
         )
 
     print(f"\n{RULE}")
@@ -485,6 +512,185 @@ def _run_risk(cfg: Config, mode: Mode) -> int:
                 print("\nSelf-check FAILED — ladder legs do not sum to the share count.")
                 return 1
     print(f"\nSelf-check OK — {approved} draft(s) built, every leg a whole tick, ladder exact.")
+    return 0
+
+
+def _print_monitor(decision: MonitorDecision) -> None:
+    verdict = "CLEAR" if decision.action is None else f"{decision.reason} -> {decision.action}"
+    print(f"\n§7 at {decision.point.value:<17} {verdict}")
+    for rule in decision.rules_evaluated:
+        print(f"  {PASS if rule.passed else FAIL}  {rule.rule:<46} {rule.detail}")
+
+
+def _run_monitor(cfg: Config, mode: Mode) -> int:
+    """Run one session through §7's five non-pre-order enforcement points (Phase 6)."""
+    print(RULE)
+    print("tradipy Phase 6 — §7's other five enforcement points, over §10's daily_state")
+    print(RULE)
+    print(f"mode={mode}  start_of_day_equity={cfg['start_of_day_equity']}")
+    print(
+        "\nData origin: SIMULATED (PLAN D30). Nothing below is flattened, cancelled or sent:\n"
+        "this layer computes §7's Violation Action and stops, exactly where §6.2's\n"
+        "OrderDraft -> Submit arrow is refused. There is no 1-second loop either — §21.1\n"
+        "forbids a clock here, so the cadence is the caller's. See docs/PHASE-6-DESIGN.md."
+    )
+
+    equity = cfg["start_of_day_equity"]
+
+    # Every figure below is *derived* from the §3.2 worked example rather than restated. A demo
+    # that hard-codes an entry and a stop is asserting against numbers the rules did not
+    # produce, which is the v1.0 defect class and is what §21.1's worked-example row is for.
+    signal: SetupSignal | None = None
+    for example in setup_examples():
+        outcome = example.evaluate(cfg)
+        if outcome.signal is not None:
+            signal = outcome.signal
+            break
+    if signal is None:  # pragma: no cover - `setups` self-checks this first
+        print("\nSelf-check FAILED — no §3 example produced a signal to close.")
+        return 1
+    levels = signal.levels
+
+    # §20.8 — the session opens with no equity and refuses to be evaluated.
+    state = open_session(_DEMO_SESSION_DATE)
+    print(f"\n§20.8  open_session -> {state.phase.value}, equity {state.start_of_day_equity}")
+    try:
+        risk_state(state)
+        print("Self-check FAILED — §20.8 allowed a NO_TRADE session to reach §7's rules.")
+        return 1
+    except ValueError as exc:
+        print(f"       §7 refused, correctly: {type(exc).__name__}")
+
+    state = record_snapshot(state, equity)
+    # Two prior session closes, the first above today's equity by twice §2.0's multi-day
+    # allowance — so §7 row 8 is breached and its Violation Action, the one that does *not*
+    # lock today, is visible below. Expressed against the registered threshold rather than as
+    # a literal, so the demo follows the parameter if it moves.
+    over = Decimal(1) + Decimal(2) * cfg["multi_day_dd_pct"]
+    state = record_multi_day_peak(state, [equity * over, equity], cfg)
+    print(
+        f"§20.8  record_snapshot -> {state.phase.value}, equity {state.start_of_day_equity}, "
+        f"session peak {state.session_equity_peak}, multi-day peak {state.multi_day_peak_equity}"
+    )
+
+    # §7 row 4's Post-trade close point — the first thing in the package to *produce* a
+    # consecutive-loss count rather than accept one. A full-R stop-out: the exit is the signal's
+    # own effective stop, so the R-multiple below should be about -1 before costs and worse
+    # after, which is the whole reason §9.2 computes it on net.
+    loss = ClosedTrade(
+        symbol=signal.symbol,
+        setup_type=signal.setup_type,
+        entry_price=levels.entry_price,
+        exit_price=levels.stop_price,
+        shares=signal.shares,
+        r_per_share=levels.r_per_share,
+        # §3.1.2's own round-trip estimate, which is the only cost figure the package has.
+        commission=cfg["est_round_trip_cost_per_share"] * signal.shares,
+        fees=Decimal(0),
+        exit_reason=ExitReason.STOPPED_OUT,
+    )
+    print(
+        f"\n§9.2   ClosedTrade  gross {loss.gross_pnl}  net {loss.net_pnl}  "
+        f"R {loss.r_multiple:.3f} (on NET, per §9.2)  loss={loss.is_loss}"
+    )
+    state = record_close(state, loss, unrealized_after=Decimal(0))
+    print(
+        f"§7 r4  record_close -> realized {state.realized_pnl}, streak "
+        f"{state.consecutive_losses}, day trades {state.day_trades_in_window}"
+    )
+
+    _print_monitor(monitor_evaluate(risk_state(state), EnforcementPoint.POST_FILL, cfg))
+    _print_monitor(monitor_evaluate(risk_state(state), EnforcementPoint.POST_TRADE_CLOSE, cfg))
+    end_of_day = monitor_evaluate(risk_state(state), EnforcementPoint.END_OF_DAY, cfg)
+    _print_monitor(end_of_day)
+    carried = apply(state, end_of_day)
+    print(
+        f"       apply -> {carried.phase.value} today, locks_next_session="
+        f"{carried.locks_next_session}  (§7 row 8 locks *next* day)"
+    )
+
+    # Drive the account into §7 row 2's limit and watch the Violation Action appear.
+    state = mark_to_market(carried, -(equity * cfg["daily_loss_pct"]) - state.realized_pnl)
+    continuous = monitor_evaluate(risk_state(state), EnforcementPoint.CONTINUOUS, cfg)
+    _print_monitor(continuous)
+    locked = apply(state, continuous)
+    print(f"       apply -> {locked.phase.value}, halt_reason {locked.halt_reason}")
+
+    if not continuous.flatten:
+        print("\nSelf-check FAILED — §7 row 2 breached without requiring a flatten.")
+        return 1
+
+    # §7's "Flatten all", against §20.12 — Phase 6's headline finding. One position per §20.12
+    # open state, ordered by the enum's own declaration order rather than by a list written
+    # here, so the demo cannot show four states while OPEN_STATES holds five.
+    lifecycle = list(PositionState)
+    positions = tuple(
+        OpenPosition(
+            symbol=f"{signal.symbol}-{state_.value}",
+            shares=signal.shares,
+            mark=levels.entry_price,
+            current_stop=levels.stop_price,
+            state=state_,
+            correlation_group=f"symbol:{signal.symbol}",
+        )
+        for state_ in sorted(OPEN_STATES, key=lifecycle.index)
+    )
+    directives = flatten_all(positions, ExitReason.KILL_SWITCH)
+    blocked = unrepresentable(directives)
+    print(f"\n§7.2   flatten_all -> {len(directives)} directive(s), {len(blocked)} unrecordable")
+    for d in directives:
+        target = d.to_state.value if d.to_state is not None else "— §20.12 has no edge —"
+        print(f"       {d.shares:>6,}  {d.from_state.value:<13} -> {target}")
+
+    print(f"\n{RULE}")
+    print(
+        "Those unrecordable rows are Phase 6's headline finding, and they are review round 14's\n"
+        "H3 arriving as a blocker rather than a footnote. §7 has two rows whose Violation Action\n"
+        "begins 'Flatten all' and a kill switch whose enforcement point is 'Any' — and of the\n"
+        "four §20.12 edges into CLOSED, only one starts at an open state. So an account flattened\n"
+        "by the kill switch leaves positions still recorded in the open state they were in —\n"
+        "the 'untracked broker position' §20.12's persistence sentence exists to prevent.\n"
+        "Raised in docs/CHANGELOG.md, not patched: widening a normative table on this layer's\n"
+        "authority is the thing the §20.12 reading exists to avoid."
+    )
+    row = to_row(locked)
+    reloaded = from_row(row)
+    print(
+        "\nAnd the second finding: §10's daily_state has no column for unrealized P&L, either\n"
+        "drawdown peak, or §7 row 8's next-day lock. §7.1.2 says the non-bypassable limits are\n"
+        "meaningless if they reset on restart — so here is the row a store would write, and\n"
+        "what comes back:"
+    )
+    for column, value in row.items():
+        print(f"       {column:<22} {value!r}")
+    print(
+        f"       reloaded -> {reloaded.phase.value}, halt_reason {reloaded.halt_reason} "
+        "(§7 row 2's lockout survives)"
+    )
+    for field in sorted(UNPERSISTED_FIELDS):
+        print(
+            f"       LOST     {field:<22} {getattr(locked, field)!r} -> "
+            f"{getattr(reloaded, field)!r}"
+        )
+    print(
+        "       Rows 7 and 8 lose their inputs, and row 8's 'Lock account next day' is lost\n"
+        "       outright — the one action whose whole purpose is to survive to the next session."
+    )
+    flat_minute = int(cfg["session_flat_all_minute"])
+    print(
+        f"\n§21.4  eod_flat_due({flat_minute}) = {eod_flat_due(flat_minute, cfg)}  "
+        "(the flat-all cutoff, 15:55 ET — inclusive)"
+    )
+    print(f"       eod_flat_due({flat_minute - 1}) = {eod_flat_due(flat_minute - 1, cfg)}")
+
+    if not blocked:
+        print("\nSelf-check FAILED — §20.12 recorded every flatten; the finding above is stale.")
+        return 1
+    print(
+        f"\nSelf-check OK — §20.8 refused an unopened session, §7 produced "
+        f"{continuous.action}, and {len(blocked)} of {len(directives)} flattens are "
+        "unrecordable under §20.12."
+    )
     return 0
 
 
@@ -539,6 +745,13 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[common],
         help="run the §3 signals through §7 pre-order risk and build the §6.1 bracket "
         "(Phase 5; submits nothing)",
+    )
+
+    sub.add_parser(
+        "monitor",
+        parents=[common],
+        help="run one session through §7's continuous, post-fill, post-trade-close, "
+        "end-of-day and any-point enforcement points (Phase 6; flattens nothing)",
     )
 
     ev = sub.add_parser(
@@ -609,11 +822,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     command = args.command or "demo"
-    # These three reproduce PRD tables computed at 1% x $30,000. `risk` is in the set because
-    # its §7 arithmetic is denominated in that equity figure and its §3 inputs are those tables'
-    # share counts — at `beginner` both halve and the finding it prints still holds, which is
-    # asserted in tests/test_enforcement.py rather than left to the reader.
-    reproduces_tables = command in {"demo", "setups", "risk"}
+    # These four reproduce PRD tables computed at 1% x $30,000. `risk` and `monitor` are in the
+    # set because their §7 arithmetic is denominated in that equity figure and their §3 inputs
+    # are those tables' share counts — at `beginner` both halve and the findings they print
+    # still hold, which is asserted in tests/test_enforcement.py rather than left to the reader.
+    reproduces_tables = command in {"demo", "setups", "risk", "monitor"}
     mode: Mode = getattr(args, "mode", None) or ("experienced" if reproduces_tables else "beginner")
     cfg = Config.default(mode=mode)
 
@@ -625,6 +838,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_setups(cfg, mode)
     if command == "risk":
         return _run_risk(cfg, mode)
+    if command == "monitor":
+        return _run_monitor(cfg, mode)
     return _run_evaluate(args, cfg)
 
 
